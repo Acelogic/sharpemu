@@ -1846,7 +1846,8 @@ public static class KernelRuntimeCompatExports
 
     private static RdtscDelegate? CreateRdtscReader()
     {
-        if (!OperatingSystem.IsWindows() || !Environment.Is64BitProcess)
+        if (!Environment.Is64BitProcess ||
+            RuntimeInformation.ProcessArchitecture != Architecture.X64)
         {
             return null;
         }
@@ -1883,8 +1884,8 @@ public static class KernelRuntimeCompatExports
         }
     }
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern nint VirtualAlloc(nint lpAddress, nuint dwSize, uint flAllocationType, uint flProtect);
+    private static unsafe nint VirtualAlloc(nint lpAddress, nuint dwSize, uint flAllocationType, uint flProtect) =>
+        (nint)HostMemory.Alloc((void*)lpAddress, dwSize, flAllocationType, flProtect);
 
     private static bool TryReserveVirtualRange(
         CpuContext ctx,
