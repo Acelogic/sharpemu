@@ -43,26 +43,26 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
     private ulong _guestAllocationOffset;
     private static readonly ulong LazyReservePrimeBytes = ResolveLazyReservePrimeBytes();
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern void* VirtualAlloc(void* lpAddress, nuint dwSize, uint flAllocationType, uint flProtect);
+    private static void* VirtualAlloc(void* lpAddress, nuint dwSize, uint flAllocationType, uint flProtect) =>
+        HostMemory.Alloc(lpAddress, dwSize, flAllocationType, flProtect);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool VirtualFree(void* lpAddress, nuint dwSize, uint dwFreeType);
+    private static bool VirtualFree(void* lpAddress, nuint dwSize, uint dwFreeType) =>
+        HostMemory.Free(lpAddress, dwSize, dwFreeType);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool VirtualProtect(void* lpAddress, nuint dwSize, uint flNewProtect, out uint lpflOldProtect);
+    private static bool VirtualProtect(void* lpAddress, nuint dwSize, uint flNewProtect, out uint lpflOldProtect) =>
+        HostMemory.Protect(lpAddress, dwSize, flNewProtect, out lpflOldProtect);
 
-    [DllImport("kernel32.dll")]
-    private static extern nuint VirtualQuery(void* lpAddress, out MemoryBasicInformation64 lpBuffer, nuint dwLength);
+    private static nuint VirtualQuery(void* lpAddress, out HostMemory.BasicInfo lpBuffer, nuint dwLength)
+    {
+        _ = dwLength;
+        return HostMemory.Query(lpAddress, out lpBuffer);
+    }
 
-    [DllImport("kernel32.dll")]
-    private static extern void* GetCurrentProcess();
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool FlushInstructionCache(void* hProcess, void* lpBaseAddress, nuint dwSize);
+    private static void FlushInstructionCache(void* hProcess, void* lpBaseAddress, nuint dwSize)
+    {
+        _ = hProcess;
+        HostMemory.FlushInstructionCache(lpBaseAddress, dwSize);
+    }
 
     public bool TryAllocateAtExact(ulong desiredAddress, ulong size, bool executable, out ulong actualAddress)
     {
@@ -458,7 +458,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
         if ((flags & ProgramHeaderFlags.Execute) != 0)
         {
-            FlushInstructionCache(GetCurrentProcess(), (void*)address, (nuint)size);
+            FlushInstructionCache(null, (void*)address, (nuint)size);
         }
     }
 
@@ -706,7 +706,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
                 VirtualProtect(destPtr, (nuint)source.Length, oldProtect, out _);
                 if (IsExecutableProtection(oldProtect))
                 {
-                    FlushInstructionCache(GetCurrentProcess(), destPtr, (nuint)source.Length);
+                    FlushInstructionCache(null, destPtr, (nuint)source.Length);
                 }
             }
 
@@ -951,7 +951,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         var pageAddress = startPage;
         while (pageAddress < endPage)
         {
-            if (VirtualQuery((void*)pageAddress, out var info, (nuint)sizeof(MemoryBasicInformation64)) == 0)
+            if (VirtualQuery((void*)pageAddress, out var info, (nuint)sizeof(HostMemory.BasicInfo)) == 0)
             {
                 return false;
             }
@@ -1074,18 +1074,5 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         public bool IsExecutable { get; set; }
         public bool IsReservedOnly { get; set; }
         public uint Protection { get; set; }
-    }
-
-    private struct MemoryBasicInformation64
-    {
-        public ulong BaseAddress;
-        public ulong AllocationBase;
-        public uint AllocationProtect;
-        public uint Alignment1;
-        public ulong RegionSize;
-        public uint State;
-        public uint Protect;
-        public uint Type;
-        public uint Alignment2;
     }
 }
