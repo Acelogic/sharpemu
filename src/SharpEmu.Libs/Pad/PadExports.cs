@@ -293,6 +293,11 @@ public static class PadExports
             r2 = Math.Max(r2, xpad.R2);
         }
 
+        if (IsAutoCrossActive())
+        {
+            buttons |= 0x4000;
+        }
+
         BinaryPrimitives.WriteUInt32LittleEndian(data[0x00..], buttons);
         data[0x04] = leftX;
         data[0x05] = leftY;
@@ -312,6 +317,51 @@ public static class PadExports
         data[0x68] = 1;
 
         return ctx.Memory.TryWrite(dataAddress, data);
+    }
+
+    private static readonly long PadStartTimestamp = Stopwatch.GetTimestamp();
+    private static readonly double[] AutoCrossTimes = ParseAutoCrossTimes();
+
+    private static double[] ParseAutoCrossTimes()
+    {
+        // SHARPEMU_AUTO_CROSS="40,52,64": presses Cross for 0.4s at each
+        // second offset from process start. Debug aid for unattended runs.
+        var raw = Environment.GetEnvironmentVariable("SHARPEMU_AUTO_CROSS");
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return [];
+        }
+
+        var values = new List<double>();
+        foreach (var token in raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (double.TryParse(token, System.Globalization.CultureInfo.InvariantCulture, out var value))
+            {
+                values.Add(value);
+            }
+        }
+
+        return values.ToArray();
+    }
+
+    private static bool IsAutoCrossActive()
+    {
+        var times = AutoCrossTimes;
+        if (times.Length == 0)
+        {
+            return false;
+        }
+
+        var elapsed = (Stopwatch.GetTimestamp() - PadStartTimestamp) / (double)Stopwatch.Frequency;
+        foreach (var time in times)
+        {
+            if (elapsed >= time && elapsed < time + 0.4)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     [DllImport("user32.dll")]
