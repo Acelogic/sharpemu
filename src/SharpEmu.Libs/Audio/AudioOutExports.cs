@@ -27,7 +27,7 @@ public static class AudioOutExports
             int channels,
             int bytesPerSample,
             bool isFloat,
-            WinMmAudioPort? backend)
+            IHostAudioPort? backend)
         {
             UserId = userId;
             Type = type;
@@ -48,7 +48,7 @@ public static class AudioOutExports
         public int Channels { get; }
         public int BytesPerSample { get; }
         public bool IsFloat { get; }
-        public WinMmAudioPort? Backend { get; }
+        public IHostAudioPort? Backend { get; }
         public int BufferByteLength =>
             checked((int)BufferLength * Channels * BytesPerSample);
 
@@ -103,12 +103,20 @@ public static class AudioOutExports
             return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
 
-        WinMmAudioPort? backend = null;
+        IHostAudioPort? backend = null;
         string backendName;
         try
         {
-            backend = new WinMmAudioPort(frequency);
-            backendName = "winmm";
+            if (OperatingSystem.IsMacOS())
+            {
+                backend = new CoreAudioPort(frequency);
+                backendName = "coreaudio";
+            }
+            else
+            {
+                backend = new WinMmAudioPort(frequency);
+                backendName = "winmm";
+            }
         }
         catch (Exception exception)
         {
