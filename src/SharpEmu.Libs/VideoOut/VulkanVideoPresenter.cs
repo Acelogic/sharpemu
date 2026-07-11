@@ -1660,11 +1660,29 @@ internal static unsafe class VulkanVideoPresenter
 
                     _physicalDevice = device;
                     _queueFamilyIndex = index;
+                    LogSelectedDevice(device);
                     return;
                 }
             }
 
             throw new InvalidOperationException("No Vulkan graphics/present queue was found.");
+        }
+
+        // Names the selected GPU up front. A software rasterizer (llvmpipe /
+        // lavapipe / SwiftShader) reports here and usually lacks the device
+        // features the translated shaders need, so "no video" reports can be
+        // told apart from a real windowing or present failure at a glance.
+        private void LogSelectedDevice(PhysicalDevice device)
+        {
+            PhysicalDeviceProperties properties;
+            _vk.GetPhysicalDeviceProperties(device, &properties);
+            var name = SilkMarshal.PtrToString((nint)properties.DeviceName) ?? "unknown";
+            var apiMajor = (properties.ApiVersion >> 22) & 0x7F;
+            var apiMinor = (properties.ApiVersion >> 12) & 0x3FF;
+            var apiPatch = properties.ApiVersion & 0xFFF;
+            Console.Error.WriteLine(
+                $"[LOADER][INFO] Vulkan device: {name} " +
+                $"(type={properties.DeviceType}, api={apiMajor}.{apiMinor}.{apiPatch})");
         }
 
         private void CreateDevice()
