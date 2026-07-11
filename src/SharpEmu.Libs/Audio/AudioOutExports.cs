@@ -112,6 +112,11 @@ public static class AudioOutExports
                 backend = new CoreAudioPort(frequency);
                 backendName = "coreaudio";
             }
+            else if (OperatingSystem.IsLinux())
+            {
+                backend = new AlsaAudioPort(frequency);
+                backendName = "alsa";
+            }
             else
             {
                 backend = new WinMmAudioPort(frequency);
