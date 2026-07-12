@@ -170,9 +170,16 @@ internal static unsafe class VulkanVideoPresenter
     private static readonly object _gate = new();
     private static readonly Queue<object> _pendingGuestWork = new();
     private static readonly Dictionary<ulong, uint> _availableGuestImages = new();
+    // Display buffers are registered before the game has rendered into them.
+    // Keep that registration distinct from render targets we can actually
+    // present as Vulkan images, otherwise a raw VideoOut buffer replaces a
+    // valid frame and blocks the translated-draw fallback.
+    private static readonly Dictionary<ulong, uint> _queuedGpuGuestImages = new();
     private static readonly Dictionary<ulong, uint> _gpuGuestImages = new();
     private static readonly HashSet<(ulong Address, uint Width, uint Height)>
         _tracedGuestImageSubmissions = [];
+    private static readonly HashSet<(ulong Address, uint Width, uint Height)>
+        _tracedUnbackedGuestImageSubmissions = [];
     private static Thread? _thread;
     private static Presentation? _latestPresentation;
     private static byte[]? _copyFragmentSpirv;
@@ -470,6 +477,7 @@ internal static unsafe class VulkanVideoPresenter
             if (guestTextureFormat != 0)
             {
                 _availableGuestImages[target.Address] = guestTextureFormat;
+                _queuedGpuGuestImages[target.Address] = guestTextureFormat;
             }
 
             EnqueueGuestWorkLocked(
@@ -585,6 +593,7 @@ internal static unsafe class VulkanVideoPresenter
         lock (_gate)
         {
             var known = _availableGuestImages.ContainsKey(address);
+            var gpuBacked = _queuedGpuGuestImages.ContainsKey(address);
             if (ShouldTracePresentedGuestImageContentsForDiagnostics())
             {
                 Console.Error.WriteLine(
@@ -607,6 +616,19 @@ internal static unsafe class VulkanVideoPresenter
                     Console.Error.WriteLine(
                         $"[LOADER][WARN] vk.submit_guest_image_unknown addr=0x{address:X16} " +
                         $"{width}x{height} - flip target was never registered as a render output");
+                }
+
+                return false;
+            }
+
+            if (!gpuBacked)
+            {
+                if (_tracedUnbackedGuestImageSubmissions.Add((address, width, height)))
+                {
+                    Console.Error.WriteLine(
+                        $"[LOADER][WARN] vk.submit_guest_image_unbacked addr=0x{address:X16} " +
+                        $"{width}x{height} - flip target has no queued GPU render target; " +
+                        "using the draw fallback");
                 }
 
                 return false;
@@ -4872,6 +4894,7 @@ internal static unsafe class VulkanVideoPresenter
                     lock (_gate)
                     {
                         _availableGuestImages.Remove(work.Target.Address);
+                        _queuedGpuGuestImages.Remove(work.Target.Address);
                         _gpuGuestImages.Remove(work.Target.Address);
                     }
                 }
