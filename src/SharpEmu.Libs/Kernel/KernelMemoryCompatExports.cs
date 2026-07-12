@@ -164,12 +164,11 @@ public static class KernelMemoryCompatExports
     private static unsafe bool VirtualProtect(nint lpAddress, nuint dwSize, uint flNewProtect, out uint lpflOldProtect) =>
         HostMemory.Protect((void*)lpAddress, dwSize, flNewProtect, out lpflOldProtect);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern nint VirtualAlloc(nint lpAddress, nuint dwSize, uint flAllocationType, uint flProtect);
+    private static unsafe nint VirtualAlloc(nint lpAddress, nuint dwSize, uint flAllocationType, uint flProtect) =>
+        (nint)HostMemory.Alloc((void*)lpAddress, dwSize, flAllocationType, flProtect);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool VirtualFree(nint lpAddress, nuint dwSize, uint dwFreeType);
+    private static unsafe bool VirtualFree(nint lpAddress, nuint dwSize, uint dwFreeType) =>
+        HostMemory.Free((void*)lpAddress, dwSize, dwFreeType);
 
     private sealed class OpenDirectory
     {
