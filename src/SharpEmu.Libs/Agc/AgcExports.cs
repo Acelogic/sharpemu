@@ -3946,7 +3946,10 @@ public static class AgcExports
             if (descriptor.Address != 0)
             {
                 var storageSource = new byte[(int)sourceByteCount];
-                if (ctx.Memory.TryRead(descriptor.Address, storageSource) &&
+                if ((ctx.Memory.TryRead(descriptor.Address, storageSource) ||
+                     KernelMemoryCompatExports.TryReadTrackedLibcHeapGpuAlias(
+                         descriptor.Address,
+                         storageSource)) &&
                     storageSource.AsSpan().IndexOfAnyExcept((byte)0) >= 0)
                 {
                     initialPixels = storageSource;
@@ -3972,7 +3975,10 @@ public static class AgcExports
         }
 
         var source = new byte[(int)sourceByteCount];
-        if (!ctx.Memory.TryRead(descriptor.Address, source))
+        if (!ctx.Memory.TryRead(descriptor.Address, source) &&
+            !KernelMemoryCompatExports.TryReadTrackedLibcHeapGpuAlias(
+                descriptor.Address,
+                source))
         {
             TraceTextureFallback(
                 descriptor,
