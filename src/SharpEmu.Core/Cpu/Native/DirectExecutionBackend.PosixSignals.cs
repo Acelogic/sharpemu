@@ -44,6 +44,9 @@ public sealed unsafe partial class DirectExecutionBackend
 	private const int DarwinUcontextMcontextOffset = 48;
 	private const int DarwinMcontextErrOffset = 4;
 	private const int DarwinMcontextFaultAddressOffset = 8;
+	private const int DarwinMcontextFloatStateOffset = 16 + (21 * sizeof(ulong));
+	private const int DarwinFloatStateXmmOffset = 40 + (8 * 16);
+	private const int DarwinXmmRegisterSize = 16;
 	private const int LinuxUcontextGregsOffset = 40;
 	private const int LinuxGregsErrOffset = 19 * 8;
 
@@ -61,6 +64,7 @@ public sealed unsafe partial class DirectExecutionBackend
 	private static bool _posixSignalWarmup;
 	private static readonly nint[] _posixPreviousActions = new nint[32];
 	private static int _posixSignalTraceCount;
+	private static int _recoveredSse4aInstructionCount;
 
 	[ThreadStatic]
 	private static int _posixSignalHandlerDepth;
@@ -118,6 +122,7 @@ public sealed unsafe partial class DirectExecutionBackend
 		{
 			*(byte**)(fakeUcontext + DarwinUcontextMcontextOffset) = fakeMcontext;
 		}
+		_ = TryRecoverPosixSse4aInstruction(GetPosixRegisterBase((nint)fakeUcontext));
 
 		_posixSignalWarmup = true;
 		try
@@ -215,6 +220,10 @@ public sealed unsafe partial class DirectExecutionBackend
 		{
 			return false;
 		}
+		if (signal == PosixSigIll && TryRecoverPosixSse4aInstruction(registers))
+		{
+			return true;
+		}
 
 		byte* contextRecord = stackalloc byte[Win64ContextSize];
 		new Span<byte>(contextRecord, Win64ContextSize).Clear();
@@ -281,6 +290,60 @@ public sealed unsafe partial class DirectExecutionBackend
 		{
 			*(ulong*)(registers + offsets[i]) = ReadCtxU64(contextRecord, CTX_RAX + i * 8);
 		}
+		return true;
+	}
+
+	private static bool TryRecoverPosixSse4aInstruction(byte* registers)
+	{
+		if (!OperatingSystem.IsMacOS() || registers == null)
+		{
+			return false;
+		}
+
+		var rip = *(ulong*)(registers + PosixRegisterOffsets[^1]);
+		if (rip < 0x10000)
+		{
+			return false;
+		}
+
+		var code = (byte*)rip;
+		// EXTRQ xmm, imm8, imm8 (AMD SSE4a). Rosetta supports the surrounding
+		// AVX code used by PS5 games but raises SIGILL for this AMD-only opcode.
+		if (code[0] != 0x66 || code[1] != 0x0F || code[2] != 0x78 ||
+			(code[3] & 0xC0) != 0xC0)
+		{
+			return false;
+		}
+
+		var xmmIndex = code[3] & 0x07;
+		var length = code[4] & 0x3F;
+		var index = code[5] & 0x3F;
+		if (length == 0)
+		{
+			length = 64;
+		}
+
+		var xmm = registers + DarwinMcontextFloatStateOffset + DarwinFloatStateXmmOffset +
+			(xmmIndex * DarwinXmmRegisterSize);
+		var value = *(ulong*)xmm;
+		var extracted = index < 64 ? value >> index : 0;
+		if (length < 64)
+		{
+			extracted &= (1UL << length) - 1;
+		}
+
+		*(ulong*)xmm = extracted;
+		*(ulong*)(xmm + sizeof(ulong)) = 0;
+		*(ulong*)(registers + PosixRegisterOffsets[^1]) = rip + 6;
+
+		var count = Interlocked.Increment(ref _recoveredSse4aInstructionCount);
+		if (count <= 16 || count % 1024 == 0)
+		{
+			Console.Error.WriteLine(
+				$"[LOADER][INFO] Emulated SSE4a EXTRQ #{count} at 0x{rip:X16}: xmm{xmmIndex}, length={length}, index={index}");
+			Console.Error.Flush();
+		}
+
 		return true;
 	}
 

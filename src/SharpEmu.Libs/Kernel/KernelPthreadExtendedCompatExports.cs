@@ -175,6 +175,13 @@ public static class KernelPthreadExtendedCompatExports
     }
 
     [SysAbiExport(
+        Nid = "+U1R4WtXvoc",
+        ExportName = "pthread_detach",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadDetach(CpuContext ctx) => PthreadDetach(ctx);
+
+    [SysAbiExport(
         Nid = "How7B8Oet6k",
         ExportName = "scePthreadGetname",
         Target = Generation.Gen4 | Generation.Gen5,

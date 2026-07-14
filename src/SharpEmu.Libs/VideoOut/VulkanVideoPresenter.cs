@@ -177,7 +177,7 @@ internal static unsafe class VulkanVideoPresenter
     // Keep that registration distinct from render targets we can actually
     // present as Vulkan images, otherwise a raw VideoOut buffer replaces a
     // valid frame and blocks the translated-draw fallback.
-    private static readonly Dictionary<ulong, uint> _queuedGpuGuestImages = new();
+    private static readonly Dictionary<ulong, QueuedGpuGuestImage> _queuedGpuGuestImages = new();
     private static readonly Dictionary<ulong, uint> _gpuGuestImages = new();
     private static readonly HashSet<(ulong Address, uint Width, uint Height)>
         _tracedGuestImageSubmissions = [];
@@ -196,6 +196,13 @@ internal static unsafe class VulkanVideoPresenter
     private static bool _splashHidden;
     private static long _enqueuedGuestWorkSequence;
     private static long _completedGuestWorkSequence;
+
+    private readonly record struct QueuedGpuGuestImage(
+        ulong Address,
+        uint Format,
+        uint Width,
+        uint Height,
+        long Sequence);
 
     private static bool ShouldTracePresentedGuestImageContentsForDiagnostics()
     {
@@ -503,7 +510,12 @@ internal static unsafe class VulkanVideoPresenter
             if (guestTextureFormat != 0)
             {
                 _availableGuestImages[target.Address] = guestTextureFormat;
-                _queuedGpuGuestImages[target.Address] = guestTextureFormat;
+                _queuedGpuGuestImages[target.Address] = new QueuedGpuGuestImage(
+                    target.Address,
+                    guestTextureFormat,
+                    target.Width,
+                    target.Height,
+                    _enqueuedGuestWorkSequence + 1);
             }
 
             EnqueueGuestWorkLocked(
@@ -620,6 +632,7 @@ internal static unsafe class VulkanVideoPresenter
         {
             var known = _availableGuestImages.ContainsKey(address);
             var gpuBacked = _queuedGpuGuestImages.ContainsKey(address);
+            var presentationAddress = address;
             if (ShouldTraceGuestImageSubmissionsForDiagnostics())
             {
                 Console.Error.WriteLine(
@@ -649,6 +662,30 @@ internal static unsafe class VulkanVideoPresenter
 
             if (!gpuBacked)
             {
+                var minimumWidth = Math.Max(width / 4, 1);
+                var minimumHeight = Math.Max(height / 4, 1);
+                var targetAspect = height == 0 ? 0d : (double)width / height;
+                var alias = _queuedGpuGuestImages.Values
+                    .Where(candidate =>
+                        candidate.Width >= minimumWidth &&
+                        candidate.Height >= minimumHeight &&
+                        candidate.Height != 0 &&
+                        Math.Abs(((double)candidate.Width / candidate.Height) - targetAspect) <= 0.05d)
+                    .OrderByDescending(candidate => candidate.Sequence)
+                    .ThenByDescending(candidate => (ulong)candidate.Width * candidate.Height)
+                    .FirstOrDefault();
+                if (alias.Address != 0)
+                {
+                    presentationAddress = alias.Address;
+                    gpuBacked = true;
+                    Console.Error.WriteLine(
+                        $"[LOADER][INFO] vk.submit_guest_image_alias target=0x{address:X16} {width}x{height} " +
+                        $"source=0x{alias.Address:X16} {alias.Width}x{alias.Height} seq={alias.Sequence}");
+                }
+            }
+
+            if (!gpuBacked)
+            {
                 if (_tracedUnbackedGuestImageSubmissions.Add((address, width, height)))
                 {
                     Console.Error.WriteLine(
@@ -674,7 +711,7 @@ internal static unsafe class VulkanVideoPresenter
                 // for this frame.  Do not expose it until those draws finish.
                 RequiredGuestWorkSequence: _enqueuedGuestWorkSequence,
                 IsSplash: false,
-                GuestImageAddress: address);
+                GuestImageAddress: presentationAddress);
             if (_thread is not null)
             {
                 return true;

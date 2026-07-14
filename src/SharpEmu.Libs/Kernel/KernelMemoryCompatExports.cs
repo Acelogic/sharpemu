@@ -106,6 +106,7 @@ public static class KernelMemoryCompatExports
     private static readonly Dictionary<ulong, string> _mappedRegionNames = new();
     private static readonly Dictionary<ulong, ulong> _tlsModuleBlocks = new();
     private static readonly Dictionary<string, string> _guestMounts = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> _readOnlyGuestMounts = new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> _tracedStatResults = new(StringComparer.Ordinal);
     private static readonly HashSet<string> _negativeStatCache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly ConcurrentDictionary<string, ulong> _aprFileSizeCache = new(StringComparer.OrdinalIgnoreCase);
@@ -182,7 +183,7 @@ public static class KernelMemoryCompatExports
     private readonly record struct MappedRegion(ulong Address, ulong Length, int Protection, bool IsFlexible, bool IsDirect, ulong DirectStart);
     private readonly record struct BatchMapEntry(ulong Start, ulong Offset, ulong Length, byte Protection, byte Type, int Operation);
 
-    public static void RegisterGuestPathMount(string guestMountPoint, string hostRoot)
+    public static void RegisterGuestPathMount(string guestMountPoint, string hostRoot, bool readOnly = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(guestMountPoint);
         ArgumentException.ThrowIfNullOrWhiteSpace(hostRoot);
@@ -194,10 +195,30 @@ public static class KernelMemoryCompatExports
         }
 
         var normalizedHostRoot = Path.GetFullPath(hostRoot);
-        Directory.CreateDirectory(normalizedHostRoot);
+        if (readOnly)
+        {
+            if (!Directory.Exists(normalizedHostRoot))
+            {
+                throw new DirectoryNotFoundException(
+                    $"Read-only guest mount source was not found: {normalizedHostRoot}");
+            }
+        }
+        else
+        {
+            Directory.CreateDirectory(normalizedHostRoot);
+        }
+
         lock (_guestMountGate)
         {
             _guestMounts[normalizedMountPoint] = normalizedHostRoot;
+            if (readOnly)
+            {
+                _readOnlyGuestMounts.Add(normalizedMountPoint);
+            }
+            else
+            {
+                _readOnlyGuestMounts.Remove(normalizedMountPoint);
+            }
         }
 
         lock (_statCacheGate)
@@ -205,6 +226,20 @@ public static class KernelMemoryCompatExports
             _negativeStatCache.RemoveWhere(path =>
                 string.Equals(path, normalizedMountPoint, StringComparison.OrdinalIgnoreCase) ||
                 path.StartsWith(normalizedMountPoint + "/", StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    public static void ClearGuestPathMounts()
+    {
+        lock (_guestMountGate)
+        {
+            _guestMounts.Clear();
+            _readOnlyGuestMounts.Clear();
+        }
+
+        lock (_statCacheGate)
+        {
+            _negativeStatCache.Clear();
         }
     }
 
@@ -2051,6 +2086,77 @@ public static class KernelMemoryCompatExports
     public static int KernelRead(CpuContext ctx) => KernelReadUnderscore(ctx);
 
     [SysAbiExport(
+        Nid = "ezv-RSBNKqI",
+        ExportName = "pread",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPread(CpuContext ctx) => KernelPreadCore(ctx);
+
+    [SysAbiExport(
+        Nid = "+r3rMFwItV4",
+        ExportName = "sceKernelPread",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int KernelPread(CpuContext ctx) => KernelPreadCore(ctx);
+
+    private static int KernelPreadCore(CpuContext ctx)
+    {
+        var fd = unchecked((int)ctx[CpuRegister.Rdi]);
+        var bufferAddress = ctx[CpuRegister.Rsi];
+        var requestedValue = ctx[CpuRegister.Rdx];
+        var offset = unchecked((long)ctx[CpuRegister.Rcx]);
+        if (requestedValue > int.MaxValue || offset < 0 ||
+            (requestedValue > 0 && bufferAddress == 0))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
+        var requested = unchecked((int)requestedValue);
+        if (requested == 0)
+        {
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        FileStream? stream;
+        lock (_fdGate)
+        {
+            _openFiles.TryGetValue(fd, out stream);
+        }
+
+        if (stream is null)
+        {
+            LogIoTrace("pread", $"fd:{fd}", $"fd={fd} offset={offset} req={requested} result=badfd");
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
+        }
+
+        var buffer = GC.AllocateUninitializedArray<byte>(requested);
+        int read;
+        try
+        {
+            read = RandomAccess.Read(stream.SafeFileHandle, buffer, offset);
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException or ArgumentException)
+        {
+            LogIoTrace("pread", stream.Name, $"fd={fd} offset={offset} req={requested} result=io_error ex={ex.Message}");
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
+        if (read > 0 && !ctx.Memory.TryWrite(bufferAddress, buffer.AsSpan(0, read)))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        LogIoTrace(
+            "pread",
+            stream.Name,
+            $"fd={fd} offset={offset} req={requested} read={read} preview='{PreviewIoBytes(buffer, read, 64)}' hex={PreviewIoHex(buffer, read, 32)}");
+
+        ctx[CpuRegister.Rax] = unchecked((ulong)read);
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
         Nid = "Oy6IpwgtYOk",
         ExportName = "lseek",
         Target = Generation.Gen4 | Generation.Gen5,
@@ -2815,7 +2921,37 @@ public static class KernelMemoryCompatExports
 
                 if (!reserved)
                 {
-                    mappedAddress = 0;
+                    // Rosetta places the x86-64 process stack in the low
+                    // address window used by some fixed PS5 mappings. Do not
+                    // clobber that host memory: relocate the mapping and
+                    // return the actual address through the in/out pointer.
+                    // Titles that consume the documented result can continue
+                    // while titles that truly require the fixed address still
+                    // fail safely in guest code instead of corrupting the host.
+                    if (OperatingSystem.IsMacOS())
+                    {
+                        var fallbackAddress = AlignUp(
+                            _nextVirtualAddress == 0 ? DefaultMapSearchBase : _nextVirtualAddress,
+                            effectiveAlignment);
+                        reserved = TryReserveGuestVirtualRange(
+                            ctx,
+                            fallbackAddress,
+                            length,
+                            protection,
+                            effectiveAlignment,
+                            out mappedAddress);
+
+                        if (reserved && ShouldTraceDirectMemory())
+                        {
+                            Console.Error.WriteLine(
+                                $"[LOADER][WARN] map_direct relocated fixed mapping: requested=0x{requestedAddress:X16} mapped=0x{mappedAddress:X16} len=0x{length:X16}");
+                        }
+                    }
+
+                    if (!reserved)
+                    {
+                        mappedAddress = 0;
+                    }
                 }
             }
             else
@@ -4741,9 +4877,30 @@ public static class KernelMemoryCompatExports
     public static bool IsReadOnlyGuestMutationPath(string guestPath)
     {
         var normalized = NormalizeGuestStatCachePath(guestPath);
-        return normalized is not null &&
-               (string.Equals(normalized, "/app0", StringComparison.OrdinalIgnoreCase) ||
-                normalized.StartsWith("/app0/", StringComparison.OrdinalIgnoreCase));
+        if (normalized is null)
+        {
+            return false;
+        }
+
+        if (string.Equals(normalized, "/app0", StringComparison.OrdinalIgnoreCase) ||
+            normalized.StartsWith("/app0/", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        lock (_guestMountGate)
+        {
+            foreach (var mountPoint in _readOnlyGuestMounts)
+            {
+                if (string.Equals(normalized, mountPoint, StringComparison.OrdinalIgnoreCase) ||
+                    normalized.StartsWith(mountPoint + "/", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private static bool TryReadCString(CpuContext ctx, ulong address, ulong maxLength, out byte[] bytes)
