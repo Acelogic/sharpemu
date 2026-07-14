@@ -225,9 +225,9 @@ internal static unsafe class VulkanVideoPresenter
         if (string.Equals(mode, "present", StringComparison.OrdinalIgnoreCase))
         {
             // A 4K Vulkan readback is deliberately synchronous and can take
-            // several seconds on Linux.  The lightweight "present" mode only
-            // needs one proof that the final image is non-black.
-            return frame == 1;
+            // several seconds on Linux.  Keep the lightweight "present" mode
+            // bounded while still showing whether early boot frames evolve.
+            return frame <= 8;
         }
 
         return string.Equals(mode, "1", StringComparison.Ordinal) &&
@@ -858,6 +858,8 @@ internal static unsafe class VulkanVideoPresenter
             (5, 4) => GuestFormatR16G16Uint,
             (5, 5) => GuestFormatR16G16Sint,
             (5, 7) => GuestFormatR16G16Sfloat,
+            (6, 7) => 7,
+            (7, 7) => 7,
             (10, 4) => GuestFormatR8G8B8A8Uint,
             (10, 5) => GuestFormatR8G8B8A8Sint,
             (10, _) => 56,
@@ -4528,6 +4530,8 @@ internal static unsafe class VulkanVideoPresenter
                 (5, 4) => Format.R16G16Uint,
                 (5, 5) => Format.R16G16Sint,
                 (5, 7) => Format.R16G16Sfloat,
+                (6, 7) => Format.B10G11R11UfloatPack32,
+                (7, 7) => Format.B10G11R11UfloatPack32,
                 (9, _) => Format.A2R10G10B10UnormPack32,
                 (10, 4) => Format.R8G8B8A8Uint,
                 (10, 5) => Format.R8G8B8A8Sint,
@@ -5256,6 +5260,7 @@ internal static unsafe class VulkanVideoPresenter
             format switch
             {
                 Format.A2R10G10B10UnormPack32 => 9,
+                Format.B10G11R11UfloatPack32 => 7,
                 Format.R8G8B8A8Unorm => 56,
                 Format.R16G16Unorm => 5,
                 Format.R16G16B16A16Unorm => 12,
@@ -5927,6 +5932,7 @@ internal static unsafe class VulkanVideoPresenter
                 Format.R8G8B8A8Uint or
                 Format.R8G8B8A8Sint or
                 Format.R8G8B8A8Unorm or
+                Format.B10G11R11UfloatPack32 or
                 Format.A2R10G10B10UnormPack32 => 4,
                 Format.R16G16B16A16Uint or
                 Format.R16G16B16A16Sint or

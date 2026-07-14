@@ -292,6 +292,12 @@ internal static partial class Gen5SpirvTranslator
                 case "VXorB32":
                     result = EmitIntegerBinary(instruction, SpirvOp.BitwiseXor);
                     break;
+                case "VXnorB32":
+                    result = _module.AddInstruction(
+                        SpirvOp.Not,
+                        _uintType,
+                        EmitIntegerBinary(instruction, SpirvOp.BitwiseXor));
+                    break;
                 case "VNotB32":
                     result = _module.AddInstruction(
                         SpirvOp.Not,

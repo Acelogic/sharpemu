@@ -26,6 +26,23 @@ internal static class GpuWaitRegistry
     private static readonly object _gate = new();
     private static readonly Dictionary<ulong, List<WaitingDcb>> _waiters = new();
 
+    public static int Count
+    {
+        get
+        {
+            lock (_gate)
+            {
+                var total = 0;
+                foreach (var (_, list) in _waiters)
+                {
+                    total += list.Count;
+                }
+
+                return total;
+            }
+        }
+    }
+
     public static void Register(ulong address, WaitingDcb waiter)
     {
         waiter.WaitAddress = address;
@@ -86,14 +103,15 @@ internal static class GpuWaitRegistry
     public static bool Compare(in WaitingDcb waiter, ulong value)
     {
         var masked = value & waiter.Mask;
+        var reference = waiter.ReferenceValue & waiter.Mask;
         return waiter.CompareFunction switch
         {
-            1 => masked < waiter.ReferenceValue,
-            2 => masked <= waiter.ReferenceValue,
-            3 => masked == waiter.ReferenceValue,
-            4 => masked != waiter.ReferenceValue,
-            5 => masked >= waiter.ReferenceValue,
-            6 => masked > waiter.ReferenceValue,
+            1 => masked < reference,
+            2 => masked <= reference,
+            3 => masked == reference,
+            4 => masked != reference,
+            5 => masked >= reference,
+            6 => masked > reference,
             // 0 is "always" in the PM4 encoding and 7 is reserved; treating both as
             // satisfied keeps a malformed packet from suspending its DCB forever.
             _ => true,

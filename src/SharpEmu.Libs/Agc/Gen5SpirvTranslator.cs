@@ -1029,6 +1029,7 @@ internal static partial class Gen5SpirvTranslator
             if (instruction.Opcode is
                 "SNop" or
                 "SWaitcnt" or
+                "SWaitcntVscnt" or
                 "SInstPrefetch" or
                 "STtraceData" or
                 "VInterpMovF32")
@@ -1125,6 +1126,52 @@ internal static partial class Gen5SpirvTranslator
 
             switch (instruction.Opcode)
             {
+                case "DsAddU32":
+                {
+                    if (instruction.Sources.Count < 2)
+                    {
+                        error = "missing LDS atomic-add source";
+                        return false;
+                    }
+
+                    var address = GetRawSource(instruction, 0);
+                    var data = GetRawSource(instruction, 1);
+                    EmitExecConditional(() =>
+                    {
+                        _module.AddInstruction(
+                            SpirvOp.AtomicIAdd,
+                            _uintType,
+                            LdsPointer(address, EffectiveDsOffsetBytes(control.Offset0)),
+                            UInt(2),
+                            UInt(0x108),
+                            data);
+                    });
+                    return true;
+                }
+                case "DsWrxchgRtnB32":
+                {
+                    if (instruction.Destinations.Count < 1 ||
+                        instruction.Sources.Count < 2)
+                    {
+                        error = "missing LDS atomic-exchange operand";
+                        return false;
+                    }
+
+                    var address = GetRawSource(instruction, 0);
+                    var data = GetRawSource(instruction, 1);
+                    EmitExecConditional(() =>
+                    {
+                        var original = _module.AddInstruction(
+                            SpirvOp.AtomicExchange,
+                            _uintType,
+                            LdsPointer(address, EffectiveDsOffsetBytes(control.Offset0)),
+                            UInt(2),
+                            UInt(0x108),
+                            data);
+                        StoreV(instruction.Destinations[0].Value, original);
+                    });
+                    return true;
+                }
                 case "DsWriteB32":
                 {
                     if (instruction.Sources.Count < 2)
@@ -1153,6 +1200,44 @@ internal static partial class Gen5SpirvTranslator
                     StoreLds(
                         LdsPointer(address, offset + sizeof(uint)),
                         GetRawSource(instruction, 2));
+                    return true;
+                }
+                case "DsWriteB96":
+                {
+                    if (instruction.Sources.Count < 4)
+                    {
+                        error = "missing LDS write96 source";
+                        return false;
+                    }
+
+                    var address = GetRawSource(instruction, 0);
+                    var offset = EffectiveDsOffsetBytes(control.Offset0);
+                    for (var component = 0; component < 3; component++)
+                    {
+                        StoreLds(
+                            LdsPointer(address, offset + (uint)(component * sizeof(uint))),
+                            GetRawSource(instruction, component + 1));
+                    }
+
+                    return true;
+                }
+                case "DsWriteB128":
+                {
+                    if (instruction.Sources.Count < 5)
+                    {
+                        error = "missing LDS write128 source";
+                        return false;
+                    }
+
+                    var address = GetRawSource(instruction, 0);
+                    var offset = EffectiveDsOffsetBytes(control.Offset0);
+                    for (var component = 0; component < 4; component++)
+                    {
+                        StoreLds(
+                            LdsPointer(address, offset + (uint)(component * sizeof(uint))),
+                            GetRawSource(instruction, component + 1));
+                    }
+
                     return true;
                 }
                 case "DsWrite2B32":
@@ -1194,6 +1279,50 @@ internal static partial class Gen5SpirvTranslator
                     StoreV(instruction.Destinations[0].Value, value);
                     return true;
                 }
+                case "DsReadB64":
+                {
+                    if (instruction.Destinations.Count < 2 ||
+                        instruction.Sources.Count < 1)
+                    {
+                        error = "missing LDS read64 operand";
+                        return false;
+                    }
+
+                    var address = GetRawSource(instruction, 0);
+                    var offset = EffectiveDsOffsetBytes(control.Offset0);
+                    for (var component = 0; component < 2; component++)
+                    {
+                        var value = Load(
+                            _uintType,
+                            LdsPointer(address, offset + (uint)(component * sizeof(uint))));
+                        StoreV(instruction.Destinations[component].Value, value);
+                    }
+
+                    return true;
+                }
+                case "DsReadB96":
+                case "DsReadB128":
+                {
+                    var componentCount = instruction.Opcode == "DsReadB96" ? 3 : 4;
+                    if (instruction.Destinations.Count < componentCount ||
+                        instruction.Sources.Count < 1)
+                    {
+                        error = $"missing LDS read{componentCount * 32} operand";
+                        return false;
+                    }
+
+                    var address = GetRawSource(instruction, 0);
+                    var offset = EffectiveDsOffsetBytes(control.Offset0);
+                    for (var component = 0; component < componentCount; component++)
+                    {
+                        var value = Load(
+                            _uintType,
+                            LdsPointer(address, offset + (uint)(component * sizeof(uint))));
+                        StoreV(instruction.Destinations[component].Value, value);
+                    }
+
+                    return true;
+                }
                 case "DsRead2B32":
                 case "DsRead2St64B32":
                 {
@@ -1218,6 +1347,55 @@ internal static partial class Gen5SpirvTranslator
                             EffectiveDsOffsetBytes(control.Offset1, st64)));
                     StoreV(instruction.Destinations[0].Value, first);
                     StoreV(instruction.Destinations[1].Value, second);
+                    return true;
+                }
+                case "DsPermuteB32":
+                {
+                    if (instruction.Destinations.Count < 1 ||
+                        instruction.Sources.Count < 2 ||
+                        _subgroupInvocationIdInput == 0)
+                    {
+                        error = "missing LDS permute operand or subgroup support";
+                        return false;
+                    }
+
+                    var address = GetRawSource(instruction, 0);
+                    var data = GetRawSource(instruction, 1);
+                    var currentLane = BitwiseAnd(
+                        Load(_uintType, _subgroupInvocationIdInput),
+                        UInt(RdnaWaveLaneCount - 1));
+                    var result = UInt(0);
+                    for (var sourceLane = 0u; sourceLane < RdnaWaveLaneCount; sourceLane++)
+                    {
+                        var sourceAddress = _module.AddInstruction(
+                            SpirvOp.GroupNonUniformShuffle,
+                            _uintType,
+                            UInt(3),
+                            address,
+                            UInt(sourceLane));
+                        var targetLane = BitwiseAnd(
+                            ShiftRightLogical(sourceAddress, UInt(2)),
+                            UInt(RdnaWaveLaneCount - 1));
+                        var matches = _module.AddInstruction(
+                            SpirvOp.IEqual,
+                            _boolType,
+                            targetLane,
+                            currentLane);
+                        var sourceData = _module.AddInstruction(
+                            SpirvOp.GroupNonUniformShuffle,
+                            _uintType,
+                            UInt(3),
+                            data,
+                            UInt(sourceLane));
+                        result = _module.AddInstruction(
+                            SpirvOp.Select,
+                            _uintType,
+                            matches,
+                            sourceData,
+                            result);
+                    }
+
+                    StoreV(instruction.Destinations[0].Value, result);
                     return true;
                 }
                 default:
@@ -2429,7 +2607,10 @@ internal static partial class Gen5SpirvTranslator
 
         private bool UsesSubgroupShuffle() =>
             _state.Program.Instructions.Any(instruction =>
-                instruction.Opcode is "VPermlane16B32" or "VPermlanex16B32");
+                instruction.Opcode is
+                    "VPermlane16B32" or
+                    "VPermlanex16B32" or
+                    "DsPermuteB32");
 
         private bool UsesWaveControl() =>
             _state.Program.Instructions.Any(instruction =>
