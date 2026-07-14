@@ -119,6 +119,14 @@ public static class AudioOut2Exports
         // A real context advance is paced by the audio device. Give the guest
         // audio worker a small scheduling boundary instead of letting it spin
         // through millions of synthetic advances per second.
+        if (GuestThreadExecution.RequestCurrentThreadBlock(
+                ctx,
+                "sceAudioOut2ContextAdvance",
+                blockDeadlineTimestamp: GuestThreadExecution.ComputeDeadlineTimestamp(TimeSpan.FromMilliseconds(5))))
+        {
+            return ctx.SetReturn(0);
+        }
+
         Thread.Sleep(5);
         return ctx.SetReturn(0);
     }

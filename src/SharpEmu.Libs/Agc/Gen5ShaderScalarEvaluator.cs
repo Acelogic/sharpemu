@@ -372,6 +372,56 @@ internal static class Gen5ShaderScalarEvaluator
                     : null));
         }
 
+        // Scalar evaluation follows the statically selected path through a
+        // shader.  SPIR-V generation still has to compile every decoded block,
+        // including blocks skipped by a forward scalar branch.  Direct image
+        // resources in user data are already valid at shader entry, so retain
+        // those bindings for skipped blocks instead of failing translation with
+        // "unresolved image binding".  Do not invent bindings for zeroed
+        // descriptors; those may depend on scalar loads from the selected path.
+        var resolvedImagePcs = resolved.Select(binding => binding.Pc).ToHashSet();
+        foreach (var instruction in state.Program.Instructions)
+        {
+            if (resolvedImagePcs.Contains(instruction.Pc) ||
+                instruction.Control is not Gen5ImageControl image ||
+                !TryCopyRegisters(
+                    initialScalarRegisters,
+                    image.ScalarResource,
+                    ImageDescriptorDwords,
+                    out var resourceDescriptor) ||
+                !resourceDescriptor.Any(static value => value != 0))
+            {
+                continue;
+            }
+
+            IReadOnlyList<uint> samplerDescriptor = [];
+            if (UsesSampler(instruction.Opcode) &&
+                !TryCopyRegisters(
+                    initialScalarRegisters,
+                    image.ScalarSampler,
+                    SamplerDescriptorDwords,
+                    out samplerDescriptor))
+            {
+                continue;
+            }
+
+            resolved.Add(new Gen5ImageBinding(
+                instruction.Pc,
+                instruction.Opcode,
+                image,
+                resourceDescriptor,
+                samplerDescriptor,
+                instruction.Opcode is "ImageLoadMip" or "ImageStoreMip" &&
+                TryResolveVectorConstantBefore(
+                    state.Program,
+                    instruction.Pc,
+                    image.GetAddressRegister(2),
+                    out var mipLevel)
+                    ? mipLevel
+                    : null));
+            resolvedImagePcs.Add(instruction.Pc);
+        }
+
         evaluation = new Gen5ShaderEvaluation(
             initialScalarRegisters,
             scalarRegisters,

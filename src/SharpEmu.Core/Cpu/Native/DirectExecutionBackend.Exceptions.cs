@@ -342,15 +342,13 @@ public sealed partial class DirectExecutionBackend
 		}
 
 		var count = Interlocked.Increment(ref _ignoredGuestInt41Count);
-		if (count > 16)
-		{
-			return false;
-		}
-
 		WriteCtxU64(contextRecord, 248, rip + 2);
-		Console.Error.WriteLine(
-			$"[LOADER][WARN] Ignored guest int 0x41 trap #{count} at 0x{rip:X16} (SHARPEMU_IGNORE_INT41=1)");
-		Console.Error.Flush();
+		if (count <= 16 || count % 65536 == 0)
+		{
+			Console.Error.WriteLine(
+				$"[LOADER][WARN] Ignored guest int 0x41 trap #{count} at 0x{rip:X16} (SHARPEMU_IGNORE_INT41=1)");
+			Console.Error.Flush();
+		}
 		return true;
 	}
 

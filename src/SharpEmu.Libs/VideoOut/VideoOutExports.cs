@@ -958,8 +958,36 @@ public static class VideoOutExports
         }
 
         TraceVideoOut($"videoout.submit_flip handle={handle} index={bufferIndex} mode={flipMode} arg={flipArg} events={flipEvents.Count}");
+        if (string.Equals(
+                Environment.GetEnvironmentVariable("SHARPEMU_LOG_VIDEOOUT_THREADS"),
+                "1",
+                StringComparison.Ordinal) &&
+            GuestThreadExecution.Scheduler is { } scheduler)
+        {
+            TraceGuestThreadsAtFlip(scheduler, "submit");
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+                TraceGuestThreadsAtFlip(scheduler, "after_1s");
+                await Task.Delay(TimeSpan.FromSeconds(4)).ConfigureAwait(false);
+                TraceGuestThreadsAtFlip(scheduler, "after_5s");
+            });
+        }
         ReportFrameRate(presented: false);
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    private static void TraceGuestThreadsAtFlip(IGuestThreadScheduler scheduler, string stage)
+    {
+        foreach (var snapshot in scheduler.SnapshotThreads())
+        {
+            Console.Error.WriteLine(
+                $"[LOADER][TRACE] videoout.guest_thread stage={stage} handle=0x{snapshot.ThreadHandle:X16} name='{snapshot.Name}' " +
+                $"state={snapshot.State} imports={snapshot.ImportCount} nid={snapshot.LastImportNid ?? "none"} " +
+                $"ret=0x{snapshot.LastReturnRip:X16} block={snapshot.BlockReason ?? "none"}");
+        }
+
+        Console.Error.WriteLine($"[LOADER][TRACE] videoout.guest_threads_end stage={stage}");
     }
 
     internal static void ReportPresentedFrame() =>

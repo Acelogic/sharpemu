@@ -604,8 +604,18 @@ public static class KernelPthreadCompatExports
 
             if (!tryOnly)
             {
-                state.Semaphore.Wait();
-                acquired = true;
+                // The primary guest executor can enter a host-side mutex wait
+                // while the owner is queued as a ready guest worker. Sleeping
+                // indefinitely here leaves nobody to dispatch that owner; the
+                // stall watchdog was previously the only thing that pumped it.
+                // Keep the mutex semantics, but dispatch ready workers while
+                // waiting so the owner can run and release the semaphore.
+                var scheduler = GuestThreadExecution.Scheduler;
+                while (!acquired)
+                {
+                    scheduler?.Pump(ctx, "pthread_mutex_lock");
+                    acquired = state.Semaphore.Wait(1);
+                }
             }
         }
 

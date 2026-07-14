@@ -123,6 +123,12 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private const ulong GuestThreadRegionStride = 0x0100_0000UL;
 
+	[ThreadStatic]
+	private static List<(IVirtualMemory Memory, ulong Base)>? _nestedGuestCallbackStacks;
+
+	[ThreadStatic]
+	private static int _nestedGuestCallbackDepth;
+
 	private const uint PAGE_EXECUTE_READWRITE = 64u;
 
 	private const uint PAGE_READWRITE = 4u;
@@ -3047,6 +3053,32 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		string reason,
 		out string? error)
 	{
+		return TryCallGuestFunction(
+			callerContext,
+			entryPoint,
+			arg0,
+			arg1,
+			0,
+			stackAddress,
+			stackSize,
+			reason,
+			out _,
+			out error);
+	}
+
+	public bool TryCallGuestFunction(
+		CpuContext callerContext,
+		ulong entryPoint,
+		ulong arg0,
+		ulong arg1,
+		ulong arg2,
+		ulong stackAddress,
+		ulong stackSize,
+		string reason,
+		out ulong returnValue,
+		out string? error)
+	{
+		returnValue = 0;
 		error = null;
 		if (entryPoint < 65536)
 		{
@@ -3061,6 +3093,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 		ulong callbackStackBase;
 		ulong callbackStackSize;
+		var usesCachedCallbackStack = false;
 		if (stackAddress != 0 && stackSize >= 0x100)
 		{
 			callbackStackBase = stackAddress;
@@ -3068,10 +3101,37 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 		else
 		{
-			if (!TryMapGuestThreadRegion(virtualMemory, GuestThreadStackBaseAddress, GuestThreadStackSize, ProgramHeaderFlags.Read | ProgramHeaderFlags.Write, out callbackStackBase, out error))
+			var callbackDepth = _nestedGuestCallbackDepth;
+			_nestedGuestCallbackStacks ??= [];
+			if (callbackDepth < _nestedGuestCallbackStacks.Count &&
+				ReferenceEquals(_nestedGuestCallbackStacks[callbackDepth].Memory, virtualMemory))
 			{
-				return false;
+				callbackStackBase = _nestedGuestCallbackStacks[callbackDepth].Base;
 			}
+			else
+			{
+				if (!TryMapGuestThreadRegion(
+						virtualMemory,
+						GuestThreadStackBaseAddress,
+						GuestThreadStackSize,
+						ProgramHeaderFlags.Read | ProgramHeaderFlags.Write,
+						out callbackStackBase,
+						out error))
+				{
+					return false;
+				}
+
+				if (callbackDepth < _nestedGuestCallbackStacks.Count)
+				{
+					_nestedGuestCallbackStacks[callbackDepth] = (virtualMemory, callbackStackBase);
+				}
+				else
+				{
+					_nestedGuestCallbackStacks.Add((virtualMemory, callbackStackBase));
+				}
+			}
+
+			usesCachedCallbackStack = true;
 			callbackStackSize = GuestThreadStackSize;
 		}
 
@@ -3087,7 +3147,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		context[CpuRegister.Rsp] = AlignDown(callbackStackBase + callbackStackSize, 16) - sizeof(ulong);
 		context[CpuRegister.Rdi] = arg0;
 		context[CpuRegister.Rsi] = arg1;
-		context[CpuRegister.Rdx] = 0;
+		context[CpuRegister.Rdx] = arg2;
 		context[CpuRegister.Rcx] = 0;
 		context[CpuRegister.R8] = 0;
 		context[CpuRegister.R9] = 0;
@@ -3095,6 +3155,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		{
 			error = "failed to initialize guest callback stack";
 			return false;
+		}
+		if (usesCachedCallbackStack)
+		{
+			_nestedGuestCallbackDepth++;
 		}
 
 		var previousLastError = LastError;
@@ -3108,10 +3172,15 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				return false;
 			}
 
+			returnValue = context[CpuRegister.Rax];
 			return true;
 		}
 		finally
 		{
+			if (usesCachedCallbackStack)
+			{
+				_nestedGuestCallbackDepth--;
+			}
 			LastError = previousLastError;
 		}
 	}

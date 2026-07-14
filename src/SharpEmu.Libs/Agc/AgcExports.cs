@@ -136,6 +136,7 @@ public static class AgcExports
     private const ulong CommandBufferCursorUpOffset = 0x10;
     private const ulong CommandBufferCursorDownOffset = 0x18;
     private const ulong CommandBufferCallbackOffset = 0x20;
+    private const ulong CommandBufferUserDataOffset = 0x28;
     private const ulong CommandBufferReservedDwOffset = 0x30;
     private const ulong ShaderSpecialGeCntlOffset = 0x00;
     private const ulong ShaderSpecialVgtShaderStagesEnOffset = 0x08;
@@ -390,6 +391,7 @@ public static class AgcExports
         public Dictionary<uint, SubmittedDcbState> ComputeQueues { get; } = new();
         public Dictionary<ulong, ComputeImageWriter> ComputeImageWriters { get; } = new();
         public ulong WorkSequence { get; set; }
+        public bool WaitMonitorRunning { get; set; }
     }
 
     private readonly record struct RegisterDefaultValue(uint Offset, uint Value);
@@ -2490,6 +2492,69 @@ public static class AgcExports
         }
     }
 
+    // Direct CPU stores and asynchronous GPU completion writes can satisfy a
+    // WAIT_REG_MEM without causing another AGC submit. Keep a lightweight
+    // monitor alive while suspended DCBs exist so their continuations do not
+    // remain parked forever after the first frame.
+    private static void EnsureGpuWaitMonitor(
+        CpuContext submitContext,
+        SubmittedGpuState gpuState)
+    {
+        if (gpuState.WaitMonitorRunning)
+        {
+            return;
+        }
+
+        gpuState.WaitMonitorRunning = true;
+        var monitorContext = new CpuContext(
+            submitContext.Memory,
+            submitContext.TargetGeneration);
+        ThreadPool.UnsafeQueueUserWorkItem(
+            static state => MonitorGpuWaits(state.Context, state.GpuState),
+            (Context: monitorContext, GpuState: gpuState),
+            preferLocal: false);
+    }
+
+    private static void MonitorGpuWaits(
+        CpuContext ctx,
+        SubmittedGpuState gpuState)
+    {
+        var delayMilliseconds = 1;
+        while (true)
+        {
+            var madeProgress = false;
+            lock (gpuState.Gate)
+            {
+                var before = GpuWaitRegistry.Count;
+                if (before == 0)
+                {
+                    gpuState.WaitMonitorRunning = false;
+                    return;
+                }
+
+                DrainResumableDcbs(ctx, gpuState, tracePackets: _traceAgc);
+                var after = GpuWaitRegistry.Count;
+                madeProgress = after < before;
+                if (madeProgress)
+                {
+                    TraceAgc(
+                        $"agc.wait_monitor_resumed count={before - after} remaining={after}");
+                }
+
+                if (after == 0)
+                {
+                    gpuState.WaitMonitorRunning = false;
+                    return;
+                }
+            }
+
+            delayMilliseconds = madeProgress
+                ? 1
+                : Math.Min(delayMilliseconds * 2, 16);
+            Thread.Sleep(delayMilliseconds);
+        }
+    }
+
     private static void ParseSubmittedDcb(
         CpuContext ctx,
         SubmittedGpuState gpuState,
@@ -2690,6 +2755,7 @@ public static class AgcExports
                     if (hasCurVal && !GpuWaitRegistry.Compare(waiter, curVal))
                     {
                         GpuWaitRegistry.Register(waitAddr, waiter);
+                        EnsureGpuWaitMonitor(ctx, gpuState);
 
                         if (tracePackets)
                         {
@@ -2724,6 +2790,7 @@ public static class AgcExports
                     if (!GpuWaitRegistry.Compare(waiter, curVal))
                     {
                         GpuWaitRegistry.Register(waitAddr, waiter);
+                        EnsureGpuWaitMonitor(ctx, gpuState);
 
                         if (tracePackets)
                         {
@@ -5396,9 +5463,9 @@ public static class AgcExports
         }
 
         // GFX10/RDNA2 T# layout: WIDTH is split across word1[31:30] (lo 2 bits)
-        // and word2[11:0] (hi 12 bits); FORMAT is the combined 9-bit field at
-        // word1[28:20]. Verified against Kyty's decode of the same game
-        // descriptors (fmt=56=8_8_8_8_UNORM, extent 1280x720, sw_mode 27).
+        // and word2[11:0] (hi 12 bits); FORMAT is the unified 9-bit field at
+        // word1[28:20]. Decode that field before passing it to the legacy
+        // data-format/number-format pipeline.
         // GNM T# exposes a 38-bit baseaddr256 field, but RPCSX and the
         // Demon's Souls descriptors both show that only the low 32 bits are
         // part of the guest GPU VA. The upper baseaddr bits carry resource
@@ -5406,8 +5473,15 @@ public static class AgcExports
         var address = ((ulong)(uint)((((ulong)fields[1] << 32) | fields[0]) & 0x3F_FFFF_FFFFUL)) << 8;
         var width = (((fields[1] >> 30) & 0x3u) | ((fields[2] & 0xFFFu) << 2)) + 1;
         var height = ((fields[2] >> 14) & 0x3FFFu) + 1;
-        var format = (fields[1] >> 20) & 0x1FFu;
-        var numberType = (fields[1] >> 26) & 0xFu;
+        var unifiedFormat = (fields[1] >> 20) & 0x1FFu;
+        if (unifiedFormat == 0 ||
+            !Gfx10UnifiedFormat.TryDecode(
+                unifiedFormat,
+                out var format,
+                out var numberType))
+        {
+            return false;
+        }
         var tileMode = (fields[3] >> 20) & 0x1Fu;
         var type = (fields[3] >> 28) & 0xFu;
         var baseLevel = (fields[3] >> 12) & 0xFu;
@@ -5447,8 +5521,15 @@ public static class AgcExports
         var tileMode = 0u;
         if (fields.Count >= 4)
         {
-            format = (fields[1] >> 20) & 0x1FFu;
-            numberType = (fields[1] >> 26) & 0xFu;
+            var unifiedFormat = (fields[1] >> 20) & 0x1FFu;
+            if (!Gfx10UnifiedFormat.TryDecode(
+                    unifiedFormat,
+                    out format,
+                    out numberType))
+            {
+                format = Gen5TextureFormatR8G8B8A8Unorm;
+                numberType = 0;
+            }
             tileMode = (fields[3] >> 20) & 0x1Fu;
             if (format == 0)
             {
@@ -5821,19 +5902,52 @@ public static class AgcExports
             !ctx.TryReadUInt64(commandBufferAddress + CommandBufferCursorUpOffset, out var cursorUp) ||
             !ctx.TryReadUInt64(commandBufferAddress + CommandBufferCursorDownOffset, out var cursorDown) ||
             !ctx.TryReadUInt64(commandBufferAddress + CommandBufferCallbackOffset, out var callback) ||
+            !ctx.TryReadUInt64(commandBufferAddress + CommandBufferUserDataOffset, out var userData) ||
             !ctx.TryReadUInt32(commandBufferAddress + CommandBufferReservedDwOffset, out var reservedDwords))
         {
             return false;
         }
 
-        var availableDwords = cursorDown >= cursorUp
-            ? Math.Min((cursorDown - cursorUp) / sizeof(uint), uint.MaxValue)
-            : 0;
-        var remainingDwords = (uint)Math.Max(availableDwords, reservedDwords) - reservedDwords;
+        var remainingDwords = GetRemainingCommandDwords(cursorUp, cursorDown, reservedDwords);
         if (sizeDwords > remainingDwords)
         {
             TraceAgc($"agc.cmd_alloc_full buf=0x{commandBufferAddress:X16} need={sizeDwords} remaining={remainingDwords} callback=0x{callback:X16}");
-            return false;
+            var scheduler = GuestThreadExecution.Scheduler;
+            ulong callbackResult = 0;
+            string? callbackError = null;
+            if (callback == 0 ||
+                scheduler is null ||
+                !scheduler.TryCallGuestFunction(
+                    ctx,
+                    callback,
+                    commandBufferAddress,
+                    (ulong)sizeDwords + reservedDwords,
+                    userData,
+                    0,
+                    0,
+                    "agc_command_buffer_full",
+                    out callbackResult,
+                    out callbackError))
+            {
+                TraceAgc(
+                    $"agc.cmd_alloc_callback_failed buf=0x{commandBufferAddress:X16} " +
+                    $"callback=0x{callback:X16} result=0x{callbackResult:X16} " +
+                    $"error={callbackError ?? "none"}");
+                return false;
+            }
+
+            TraceAgc(
+                $"agc.cmd_alloc_callback_complete buf=0x{commandBufferAddress:X16} " +
+                $"callback=0x{callback:X16} result=0x{callbackResult:X16}");
+
+            if (!ctx.TryReadUInt64(commandBufferAddress + CommandBufferCursorUpOffset, out cursorUp) ||
+                !ctx.TryReadUInt64(commandBufferAddress + CommandBufferCursorDownOffset, out cursorDown) ||
+                !ctx.TryReadUInt32(commandBufferAddress + CommandBufferReservedDwOffset, out reservedDwords) ||
+                sizeDwords > GetRemainingCommandDwords(cursorUp, cursorDown, reservedDwords))
+            {
+                TraceAgc($"agc.cmd_alloc_callback_no_space buf=0x{commandBufferAddress:X16} need={sizeDwords}");
+                return false;
+            }
         }
 
         var nextCursor = cursorUp + ((ulong)sizeDwords * sizeof(uint));
@@ -5844,6 +5958,19 @@ public static class AgcExports
 
         commandAddress = cursorUp;
         return true;
+    }
+
+    private static uint GetRemainingCommandDwords(
+        ulong cursorUp,
+        ulong cursorDown,
+        uint reservedDwords)
+    {
+        var availableDwords = cursorDown >= cursorUp
+            ? Math.Min((cursorDown - cursorUp) / sizeof(uint), uint.MaxValue)
+            : 0;
+        return availableDwords > reservedDwords
+            ? (uint)availableDwords - reservedDwords
+            : 0;
     }
 
     private static bool CopyShaderRegister(CpuContext ctx, ulong sourceAddress, ulong destinationAddress)

@@ -120,6 +120,7 @@ public static class KernelSemaphoreCompatExports
             return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
 
+        SemaphoreWaiter waiter;
         lock (semaphore.Gate)
         {
             if (semaphore.Count >= needCount)
@@ -141,25 +142,54 @@ public static class KernelSemaphoreCompatExports
                 return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT);
             }
 
-            var waiter = new SemaphoreWaiter
+            waiter = new SemaphoreWaiter
             {
                 NeedCount = needCount,
                 CancelEpochAtBlock = semaphore.CancelEpoch,
             };
-            if (!GuestThreadExecution.RequestCurrentThreadBlock(
+            if (GuestThreadExecution.RequestCurrentThreadBlock(
                     ctx,
                     "sceKernelWaitSema",
                     GetSemaphoreWakeKey(handle),
                     resumeHandler: () => CompleteBlockedSemaWait(semaphore, waiter),
                     wakeHandler: () => TryConsumeBlockedSemaWait(semaphore, waiter)))
             {
-                TraceSemaphore($"wait-would-block handle=0x{handle:X8} name='{semaphore.Name}' need={needCount} count={semaphore.Count}");
-                return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_TRY_AGAIN);
+                semaphore.WaitingThreads++;
+                TraceSemaphore($"wait-block handle=0x{handle:X8} name='{semaphore.Name}' need={needCount} count={semaphore.Count} waiters={semaphore.WaitingThreads}");
+                return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+            }
+        }
+
+        // The primary executor cannot park through the guest-thread
+        // continuation mechanism. Wait on the host while actively dispatching
+        // ready guest workers; one of those workers is commonly the producer
+        // that will signal this semaphore. Returning TRY_AGAIN here violates
+        // sceKernelWaitSema's infinite-wait contract and trips game asserts.
+        var scheduler = GuestThreadExecution.Scheduler;
+        while (true)
+        {
+            lock (semaphore.Gate)
+            {
+                if (semaphore.Deleted)
+                {
+                    return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_DELETED);
+                }
+
+                if (semaphore.CancelEpoch != waiter.CancelEpochAtBlock)
+                {
+                    return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_CANCELED);
+                }
+
+                if (semaphore.Count >= needCount)
+                {
+                    semaphore.Count -= needCount;
+                    TraceSemaphore($"wait-host-wake handle=0x{handle:X8} name='{semaphore.Name}' need={needCount} count={semaphore.Count}");
+                    return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+                }
             }
 
-            semaphore.WaitingThreads++;
-            TraceSemaphore($"wait-block handle=0x{handle:X8} name='{semaphore.Name}' need={needCount} count={semaphore.Count} waiters={semaphore.WaitingThreads}");
-            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+            scheduler?.Pump(ctx, "sceKernelWaitSema");
+            Thread.Sleep(1);
         }
     }
 
