@@ -46,7 +46,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		ulong ReturnRip,
 		ulong Arg0,
 		ulong Arg1,
-		ulong Arg2);
+		ulong Arg2,
+		ulong GuestThreadHandle,
+		int ManagedThreadId);
 
 #pragma warning disable CS0649
 	private struct EXCEPTION_POINTERS
@@ -238,11 +240,14 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private readonly Dictionary<string, ulong> _runtimeSymbolsByName = new Dictionary<string, ulong>(StringComparer.Ordinal);
 
-	private readonly RecentImportTraceEntry[] _recentImportTrace = new RecentImportTraceEntry[64];
+	[ThreadStatic]
+	private static RecentImportTraceEntry[]? _recentImportTrace;
 
-	private int _recentImportTraceCount;
+	[ThreadStatic]
+	private static int _recentImportTraceCount;
 
-	private int _recentImportTraceWriteIndex;
+	[ThreadStatic]
+	private static int _recentImportTraceWriteIndex;
 
 	private readonly string[] _distinctImportNidHistory = new string[128];
 
@@ -261,6 +266,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	private bool _logStrlenBursts;
 
 	private bool _logGuestContext;
+
+	private bool _ignoreGuestInt41;
+
+	private int _ignoredGuestInt41Count;
 
 	private bool _logGuestThreads;
 
@@ -888,6 +897,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		_logStrlenBursts = _logStrlenImports ||
 			string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_STRLEN_BURSTS"), "1", StringComparison.Ordinal);
 		_logGuestContext = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_CONTEXT"), "1", StringComparison.Ordinal);
+		_ignoreGuestInt41 = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_IGNORE_INT41"), "1", StringComparison.Ordinal);
+		_ignoredGuestInt41Count = 0;
 		_logGuestThreads = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_GUEST_THREADS"), "1", StringComparison.Ordinal);
 		_logUsleep = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_USLEEP"), "1", StringComparison.Ordinal);
 		_logBootstrap = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_BOOTSTRAP"), "1", StringComparison.Ordinal);
@@ -2211,7 +2222,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private unsafe void PatchTlsPatterns()
 	{
-		const ulong MaxScanBytes = 33554432uL;
+		// Large Gen5 executables can keep valid code well past the first 32 MiB.
+		// Astro Bot, for example, has an FS:[0] TLS load near +0x70A0000.
+		const ulong MaxScanBytes = 134217728uL;
 		ulong num = _entryPoint;
 		ulong num2 = num + MaxScanBytes;
 		int num3 = 0;

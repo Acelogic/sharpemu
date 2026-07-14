@@ -105,6 +105,59 @@ public static class AudioOut2Exports
     public static int AudioOut2ContextDestroy(CpuContext ctx) => ctx.SetReturn(0);
 
     [SysAbiExport(
+        Nid = "PE2zHMqLSHs",
+        ExportName = "sceAudioOut2ContextAdvance",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAudioOut2")]
+    public static int AudioOut2ContextAdvance(CpuContext ctx)
+    {
+        if (ctx[CpuRegister.Rdi] == 0)
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        // A real context advance is paced by the audio device. Give the guest
+        // audio worker a small scheduling boundary instead of letting it spin
+        // through millions of synthetic advances per second.
+        Thread.Sleep(5);
+        return ctx.SetReturn(0);
+    }
+
+    [SysAbiExport(
+        Nid = "aII9h5nli9U",
+        ExportName = "sceAudioOut2ContextPush",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAudioOut2")]
+    public static int AudioOut2ContextPush(CpuContext ctx) =>
+        ctx[CpuRegister.Rdi] == 0
+            ? ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT)
+            : ctx.SetReturn(0);
+
+    [SysAbiExport(
+        Nid = "R7d0F1g2qsU",
+        ExportName = "sceAudioOut2ContextGetQueueLevel",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAudioOut2")]
+    public static int AudioOut2ContextGetQueueLevel(CpuContext ctx)
+    {
+        var context = ctx[CpuRegister.Rdi];
+        var queueLevelAddress = ctx[CpuRegister.Rsi];
+        var availableAddress = ctx[CpuRegister.Rdx];
+        if (context == 0)
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        if ((queueLevelAddress != 0 && !ctx.TryWriteUInt32(queueLevelAddress, 0)) ||
+            (availableAddress != 0 && !ctx.TryWriteUInt32(availableAddress, 0)))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        return ctx.SetReturn(0);
+    }
+
+    [SysAbiExport(
         Nid = "JK2wamZPzwM",
         ExportName = "sceAudioOut2PortCreate",
         Target = Generation.Gen5,
@@ -185,6 +238,16 @@ public static class AudioOut2Exports
         Target = Generation.Gen5,
         LibraryName = "libSceAudioOut2")]
     public static int AudioOut2PortDestroy(CpuContext ctx) => ctx.SetReturn(0);
+
+    [SysAbiExport(
+        Nid = "8XTArSPyWHk",
+        ExportName = "sceAudioOut2PortSetAttributes",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAudioOut2")]
+    public static int AudioOut2PortSetAttributes(CpuContext ctx) =>
+        ctx[CpuRegister.Rdi] == 0
+            ? ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT)
+            : ctx.SetReturn(0);
 
     [SysAbiExport(
         Nid = "IaZXJ9M79uo",

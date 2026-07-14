@@ -302,6 +302,173 @@ public static class KernelSemaphoreCompatExports
         return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
     }
 
+    [SysAbiExport(
+        Nid = "pDuPEf3m4fI",
+        ExportName = "sem_init",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixSemInit(CpuContext ctx)
+    {
+        var semaphoreAddress = ctx[CpuRegister.Rdi];
+        var initialCountValue = ctx[CpuRegister.Rdx];
+        if (semaphoreAddress == 0 || initialCountValue > int.MaxValue)
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        var handle = unchecked((uint)Interlocked.Increment(ref _nextSemaphoreHandle));
+        if (handle == 0)
+        {
+            handle = unchecked((uint)Interlocked.Increment(ref _nextSemaphoreHandle));
+        }
+
+        var initialCount = unchecked((int)initialCountValue);
+        var state = new KernelSemaphoreState
+        {
+            Name = $"posix@0x{semaphoreAddress:X16}",
+            InitialCount = initialCount,
+            MaxCount = int.MaxValue,
+            Count = initialCount,
+        };
+        _semaphores[handle] = state;
+        if (!ctx.TryWriteUInt32(semaphoreAddress, handle))
+        {
+            _semaphores.TryRemove(handle, out _);
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        TraceSemaphore($"posix-init address=0x{semaphoreAddress:X16} handle=0x{handle:X8} count={initialCount}");
+        return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    [SysAbiExport(
+        Nid = "YCV5dGGBcCo",
+        ExportName = "sem_wait",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixSemWait(CpuContext ctx)
+    {
+        if (!TryGetPosixSemaphoreHandle(ctx, ctx[CpuRegister.Rdi], out var handle))
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        ctx[CpuRegister.Rdi] = handle;
+        ctx[CpuRegister.Rsi] = 1;
+        ctx[CpuRegister.Rdx] = 0;
+        return KernelWaitSema(ctx);
+    }
+
+    [SysAbiExport(
+        Nid = "WBWzsRifCEA",
+        ExportName = "sem_trywait",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixSemTryWait(CpuContext ctx)
+    {
+        if (!TryGetPosixSemaphoreHandle(ctx, ctx[CpuRegister.Rdi], out var handle))
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        ctx[CpuRegister.Rdi] = handle;
+        ctx[CpuRegister.Rsi] = 1;
+        return KernelPollSema(ctx);
+    }
+
+    [SysAbiExport(
+        Nid = "w5IHyvahg-o",
+        ExportName = "sem_timedwait",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixSemTimedWait(CpuContext ctx)
+    {
+        var timeoutAddress = ctx[CpuRegister.Rsi];
+        if (!TryGetPosixSemaphoreHandle(ctx, ctx[CpuRegister.Rdi], out var handle))
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        ctx[CpuRegister.Rdi] = handle;
+        ctx[CpuRegister.Rsi] = 1;
+        ctx[CpuRegister.Rdx] = timeoutAddress;
+        return KernelWaitSema(ctx);
+    }
+
+    [SysAbiExport(
+        Nid = "IKP8typ0QUk",
+        ExportName = "sem_post",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixSemPost(CpuContext ctx)
+    {
+        if (!TryGetPosixSemaphoreHandle(ctx, ctx[CpuRegister.Rdi], out var handle))
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        ctx[CpuRegister.Rdi] = handle;
+        ctx[CpuRegister.Rsi] = 1;
+        return KernelSignalSema(ctx);
+    }
+
+    [SysAbiExport(
+        Nid = "Bq+LRV-N6Hk",
+        ExportName = "sem_getvalue",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixSemGetValue(CpuContext ctx)
+    {
+        var semaphoreAddress = ctx[CpuRegister.Rdi];
+        var valueAddress = ctx[CpuRegister.Rsi];
+        if (valueAddress == 0 || !TryGetPosixSemaphoreHandle(ctx, semaphoreAddress, out var handle) ||
+            !_semaphores.TryGetValue(handle, out var semaphore))
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        int count;
+        lock (semaphore.Gate)
+        {
+            count = semaphore.Count;
+        }
+
+        return ctx.TryWriteUInt32(valueAddress, unchecked((uint)count))
+            ? ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK)
+            : ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+    }
+
+    [SysAbiExport(
+        Nid = "cDW233RAwWo",
+        ExportName = "sem_destroy",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixSemDestroy(CpuContext ctx)
+    {
+        var semaphoreAddress = ctx[CpuRegister.Rdi];
+        if (!TryGetPosixSemaphoreHandle(ctx, semaphoreAddress, out var handle))
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        ctx[CpuRegister.Rdi] = handle;
+        var result = KernelDeleteSema(ctx);
+        if (result == (int)OrbisGen2Result.ORBIS_GEN2_OK)
+        {
+            _ = ctx.TryWriteUInt32(semaphoreAddress, 0);
+        }
+
+        return result;
+    }
+
+    private static bool TryGetPosixSemaphoreHandle(CpuContext ctx, ulong semaphoreAddress, out uint handle)
+    {
+        handle = 0;
+        return semaphoreAddress != 0 &&
+               ctx.TryReadUInt32(semaphoreAddress, out handle) &&
+               handle != 0;
+    }
+
     // Wake handler: runs under the scheduler's guest-thread gate (lock order:
     // scheduler gate -> semaphore gate). Returns true iff the waiter has a final
     // result and should be re-readied; false leaves it parked.

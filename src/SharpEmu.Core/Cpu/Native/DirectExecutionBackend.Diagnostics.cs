@@ -24,15 +24,18 @@ public sealed partial class DirectExecutionBackend
 		ulong arg1,
 		ulong arg2)
 	{
-		_recentImportTrace[_recentImportTraceWriteIndex] = new RecentImportTraceEntry(
+		var trace = _recentImportTrace ??= new RecentImportTraceEntry[64];
+		trace[_recentImportTraceWriteIndex] = new RecentImportTraceEntry(
 			dispatchIndex,
 			nid,
 			returnRip,
 			arg0,
 			arg1,
-			arg2);
-		_recentImportTraceWriteIndex = (_recentImportTraceWriteIndex + 1) % _recentImportTrace.Length;
-		if (_recentImportTraceCount < _recentImportTrace.Length)
+			arg2,
+			GuestThreadExecution.CurrentGuestThreadHandle,
+			Environment.CurrentManagedThreadId);
+		_recentImportTraceWriteIndex = (_recentImportTraceWriteIndex + 1) % trace.Length;
+		if (_recentImportTraceCount < trace.Length)
 		{
 			_recentImportTraceCount++;
 		}
@@ -40,20 +43,21 @@ public sealed partial class DirectExecutionBackend
 
 	private void DumpRecentImportTrace()
 	{
-		if (_recentImportTraceCount == 0)
+		var trace = _recentImportTrace;
+		if (trace is null || _recentImportTraceCount == 0)
 		{
 			return;
 		}
-		Log.Info($"   Recent import calls ({_recentImportTraceCount}):");
-		int num = (_recentImportTraceWriteIndex - _recentImportTraceCount + _recentImportTrace.Length) % _recentImportTrace.Length;
+		Log.Info($"   Recent import calls for managed={Environment.CurrentManagedThreadId} guest=0x{GuestThreadExecution.CurrentGuestThreadHandle:X16} ({_recentImportTraceCount}):");
+		int num = (_recentImportTraceWriteIndex - _recentImportTraceCount + trace.Length) % trace.Length;
 		for (int i = 0; i < _recentImportTraceCount; i++)
 		{
-			int num2 = (num + i) % _recentImportTrace.Length;
-			var entry = _recentImportTrace[num2];
+			int num2 = (num + i) % trace.Length;
+			var entry = trace[num2];
 			if (!string.IsNullOrEmpty(entry.Nid))
 			{
 				Log.Info(
-					$"     #{entry.DispatchIndex} nid={entry.Nid} ret=0x{entry.ReturnRip:X16} " +
+					$"     #{entry.DispatchIndex} managed={entry.ManagedThreadId} guest=0x{entry.GuestThreadHandle:X16} nid={entry.Nid} ret=0x{entry.ReturnRip:X16} " +
 					$"rdi=0x{entry.Arg0:X16} rsi=0x{entry.Arg1:X16} rdx=0x{entry.Arg2:X16}");
 			}
 		}

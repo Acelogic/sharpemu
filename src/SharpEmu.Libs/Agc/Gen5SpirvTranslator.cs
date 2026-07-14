@@ -649,6 +649,8 @@ internal static partial class Gen5SpirvTranslator
                     .OfType<Gen5ExportControl>()
                     .Where(export => export.Target is >= 32 and < 64)
                     .Select(export => export.Target - 32)
+                    .Append(0u)
+                    .Append(1u)
                     .Distinct()
                     .Order()
                     .ToArray();
@@ -795,6 +797,11 @@ internal static partial class Gen5SpirvTranslator
 
             if (_stage == Gen5SpirvStage.Vertex)
             {
+                foreach (var output in _vertexOutputs.Values)
+                {
+                    Store(output, _module.ConstantNull(_vec4Type));
+                }
+
                 StoreV(5, Load(_uintType, _vertexIndexInput), guardWithExec: false);
                 StoreV(8, Load(_uintType, _instanceIndexInput), guardWithExec: false);
             }

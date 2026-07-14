@@ -58,6 +58,12 @@ public static class KernelPthreadCompatExports
         public int Waiters { get; set; }
     }
 
+    private sealed class PthreadCondWaiter
+    {
+        public required ulong ObservedEpoch { get; init; }
+        public bool IsCounted { get; set; } = true;
+    }
+
     private readonly record struct PthreadMutexAttrState(int Type, int Protocol);
 
     [SysAbiExport(
@@ -1090,7 +1096,7 @@ public static class KernelPthreadCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
 
-        if (!TryResolveCondState(ctx, condAddress, createIfZero: true, out _, out var state))
+        if (!TryResolveCondState(ctx, condAddress, createIfZero: true, out var resolvedCondAddress, out var state))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
         }
@@ -1101,6 +1107,7 @@ public static class KernelPthreadCompatExports
         {
             state.Waiters++;
             var observedEpoch = state.SignalEpoch;
+            var waiter = new PthreadCondWaiter { ObservedEpoch = observedEpoch };
             TracePthreadCond("wait-enter", condAddress, mutexAddress, state, timed, waitResult);
 
             var unlockResult = PthreadMutexUnlockCore(ctx, mutexAddress, requireOwner: true);
@@ -1112,7 +1119,12 @@ public static class KernelPthreadCompatExports
             }
 
             var scheduler = GuestThreadExecution.Scheduler;
-            if (!timed && GuestThreadExecution.RequestCurrentThreadBlock("pthread_cond_wait"))
+            if (!timed && GuestThreadExecution.RequestCurrentThreadBlock(
+                    ctx,
+                    "pthread_cond_wait",
+                    GetCondWakeKey(resolvedCondAddress),
+                    resumeHandler: () => CompleteBlockedCondWait(ctx, mutexAddress, state, waiter),
+                    wakeHandler: () => TryWakeBlockedCondWait(state, waiter)))
             {
                 TracePthreadCond("wait-block", condAddress, mutexAddress, state, timed, waitResult);
                 return waitResult;
@@ -1189,7 +1201,7 @@ public static class KernelPthreadCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
 
-        if (!TryResolveCondState(ctx, condAddress, createIfZero: true, out _, out var state))
+        if (!TryResolveCondState(ctx, condAddress, createIfZero: true, out var resolvedCondAddress, out var state))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
         }
@@ -1212,7 +1224,51 @@ public static class KernelPthreadCompatExports
             TracePthreadCond(broadcast ? "broadcast" : "signal", condAddress, mutexAddress: 0, state, timed: false, (int)OrbisGen2Result.ORBIS_GEN2_OK);
         }
 
+        _ = GuestThreadExecution.Scheduler?.WakeBlockedThreads(
+            GetCondWakeKey(resolvedCondAddress),
+            broadcast ? int.MaxValue : 1);
+
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    private static string GetCondWakeKey(ulong resolvedCondAddress) =>
+        $"pthread_cond:0x{resolvedCondAddress:X16}";
+
+    private static bool TryWakeBlockedCondWait(PthreadCondState state, PthreadCondWaiter waiter)
+    {
+        lock (state.SyncRoot)
+        {
+            if (state.SignalEpoch == waiter.ObservedEpoch)
+            {
+                return false;
+            }
+
+            if (waiter.IsCounted)
+            {
+                waiter.IsCounted = false;
+                state.Waiters = Math.Max(0, state.Waiters - 1);
+            }
+
+            return true;
+        }
+    }
+
+    private static int CompleteBlockedCondWait(
+        CpuContext ctx,
+        ulong mutexAddress,
+        PthreadCondState state,
+        PthreadCondWaiter waiter)
+    {
+        lock (state.SyncRoot)
+        {
+            if (waiter.IsCounted)
+            {
+                waiter.IsCounted = false;
+                state.Waiters = Math.Max(0, state.Waiters - 1);
+            }
+        }
+
+        return PthreadMutexLockCore(ctx, mutexAddress, tryOnly: false);
     }
 
     private static string GetMutexWakeKey(ulong resolvedMutexAddress) =>

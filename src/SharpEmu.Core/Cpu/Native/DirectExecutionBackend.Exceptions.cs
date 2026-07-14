@@ -108,6 +108,10 @@ public sealed partial class DirectExecutionBackend
 
 			ulong rip = ReadCtxU64(contextRecord, 248);
 			ulong rsp = ReadCtxU64(contextRecord, 152);
+			if (TryRecoverGuestInt41(exceptionCode, contextRecord, rip))
+			{
+				return -1;
+			}
 
 			// Thread-mode probe: a hardware exception raised while this thread is inside
 			// the managed import gateway means the VEH->managed reentry happened from
@@ -304,6 +308,13 @@ public sealed partial class DirectExecutionBackend
 					break;
 				case 3221225501u:
 					Console.Error.WriteLine("[LOADER][INFO]   Type: Illegal Instruction");
+					byte[] illegalCode = new byte[16];
+					if (TryReadHostBytes(rip, illegalCode))
+					{
+						Console.Error.WriteLine("[LOADER][INFO]   Code at RIP: " + BitConverter.ToString(illegalCode).Replace("-", " "));
+					}
+					DumpRecentImportTrace();
+					DumpGuestDisasmDiagnostics(rip, rbp);
 					break;
 			}
 
@@ -315,6 +326,32 @@ public sealed partial class DirectExecutionBackend
 		{
 			_vectoredHandlerDepth--;
 		}
+	}
+
+	private unsafe bool TryRecoverGuestInt41(uint exceptionCode, void* contextRecord, ulong rip)
+	{
+		if (!_ignoreGuestInt41 || exceptionCode != 3221225477u || rip < 0x10000)
+		{
+			return false;
+		}
+
+		byte[] opcode = new byte[2];
+		if (!TryReadHostBytes(rip, opcode) || opcode[0] != 0xCD || opcode[1] != 0x41)
+		{
+			return false;
+		}
+
+		var count = Interlocked.Increment(ref _ignoredGuestInt41Count);
+		if (count > 16)
+		{
+			return false;
+		}
+
+		WriteCtxU64(contextRecord, 248, rip + 2);
+		Console.Error.WriteLine(
+			$"[LOADER][WARN] Ignored guest int 0x41 trap #{count} at 0x{rip:X16} (SHARPEMU_IGNORE_INT41=1)");
+		Console.Error.Flush();
+		return true;
 	}
 
 	private static bool IsBenignHostDebugException(uint exceptionCode)

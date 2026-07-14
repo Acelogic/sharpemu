@@ -218,12 +218,14 @@ public static class KernelExports
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
     public static int PthreadCreate(CpuContext ctx)
+        => PthreadCreateCore(ctx, ctx[CpuRegister.R8]);
+
+    private static int PthreadCreateCore(CpuContext ctx, ulong nameAddress)
     {
         var threadIdAddress = ctx[CpuRegister.Rdi];
         var attrAddress = ctx[CpuRegister.Rsi];
         var entryAddress = ctx[CpuRegister.Rdx];
         var argument = ctx[CpuRegister.Rcx];
-        var nameAddress = ctx[CpuRegister.R8];
         var name = nameAddress == 0 ? string.Empty : ReadCString(ctx, nameAddress, 256);
         var threadHandle = KernelPthreadState.CreateThreadHandle(name);
         KernelPthreadExtendedCompatExports.GetThreadStartScheduling(
@@ -278,14 +280,14 @@ public static class KernelExports
         ExportName = "pthread_create",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int PosixPthreadCreate(CpuContext ctx) => PthreadCreate(ctx);
+    public static int PosixPthreadCreate(CpuContext ctx) => PthreadCreateCore(ctx, nameAddress: 0);
 
     [SysAbiExport(
         Nid = "Jmi+9w9u0E4",
         ExportName = "pthread_create_name_np",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int PosixPthreadCreateNameNp(CpuContext ctx) => PthreadCreate(ctx);
+    public static int PosixPthreadCreateNameNp(CpuContext ctx) => PthreadCreateCore(ctx, ctx[CpuRegister.R8]);
 
     [SysAbiExport(
         Nid = "3kg7rT0NQIs",
@@ -437,14 +439,21 @@ public static class KernelExports
     private static string ReadCString(CpuContext ctx, ulong address, int maxLen)
     {
         Span<byte> buf = stackalloc byte[maxLen];
-        if (!ctx.Memory.TryRead(address, buf))
-            return $"<unreadable 0x{address:X16}>";
+        Span<byte> one = stackalloc byte[1];
+        var len = 0;
+        while (len < buf.Length)
+        {
+            if (!ctx.Memory.TryRead(address + (ulong)len, one))
+                return len == 0 ? $"<unreadable 0x{address:X16}>" : System.Text.Encoding.UTF8.GetString(buf[..len]);
 
-        int len = 0;
-        while (len < buf.Length && buf[len] != 0) len++;
+            if (one[0] == 0)
+                break;
 
-        try { return System.Text.Encoding.UTF8.GetString(buf.Slice(0, len)); }
-        catch { return System.Text.Encoding.ASCII.GetString(buf.Slice(0, len)); }
+            buf[len++] = one[0];
+        }
+
+        try { return System.Text.Encoding.UTF8.GetString(buf[..len]); }
+        catch { return System.Text.Encoding.ASCII.GetString(buf[..len]); }
     }
 
     private static bool ShouldTracePthread()
