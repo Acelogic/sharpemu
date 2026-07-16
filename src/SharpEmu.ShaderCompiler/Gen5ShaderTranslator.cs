@@ -267,12 +267,15 @@ public static class Gen5ShaderTranslator
             shaderRegisters.TryGetValue(userDataBaseRegister + index, out userData[index]);
         }
 
+        shaderRegisters.TryGetValue(rsrc2Register - 1, out var programResource1);
+
         state = new Gen5ShaderState(
             program,
             userData,
             metadata,
             computeSystemRegisters,
-            userDataScalarRegisterBase);
+            userDataScalarRegisterBase,
+            programResource1);
         return true;
     }
 
@@ -675,10 +678,12 @@ public static class Gen5ShaderTranslator
             0x04 => "SMovB64",
             0x07 => "SNotB32",
             0x08 => "SNotB64",
+            0x09 => "SWqmB32",
             0x0A => "SWqmB64",
             0x0B => "SBrevB32",
             0x0F => "SBcnt1I32B32",
             0x13 => "SFF1I32B32",
+            0x14 => "SFF1I32B64",
             0x1D => "SBitset1B32",
             0x1F => "SGetpcB64",
             0x20 => "SSetpcB64",
@@ -800,6 +805,8 @@ public static class Gen5ShaderTranslator
             0x0D => "SBitcmp1B32",
             0x0E => "SBitcmp0B64",
             0x0F => "SBitcmp1B64",
+            0x12 => "SCmpEqU64",
+            0x13 => "SCmpLgU64",
             _ => string.Empty,
         };
 
@@ -825,6 +832,7 @@ public static class Gen5ShaderTranslator
             0x0A => "SBarrier",
             0x0C => "SWaitcnt",
             0x10 => "SSendmsg",
+            0x12 => "STrap",
             0x16 => "STtraceData",
             0x20 => "SInstPrefetch",
             0x21 => "SClause",
@@ -1116,6 +1124,7 @@ public static class Gen5ShaderTranslator
             0x15D => "VSadU32",
             0x15E => "VCvtPkU8F32",
             0x148 => "VBfeU32",
+            0x149 => "VBfeI32",
             0x169 => "VMulLoU32",
             0x16A => "VMulHiU32",
             0x16B => "VMulLoI32",
@@ -1175,10 +1184,12 @@ public static class Gen5ShaderTranslator
             0x0D => "DsWriteB32",
             0x0E => "DsWrite2B32",
             0x0F => "DsWrite2St64B32",
+            0x20 => "DsAddRtnU32",
             0x35 => "DsSwizzleB32",
             0x36 => "DsReadB32",
             0x37 => "DsRead2B32",
             0x38 => "DsRead2St64B32",
+            0x3E => "DsPermuteB32",
             0x4D => "DsWriteB64",
             0xDE => "DsWriteB96",
             0xDF => "DsWriteB128",
@@ -1378,7 +1389,10 @@ public static class Gen5ShaderTranslator
 
     private static bool DecodeMimg(uint word, out string name, out uint sizeDwords, out string error)
     {
-        var opcode = (word >> 18) & 0x7F;
+        // GFX10 MIMG stores OP[6:0] in bits 24:18 and OP[7] in bit 0.
+        // Bit 0 used to be dropped here, misreporting ray/BVH opcode 0xE6 as
+        // the otherwise unrelated low opcode 0x66.
+        var opcode = ((word & 1) << 7) | ((word >> 18) & 0x7F);
         sizeDwords = 2 + ((word >> 1) & 0x3);
         error = string.Empty;
         name = opcode switch
@@ -1405,6 +1419,7 @@ public static class Gen5ShaderTranslator
             0x4E => "ImageGather4CBCl",
             0x57 => "ImageGather4LzO",
             0x5F => "ImageGather4CLzO",
+            0xE6 => "ImageBvhIntersectRay",
             _ => string.Empty,
         };
 
@@ -1794,7 +1809,7 @@ public static class Gen5ShaderTranslator
                     ((word >> 17) & 1) != 0);
                 sources = opcode switch
                 {
-                    "DsAddU32" => [
+                    "DsAddU32" or "DsAddRtnU32" => [
                         Gen5Operand.Vector(vectorAddress),
                         Gen5Operand.Vector(vectorData0),
                     ],
@@ -1826,11 +1841,18 @@ public static class Gen5ShaderTranslator
                         Gen5Operand.Vector(vectorData1),
                     ],
                     "DsSwizzleB32" => [Gen5Operand.Vector(vectorData0)],
+                    "DsPermuteB32" => [
+                        Gen5Operand.Vector(vectorAddress),
+                        Gen5Operand.Vector(vectorData0),
+                    ],
                     _ => [Gen5Operand.Vector(vectorAddress)],
                 };
                 destinations = opcode switch
                 {
-                    "DsReadB32" or "DsSwizzleB32" => [
+                    "DsAddRtnU32" => [
+                        Gen5Operand.Vector(vectorDestination),
+                    ],
+                    "DsReadB32" or "DsSwizzleB32" or "DsPermuteB32" => [
                         Gen5Operand.Vector(vectorDestination),
                     ],
                     "DsRead2B32" or "DsRead2St64B32" => [
@@ -2023,6 +2045,7 @@ public static class Gen5ShaderTranslator
                 var vectorData = (extra >> 8) & 0xFF;
                 var scalarResource = ((extra >> 16) & 0x1F) * 4;
                 var scalarSampler = ((extra >> 21) & 0x1F) * 4;
+                var isBvhIntersectRay = opcode == "ImageBvhIntersectRay";
                 var addressRegisters = new List<uint>(1 + Math.Max(0, words.Length - 2) * 4)
                 {
                     vectorAddress,
@@ -2035,6 +2058,15 @@ public static class Gen5ShaderTranslator
                     }
                 }
 
+                // GFX10 IMAGE_BVH_INTERSECT_RAY has 11 A16=0 address VGPRs.
+                // Its final NSA dword contains two padding bytes, which are not
+                // v0 operands.  It also consumes a special four-SGPR BVH
+                // descriptor and no sampler.
+                if (isBvhIntersectRay && addressRegisters.Count > 11)
+                {
+                    addressRegisters.RemoveRange(11, addressRegisters.Count - 11);
+                }
+
                 var imageSources = new List<Gen5Operand>(addressRegisters.Count + 2);
                 foreach (var addressRegister in addressRegisters)
                 {
@@ -2042,11 +2074,23 @@ public static class Gen5ShaderTranslator
                 }
 
                 imageSources.Add(Gen5Operand.Scalar(scalarResource));
-                imageSources.Add(Gen5Operand.Scalar(scalarSampler));
+                if (!isBvhIntersectRay)
+                {
+                    imageSources.Add(Gen5Operand.Scalar(scalarSampler));
+                }
                 sources = imageSources;
-                destinations = opcode.StartsWith("ImageStore", StringComparison.Ordinal)
-                    ? []
-                    : [Gen5Operand.Vector(vectorData)];
+                destinations = opcode switch
+                {
+                    _ when opcode.StartsWith("ImageStore", StringComparison.Ordinal) => [],
+                    "ImageBvhIntersectRay" =>
+                    [
+                        Gen5Operand.Vector(vectorData),
+                        Gen5Operand.Vector(vectorData + 1),
+                        Gen5Operand.Vector(vectorData + 2),
+                        Gen5Operand.Vector(vectorData + 3),
+                    ],
+                    _ => [Gen5Operand.Vector(vectorData)],
+                };
                 var dimension = (word >> 3) & 0x7;
                 control = new Gen5ImageControl(
                     (word >> 8) & 0xF,
@@ -2054,7 +2098,7 @@ public static class Gen5ShaderTranslator
                     addressRegisters,
                     vectorData,
                     scalarResource,
-                    scalarSampler,
+                    isBvhIntersectRay ? 0 : scalarSampler,
                     dimension,
                     dimension is 4 or 5 or 7,
                     ((word >> 13) & 1) != 0,

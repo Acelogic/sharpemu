@@ -5446,6 +5446,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				Console.Error.WriteLine("[LOADER][INFO] Sentinel probe returned.");
 			}
 			Console.Error.WriteLine("[LOADER][INFO] Calling guest entry...");
+			InstallGuestExecutionProbes();
 			StartStallWatchdog();
 			StartReadyThreadDispatcher();
 			int num6 = -1;
@@ -5496,6 +5497,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 		finally
 		{
+			RestoreGuestExecutionProbes();
 			StopReadyThreadDispatcher();
 			StopStallWatchdog();
 			ActiveEntryReturnSentinelRip = 0uL;

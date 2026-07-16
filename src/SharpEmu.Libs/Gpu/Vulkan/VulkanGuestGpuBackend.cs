@@ -41,7 +41,8 @@ internal sealed class VulkanGuestGpuBackend : IGuestGpuBackend
                 imageBindingBase,
                 scalarRegisterBufferIndex,
                 requiredVertexOutputCount,
-                storageBufferOffsetAlignment))
+                storageBufferOffsetAlignment,
+                VulkanVideoPresenter.SupportsVertexSubgroupOperations))
         {
             return false;
         }
@@ -77,7 +78,8 @@ internal sealed class VulkanGuestGpuBackend : IGuestGpuBackend
                 scalarRegisterBufferIndex,
                 pixelInputEnable,
                 pixelInputAddress,
-                storageBufferOffsetAlignment))
+                storageBufferOffsetAlignment,
+                VulkanVideoPresenter.SupportsFragmentSubgroupOperations))
         {
             return false;
         }
@@ -111,7 +113,8 @@ internal sealed class VulkanGuestGpuBackend : IGuestGpuBackend
                 totalGlobalBufferCount,
                 initialScalarBufferIndex,
                 waveLaneCount,
-                storageBufferOffsetAlignment))
+                storageBufferOffsetAlignment,
+                VulkanVideoPresenter.SupportsComputeSubgroupOperations))
         {
             return false;
         }

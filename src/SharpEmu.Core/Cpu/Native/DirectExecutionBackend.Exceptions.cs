@@ -110,6 +110,10 @@ public sealed partial class DirectExecutionBackend
 
 			ulong rip = ReadCtxU64(contextRecord, 248);
 			ulong rsp = ReadCtxU64(contextRecord, 152);
+			if (TryRecoverGuestExecutionProbe(exceptionCode, exceptionAddress, contextRecord, rip))
+			{
+				return -1;
+			}
 			if (TryRecoverGuestInt41(exceptionCode, contextRecord, rip))
 			{
 				return -1;

@@ -211,10 +211,28 @@ public sealed unsafe partial class DirectExecutionBackend
 			// Guest-image write tracking runs first: it only needs the fault
 			// address (safe for host and guest threads alike) and must resume
 			// the faulting write immediately after restoring write access.
+			byte* writeTrackerRegisters = GetPosixRegisterBase(ucontext);
+			var writeContext = writeTrackerRegisters == null
+				? default
+				: new GuestWriteFaultContext(
+					InstructionAddress: *(ulong*)(writeTrackerRegisters + PosixRegisterOffsets[16]),
+					Rax: *(ulong*)(writeTrackerRegisters + PosixRegisterOffsets[0]),
+					Rcx: *(ulong*)(writeTrackerRegisters + PosixRegisterOffsets[1]),
+					Rdx: *(ulong*)(writeTrackerRegisters + PosixRegisterOffsets[2]),
+					Rbx: *(ulong*)(writeTrackerRegisters + PosixRegisterOffsets[3]),
+					Rsp: *(ulong*)(writeTrackerRegisters + PosixRegisterOffsets[4]),
+					Rbp: *(ulong*)(writeTrackerRegisters + PosixRegisterOffsets[5]),
+					Rsi: *(ulong*)(writeTrackerRegisters + PosixRegisterOffsets[6]),
+					Rdi: *(ulong*)(writeTrackerRegisters + PosixRegisterOffsets[7]),
+					R12: *(ulong*)(writeTrackerRegisters + PosixRegisterOffsets[12]),
+					R13: *(ulong*)(writeTrackerRegisters + PosixRegisterOffsets[13]),
+					R14: *(ulong*)(writeTrackerRegisters + PosixRegisterOffsets[14]),
+					R15: *(ulong*)(writeTrackerRegisters + PosixRegisterOffsets[15]));
 			if (signal != PosixSigIll &&
 				siginfo != 0 &&
 				SharpEmu.HLE.GuestImageWriteTracker.TryHandleWriteFault(
-					*(ulong*)((byte*)siginfo + PosixSigInfoAddressOffset)))
+					*(ulong*)((byte*)siginfo + PosixSigInfoAddressOffset),
+					writeContext))
 			{
 				return;
 			}
