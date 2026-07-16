@@ -19,7 +19,20 @@ public readonly record struct GuestWriteFaultContext(
     ulong R12 = 0,
     ulong R13 = 0,
     ulong R14 = 0,
-    ulong R15 = 0);
+    ulong R15 = 0,
+    ulong Stack0 = 0,
+    ulong Stack1 = 0,
+    ulong Stack2 = 0,
+    ulong Stack3 = 0,
+    ulong Stack4 = 0,
+    ulong Stack5 = 0,
+    ulong Stack6 = 0,
+    ulong Stack7 = 0);
+
+public readonly record struct GuestWriteFaultInfo(
+    ulong Address,
+    ulong Page,
+    GuestWriteFaultContext Context);
 
 /// <summary>
 /// Detects guest CPU writes into memory that backs a host GPU image. On PS5
@@ -73,6 +86,15 @@ public static unsafe class GuestImageWriteTracker
 
     private static readonly bool _enabled = !OperatingSystem.IsWindows() &&
         Environment.GetEnvironmentVariable("SHARPEMU_GUEST_IMAGE_CPU_SYNC") != "0";
+    private static readonly bool _configuredGuestMemoryTraceEnabled = string.Equals(
+        Environment.GetEnvironmentVariable(
+            "SHARPEMU_TRACE_GUEST_MEMORY_CPU_WRITES"),
+        "1",
+        StringComparison.Ordinal);
+    private static readonly (ulong Address, ulong Length)[]
+        _configuredGuestMemoryTraceRanges = ParseAddressRanges(
+            Environment.GetEnvironmentVariable(
+                "SHARPEMU_TRACE_GUEST_MEMORY_RANGES"));
     private static readonly (bool Wildcard, ulong[] Addresses) _lifetimeTraceFilter =
         ParseAddressList(Environment.GetEnvironmentVariable("SHARPEMU_TRACE_GUEST_IMAGE_ADDRS"));
     private static readonly (bool Wildcard, string[] Sources) _lifetimeSourceTraceFilter =
@@ -93,6 +115,43 @@ public static unsafe class GuestImageWriteTracker
     private static extern int ClockGetTime(int clockId, Timespec* time);
 
     public static bool Enabled => _enabled;
+
+    /// <summary>
+    /// Arms configured diagnostic ranges as soon as a guest virtual mapping
+    /// covers them. This catches upload/file-loader stores that occur before
+    /// the first AGC submission; later AGC polling reports the captured RIP.
+    /// </summary>
+    public static void TrackConfiguredGuestMemoryRanges(
+        ulong mappedAddress,
+        ulong byteCount)
+    {
+        if (!_enabled ||
+            !_configuredGuestMemoryTraceEnabled ||
+            mappedAddress == 0 ||
+            byteCount == 0)
+        {
+            return;
+        }
+
+        var mappedEnd = byteCount > ulong.MaxValue - mappedAddress
+            ? ulong.MaxValue
+            : mappedAddress + byteCount;
+        foreach (var range in _configuredGuestMemoryTraceRanges)
+        {
+            var rangeEnd = range.Length > ulong.MaxValue - range.Address
+                ? ulong.MaxValue
+                : range.Address + range.Length;
+            if (range.Address < mappedAddress || rangeEnd > mappedEnd)
+            {
+                continue;
+            }
+
+            Track(
+                range.Address,
+                range.Length,
+                source: "configured-guest-memory-range");
+        }
+    }
 
     /// <summary>
     /// Exercises the fault-handling path once outside signal context so every
@@ -252,7 +311,21 @@ public static unsafe class GuestImageWriteTracker
         ulong address,
         out GuestWriteFaultContext context)
     {
+        if (TryGetFirstCpuWriteInfo(address, out var info))
+        {
+            context = info.Context;
+            return true;
+        }
+
         context = default;
+        return false;
+    }
+
+    public static bool TryGetFirstCpuWriteInfo(
+        ulong address,
+        out GuestWriteFaultInfo info)
+    {
+        info = default;
         if (!_enabled)
         {
             return false;
@@ -271,7 +344,10 @@ public static unsafe class GuestImageWriteTracker
                 return false;
             }
 
-            context = range.FirstCpuWriteContext;
+            info = new GuestWriteFaultInfo(
+                range.FirstCpuWriteAddress,
+                range.FirstCpuWritePage,
+                range.FirstCpuWriteContext);
             return true;
         }
     }
@@ -576,6 +652,50 @@ public static unsafe class GuestImageWriteTracker
         return (false, parsedAddresses.ToArray());
     }
 
+    private static (ulong Address, ulong Length)[] ParseAddressRanges(string? ranges)
+    {
+        if (string.IsNullOrWhiteSpace(ranges))
+        {
+            return [];
+        }
+
+        var parsedRanges = new List<(ulong Address, ulong Length)>();
+        foreach (var item in ranges.Split(
+                     ',',
+                     StringSplitOptions.RemoveEmptyEntries |
+                     StringSplitOptions.TrimEntries))
+        {
+            var separator = item.IndexOf(':');
+            if (separator <= 0 || separator == item.Length - 1)
+            {
+                continue;
+            }
+
+            static bool TryParseHex(ReadOnlySpan<char> value, out ulong parsed)
+            {
+                if (value.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+                {
+                    value = value[2..];
+                }
+
+                return ulong.TryParse(
+                    value,
+                    NumberStyles.HexNumber,
+                    CultureInfo.InvariantCulture,
+                    out parsed);
+            }
+
+            if (TryParseHex(item.AsSpan(0, separator), out var address) &&
+                TryParseHex(item.AsSpan(separator + 1), out var length) &&
+                length != 0)
+            {
+                parsedRanges.Add((address, length));
+            }
+        }
+
+        return parsedRanges.Distinct().ToArray();
+    }
+
     private static bool ShouldTraceSource(string source)
     {
         if (_lifetimeSourceTraceFilter.Wildcard)
@@ -660,7 +780,11 @@ public static unsafe class GuestImageWriteTracker
               $"rsp=0x{context.Rsp:X16} rbp=0x{context.Rbp:X16} " +
               $"rsi=0x{context.Rsi:X16} rdi=0x{context.Rdi:X16} " +
               $"r12=0x{context.R12:X16} r13=0x{context.R13:X16} " +
-              $"r14=0x{context.R14:X16} r15=0x{context.R15:X16}";
+              $"r14=0x{context.R14:X16} r15=0x{context.R15:X16} " +
+              $"stack=0x{context.Stack0:X16}/0x{context.Stack1:X16}/" +
+              $"0x{context.Stack2:X16}/0x{context.Stack3:X16}/" +
+              $"0x{context.Stack4:X16}/0x{context.Stack5:X16}/" +
+              $"0x{context.Stack6:X16}/0x{context.Stack7:X16}";
         Console.Error.WriteLine(
             $"[WT][LIFETIME] seq={traceSequence} t_ms={elapsedMilliseconds:F3} " +
             $"event={operation} source_seq={range.SourceSequence} source='{range.Source}' " +

@@ -17,6 +17,26 @@ internal readonly record struct GlobalBufferContentSummary(
 
 internal static class GlobalBufferWritebackDiagnostics
 {
+    internal static bool ShouldEmitAddressFilteredTrace(
+        int occurrence,
+        long changedBytes,
+        int interval = 64)
+    {
+        if (occurrence <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(occurrence));
+        }
+
+        if (interval <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(interval));
+        }
+
+        return occurrence <= 4 ||
+            changedBytes > 0 ||
+            occurrence % interval == 0;
+    }
+
     internal static GlobalBufferContentSummary Summarize(
         ReadOnlySpan<byte> current)
     {

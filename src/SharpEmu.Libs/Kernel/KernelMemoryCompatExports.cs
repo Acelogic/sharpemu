@@ -2871,6 +2871,9 @@ public static partial class KernelMemoryCompatExports
                 DirectStart: directMemoryStart);
         }
 
+        GuestImageWriteTracker.TrackConfiguredGuestMemoryRanges(
+            mappedAddress,
+            length);
         if (!ctx.TryWriteUInt64(inOutAddressPointer, mappedAddress))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
@@ -2962,6 +2965,9 @@ public static partial class KernelMemoryCompatExports
                 DirectStart: 0);
         }
 
+        GuestImageWriteTracker.TrackConfiguredGuestMemoryRanges(
+            mappedAddress,
+            length);
         if (!ctx.TryWriteUInt64(inOutAddressPointer, mappedAddress))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;

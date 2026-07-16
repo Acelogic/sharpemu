@@ -1235,6 +1235,24 @@ public sealed partial class DirectExecutionBackend
 
 		var arg0 = *(ulong*)argPackPtr;
 		var returnRip = *(ulong*)(argPackPtr + 96);
+		var traceFilteredLeaf = !string.IsNullOrWhiteSpace(_importFilter) &&
+			(export.LibraryName.Contains(_importFilter!, StringComparison.OrdinalIgnoreCase) ||
+			 export.Name.Contains(_importFilter!, StringComparison.OrdinalIgnoreCase) ||
+			 importStubEntry.Nid.Contains(_importFilter!, StringComparison.OrdinalIgnoreCase));
+		var traceLeafReturnAddress =
+			_probeImportReturnAddress != 0 && returnRip == _probeImportReturnAddress;
+		if ((traceFilteredLeaf || traceLeafReturnAddress) &&
+			Interlocked.Increment(ref _probeImportReturnAddressCount) <= 2048)
+		{
+			Console.Error.WriteLine(
+				$"[LOADER][TRACE] leaf-import-probe dispatch={dispatchIndex} " +
+				$"library={export.LibraryName} export={export.Name} nid={importStubEntry.Nid} " +
+				$"rdi=0x{arg0:X16} rsi=0x{*(ulong*)(argPackPtr + 8):X16} " +
+				$"rdx=0x{*(ulong*)(argPackPtr + 16):X16} " +
+				$"rcx=0x{*(ulong*)(argPackPtr + 24):X16} " +
+				$"r8=0x{*(ulong*)(argPackPtr + 32):X16} " +
+				$"ret=0x{returnRip:X16}");
+		}
 		var leafStackPointer = (ulong)argPackPtr + 96UL;
 		var probeLeafReturn = _logAllImports &&
 			string.Equals(importStubEntry.Nid, "2Z+PpY6CaJg", StringComparison.Ordinal) &&

@@ -108,6 +108,10 @@ public sealed unsafe class GuestImageWriteTrackerTests
             Assert.True(GuestImageWriteTracker.TryHandleWriteFault(address, expected));
             Assert.True(GuestImageWriteTracker.TryGetFirstCpuWriteContext(address, out var actual));
             Assert.Equal(expected, actual);
+            Assert.True(GuestImageWriteTracker.TryGetFirstCpuWriteInfo(address, out var info));
+            Assert.Equal(address, info.Address);
+            Assert.Equal(address & ~0xFFFUL, info.Page);
+            Assert.Equal(expected, info.Context);
 
             Assert.True(GuestImageWriteTracker.ConsumeDirty(address));
             Assert.True(GuestImageWriteTracker.TryGetFirstCpuWriteContext(address, out actual));

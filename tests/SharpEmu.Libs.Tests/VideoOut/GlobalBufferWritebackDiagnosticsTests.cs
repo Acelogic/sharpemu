@@ -8,6 +8,24 @@ namespace SharpEmu.Libs.Tests.VideoOut;
 
 public sealed class GlobalBufferWritebackDiagnosticsTests
 {
+    [Theory]
+    [InlineData(1, 0, true)]
+    [InlineData(4, 0, true)]
+    [InlineData(5, 0, false)]
+    [InlineData(64, 0, true)]
+    [InlineData(65, 1, true)]
+    public void AddressFilteredTraceKeepsEarlyPeriodicAndChangedSamples(
+        int occurrence,
+        long changedBytes,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            GlobalBufferWritebackDiagnostics.ShouldEmitAddressFilteredTrace(
+                occurrence,
+                changedBytes));
+    }
+
     [Fact]
     public void ContentSummaryReportsSparseExtentAndHash()
     {

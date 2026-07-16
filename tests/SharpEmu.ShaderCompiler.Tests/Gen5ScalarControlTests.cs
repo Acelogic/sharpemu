@@ -43,6 +43,85 @@ public sealed class Gen5ScalarControlTests
         Assert.Equal(trapId, instruction.Words[0] & 0xFFFFu);
     }
 
+    [Fact]
+    public void ProgramLongerThan4096InstructionsReachesEndProgram()
+    {
+        const int nopCount = 4096;
+        const uint sNop = 0xBF800000;
+        var shader = new byte[(nopCount + 1) * sizeof(uint)];
+        for (var index = 0; index < nopCount; index++)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(
+                shader.AsSpan(index * sizeof(uint), sizeof(uint)),
+                sNop);
+        }
+
+        BinaryPrimitives.WriteUInt32LittleEndian(
+            shader.AsSpan(nopCount * sizeof(uint), sizeof(uint)),
+            SEndpgm);
+        var memory = new TestCpuMemory(ShaderAddress, shader.Length);
+        Assert.True(memory.TryWrite(ShaderAddress, shader));
+
+        var ctx = new CpuContext(memory, Generation.Gen5);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                ShaderAddress,
+                out var program,
+                out var error),
+            error);
+        Assert.Equal(nopCount + 1, program.Instructions.Count);
+        Assert.Equal("SEndpgm", program.Instructions[^1].Opcode);
+    }
+
+    [Fact]
+    public void ProgramCacheIncludesDeclaredShaderSize()
+    {
+        const ulong headerAddress = ShaderAddress + 0x100;
+        const uint computePgmRsrc2 = 0x213;
+        const uint computeUserData = 0x240;
+        const uint sNop = 0xBF800000;
+        var memory = new TestCpuMemory(ShaderAddress, 0x200);
+        Span<byte> shader = stackalloc byte[2 * sizeof(uint)];
+        BinaryPrimitives.WriteUInt32LittleEndian(shader, sNop);
+        BinaryPrimitives.WriteUInt32LittleEndian(shader[sizeof(uint)..], SEndpgm);
+        Assert.True(memory.TryWrite(ShaderAddress, shader));
+
+        Span<byte> size = stackalloc byte[sizeof(uint)];
+        BinaryPrimitives.WriteUInt32LittleEndian(size, (uint)shader.Length);
+        Assert.True(memory.TryWrite(headerAddress + 0x44, size));
+
+        var ctx = new CpuContext(memory, Generation.Gen5);
+        var registers = new Dictionary<uint, uint>
+        {
+            [computePgmRsrc2] = 0,
+        };
+        Assert.True(
+            Gen5ShaderTranslator.TryCreateState(
+                ctx,
+                ShaderAddress,
+                headerAddress,
+                registers,
+                computeUserData,
+                out _,
+                out var error),
+            error);
+
+        BinaryPrimitives.WriteUInt32LittleEndian(size, sizeof(uint));
+        Assert.True(memory.TryWrite(headerAddress + 0x44, size));
+        Assert.False(
+            Gen5ShaderTranslator.TryCreateState(
+                ctx,
+                ShaderAddress,
+                headerAddress,
+                registers,
+                computeUserData,
+                out _,
+                out error));
+        Assert.Contains("unterminated", error);
+        Assert.Contains("size=0x4", error);
+    }
+
     private sealed class TestCpuMemory(ulong baseAddress, int size) : ICpuMemory
     {
         private readonly byte[] _storage = new byte[size];

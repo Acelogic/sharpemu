@@ -176,6 +176,7 @@ public static partial class AgcExports
     private const ulong ShaderSpecialsOffset = 0x28;
     private const ulong ShaderInputSemanticsOffset = 0x30;
     private const ulong ShaderOutputSemanticsOffset = 0x38;
+    private const ulong ShaderSizeOffset = 0x44;
     private const ulong ResourceRegistrationBytesPerResource = 0x118;
     private const ulong ResourceRegistrationBytesPerOwner = 0x1E0;
     private const int ResourceRegistrationMaxNameLength = 256;
@@ -210,6 +211,12 @@ public static partial class AgcExports
         _tracedDispatchArguments = new();
     private static readonly HashSet<(ulong Address, uint Initiator, string Reason)>
         _rejectedDispatchArguments = new();
+    private static readonly ulong[] _dumpShaderProgramAddresses = ParseHexAddresses(
+        Environment.GetEnvironmentVariable("SHARPEMU_DUMP_SHADER_PROGRAM_ADDRS"));
+    private static readonly string? _dumpShaderProgramDirectory =
+        Environment.GetEnvironmentVariable("SHARPEMU_DUMP_SHADER_PROGRAM_DIR");
+    private static readonly ConcurrentDictionary<(string Stage, ulong Address), byte>
+        _dumpedShaderPrograms = new();
     private static readonly HashSet<uint> _tracedSubmittedDrawOpcodes = new();
     // Concurrent so the per-draw/per-dispatch hit path is lock-free (and no longer
     // shares _submitTraceGate with tracing).
@@ -278,6 +285,11 @@ public static partial class AgcExports
         ParseHexRanges(
             Environment.GetEnvironmentVariable(
                 "SHARPEMU_TRACE_GUEST_MEMORY_RANGES"));
+    private static readonly bool _traceGuestMemoryCpuWrites = string.Equals(
+        Environment.GetEnvironmentVariable(
+            "SHARPEMU_TRACE_GUEST_MEMORY_CPU_WRITES"),
+        "1",
+        StringComparison.Ordinal);
     private static readonly bool _traceCopyData = string.Equals(
         Environment.GetEnvironmentVariable("SHARPEMU_TRACE_COPY_DATA"),
         "1",
@@ -318,6 +330,9 @@ public static partial class AgcExports
     private static long _dcbWriteDataTraceCount;
     private static long _copyDataProbeTraceCount;
     private static long _guestMemoryPacketProbeTraceCount;
+    private const int MaximumGuestMemoryCpuWriterOccurrences = 16;
+    private static readonly ConcurrentDictionary<ulong, int>
+        _guestMemoryCpuWriterOccurrences = new();
     private static int _tracedVertexRangeCount;
     private static long _dcbWaitRegMemTraceCount;
     private static long _createShaderTraceCount;
@@ -2728,6 +2743,7 @@ public static partial class AgcExports
         }
 
         VulkanVideoPresenter.AttachGuestMemory(ctx.Memory);
+        TraceGuestMemoryCpuWriters(ctx, "dcb-before");
         var gpuState = _submittedGpuStates.GetValue(ctx.Memory, static _ => new SubmittedGpuState());
         lock (gpuState.Gate)
         {
@@ -2742,6 +2758,7 @@ public static partial class AgcExports
                 tracePackets);
             DrainResumableDcbs(ctx, gpuState, tracePackets);
         }
+        TraceGuestMemoryCpuWriters(ctx, "dcb-after");
 
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
@@ -2780,6 +2797,7 @@ public static partial class AgcExports
         }
 
         VulkanVideoPresenter.AttachGuestMemory(ctx.Memory);
+        TraceGuestMemoryCpuWriters(ctx, "acb-before");
         var gpuState = _submittedGpuStates.GetValue(ctx.Memory, static _ => new SubmittedGpuState());
         lock (gpuState.Gate)
         {
@@ -2800,9 +2818,94 @@ public static partial class AgcExports
                 tracePackets);
             DrainResumableDcbs(ctx, gpuState, tracePackets);
         }
+        TraceGuestMemoryCpuWriters(ctx, "acb-after");
 
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    private static void TraceGuestMemoryCpuWriters(CpuContext ctx, string phase)
+    {
+        if (!_traceGuestMemoryCpuWrites ||
+            _traceGuestMemoryRanges.Length == 0 ||
+            !GuestImageWriteTracker.Enabled)
+        {
+            return;
+        }
+
+        GuestImageWriteTracker.FlushPendingDiagnostics();
+        Span<byte> readable = stackalloc byte[1];
+        Span<byte> sample = stackalloc byte[64];
+        foreach (var range in _traceGuestMemoryRanges)
+        {
+            if (_guestMemoryCpuWriterOccurrences.TryGetValue(
+                    range.Address,
+                    out var previousOccurrences) &&
+                previousOccurrences >= MaximumGuestMemoryCpuWriterOccurrences)
+            {
+                continue;
+            }
+
+            if (GuestImageWriteTracker.TryGetFirstCpuWriteInfo(
+                    range.Address,
+                    out var write))
+            {
+                var occurrence = _guestMemoryCpuWriterOccurrences.AddOrUpdate(
+                    range.Address,
+                    1,
+                    static (_, current) => current + 1);
+                var sampleLength = (int)Math.Min((ulong)sample.Length, range.Length);
+                var sampleReadable = sampleLength != 0 &&
+                    ctx.Memory.TryRead(range.Address, sample[..sampleLength]);
+                var sampleBytes = sampleReadable
+                    ? Convert.ToHexString(sample[..sampleLength])
+                    : "unreadable";
+                var context = write.Context;
+                Console.Error.WriteLine(
+                    $"[AGC][GUEST-MEMORY-CPU-WRITER] phase={phase} " +
+                    $"occurrence={occurrence}/{MaximumGuestMemoryCpuWriterOccurrences} " +
+                    $"range=0x{range.Address:X16}:0x{range.Length:X} " +
+                    $"write=0x{write.Address:X16} page=0x{write.Page:X16} " +
+                    $"ip=0x{context.InstructionAddress:X16} " +
+                    $"rax=0x{context.Rax:X16} rbx=0x{context.Rbx:X16} " +
+                    $"rcx=0x{context.Rcx:X16} rdx=0x{context.Rdx:X16} " +
+                    $"rsi=0x{context.Rsi:X16} rdi=0x{context.Rdi:X16} " +
+                    $"rsp=0x{context.Rsp:X16} rbp=0x{context.Rbp:X16} " +
+                    $"r12=0x{context.R12:X16} r13=0x{context.R13:X16} " +
+                    $"r14=0x{context.R14:X16} r15=0x{context.R15:X16} " +
+                    $"stack=0x{context.Stack0:X16}/0x{context.Stack1:X16}/" +
+                    $"0x{context.Stack2:X16}/0x{context.Stack3:X16}/" +
+                    $"0x{context.Stack4:X16}/0x{context.Stack5:X16}/" +
+                    $"0x{context.Stack6:X16}/0x{context.Stack7:X16} " +
+                    $"sample={sampleBytes}");
+
+                if (occurrence < MaximumGuestMemoryCpuWriterOccurrences)
+                {
+                    GuestImageWriteTracker.Track(
+                        range.Address,
+                        range.Length,
+                        occurrence,
+                        "agc-range-probe");
+                }
+                else
+                {
+                    GuestImageWriteTracker.Untrack(range.Address);
+                }
+
+                continue;
+            }
+
+            // The title allocations do not exist during the first submits.
+            // Retry arming only after the range is readable, then leave it
+            // protected until the first native or managed CPU write arrives.
+            if (ctx.Memory.TryRead(range.Address, readable))
+            {
+                GuestImageWriteTracker.Track(
+                    range.Address,
+                    range.Length,
+                    source: "agc-range-probe");
+            }
+        }
     }
 
     [SysAbiExport(
@@ -3253,7 +3356,9 @@ public static partial class AgcExports
                 ApplySubmittedStandardDmaData(ctx, gpuState, state, currentAddress);
             }
 
-            if (op == ItCopyData && length >= 6 && _traceCopyData)
+            if (op == ItCopyData &&
+                length >= 6 &&
+                (_traceCopyData || _traceGuestMemoryRanges.Length != 0))
             {
                 TraceSubmittedCopyData(ctx, state, currentAddress, length);
             }
@@ -5142,8 +5247,7 @@ public static partial class AgcExports
         ulong packetAddress,
         uint packetLength)
     {
-        if (Interlocked.Increment(ref _copyDataProbeTraceCount) > 256 ||
-            !TryReadUInt32(ctx, packetAddress + 4, out var control) ||
+        if (!TryReadUInt32(ctx, packetAddress + 4, out var control) ||
             !TryReadUInt32(ctx, packetAddress + 8, out var sourceLow) ||
             !TryReadUInt32(ctx, packetAddress + 12, out var sourceHigh) ||
             !TryReadUInt32(ctx, packetAddress + 16, out var destinationLow) ||
@@ -5156,13 +5260,20 @@ public static partial class AgcExports
         var writeLength = ((control >> 16) & 0x1u) != 0
             ? (ulong)sizeof(ulong)
             : (ulong)sizeof(uint);
+        var rangeMatch = ShouldTraceGuestMemoryRange(destinationAddress, writeLength);
+        if ((_traceGuestMemoryRanges.Length != 0 && !rangeMatch) ||
+            Interlocked.Increment(ref _copyDataProbeTraceCount) > 256)
+        {
+            return;
+        }
+
         Console.Error.WriteLine(
             $"[AGC][COPY-DATA-PROBE] queue={state.QueueName} " +
             $"submission={state.ActiveSubmissionId} packet=0x{packetAddress:X16} " +
             $"length={packetLength} control=0x{control:X8} " +
             $"src=0x{sourceHigh:X8}{sourceLow:X8} " +
             $"dst=0x{destinationAddress:X16} bytes={writeLength} " +
-            $"range_match={(ShouldTraceGuestMemoryRange(destinationAddress, writeLength) ? 1 : 0)}");
+            $"range_match={(rangeMatch ? 1 : 0)}");
     }
 
     private static (uint Destination, uint DataSelection)
@@ -6783,10 +6894,40 @@ public static partial class AgcExports
                 continue;
             }
 
+            var descriptorWords = binding.ScalarAddress + 3 <
+                    (uint)evaluation.ScalarRegisters.Count
+                ? evaluation.ScalarRegisters
+                    .Skip(checked((int)binding.ScalarAddress))
+                    .Take(4)
+                    .ToArray()
+                : [];
+            var initialDescriptorWords = binding.ScalarAddress + 3 <
+                    (uint)evaluation.InitialScalarRegisters.Count
+                ? evaluation.InitialScalarRegisters
+                    .Skip(checked((int)binding.ScalarAddress))
+                    .Take(4)
+                    .ToArray()
+                : [];
+            var descriptorText = descriptorWords.Length == 4
+                ? string.Join(':', descriptorWords.Select(value => $"{value:X8}"))
+                : "unavailable";
+            var initialDescriptorText = initialDescriptorWords.Length == 4
+                ? string.Join(':', initialDescriptorWords.Select(value => $"{value:X8}"))
+                : "unavailable";
+            var descriptorStride = descriptorWords.Length == 4
+                ? (descriptorWords[1] >> 16) & 0x3FFFu
+                : 0;
+            var descriptorRecords = descriptorWords.Length == 4
+                ? descriptorWords[2]
+                : 0;
+            var descriptorBytes = descriptorStride == 0
+                ? descriptorRecords
+                : (ulong)descriptorStride * descriptorRecords;
+
             var key =
                 $"{stage}|{shaderAddress:X16}|{binding.BaseAddress:X16}|" +
                 $"{binding.ScalarAddress}|{binding.Writable}|" +
-                string.Join(',', binding.InstructionPcs);
+                $"{descriptorText}|" + string.Join(',', binding.InstructionPcs);
             lock (_submitTraceGate)
             {
                 if (_tracedGlobalBufferLengthStates.Count >= 512 ||
@@ -6807,6 +6948,9 @@ public static partial class AgcExports
                 $"base=0x{binding.BaseAddress:X16} bytes={binding.DataLength} " +
                 $"writable={(binding.Writable ? 1 : 0)} " +
                 $"writeback={(binding.WriteBackToGuest ? 1 : 0)} " +
+                $"descriptor=[{descriptorText}] initial=[{initialDescriptorText}] " +
+                $"stride={descriptorStride} records={descriptorRecords} " +
+                $"descriptor_bytes={descriptorBytes} " +
                 $"nonzero_bytes={content.NonzeroBytes}/{binding.DataLength} " +
                 $"first_nonzero={content.FirstNonzeroOffset} " +
                 $"last_nonzero={content.LastNonzeroOffset} " +
@@ -9676,6 +9820,12 @@ public static partial class AgcExports
                 out var evaluation,
                 out error))
         {
+            DumpShaderProgramIfRequested(
+                ctx,
+                "cs",
+                shaderAddress,
+                shaderHeader,
+                error);
             lock (_submitTraceGate)
             {
                 if (_tracedComputeShaders.Add(shaderAddress))
@@ -9910,7 +10060,7 @@ public static partial class AgcExports
                         .Select(instruction => instruction.Opcode)
                         .Distinct()
                         .Take(48));
-                TraceAgcShader(
+                var computeSummary =
                     $"agc.compute_shader cs=0x{shaderAddress:X16} " +
                     $"groups={dispatch.GroupCountX}x{dispatch.GroupCountY}x{dispatch.GroupCountZ} " +
                     $"base={dispatch.BaseGroupX}x{dispatch.BaseGroupY}x{dispatch.BaseGroupZ} " +
@@ -9925,7 +10075,12 @@ public static partial class AgcExports
                     globalProbes +
                     globalDescriptors +
                     $" opcodes=[{opcodes}]" +
-                    $" bindings=[{string.Join(',', descriptions)}]");
+                    $" bindings=[{string.Join(',', descriptions)}]";
+                TraceAgcShader(computeSummary);
+                if (_traceComputeShaderAddress == shaderAddress && !_traceAgcShader)
+                {
+                    Console.Error.WriteLine($"[AGC][COMPUTE-RESULT] {computeSummary}");
+                }
             }
         }
 
@@ -12177,6 +12332,141 @@ public static partial class AgcExports
         }
 
         File.WriteAllLines(Path.Combine(directory, $"{name}.ir.txt"), lines);
+    }
+
+    /// <summary>
+    /// Captures a bounded raw guest shader window when translation fails. Both
+    /// the output directory and an exact address allow-list are required so a
+    /// broad shader trace cannot accidentally dump every program in a title.
+    /// </summary>
+    private static void DumpShaderProgramIfRequested(
+        CpuContext ctx,
+        string stage,
+        ulong shaderAddress,
+        ulong shaderHeaderAddress,
+        string error)
+    {
+        if (string.IsNullOrWhiteSpace(_dumpShaderProgramDirectory) ||
+            !_dumpShaderProgramAddresses.Contains(shaderAddress) ||
+            !_dumpedShaderPrograms.TryAdd((stage, shaderAddress), 0))
+        {
+            return;
+        }
+
+        const int maximumBytes = 64 * 1024;
+        const int readChunkBytes = 4 * 1024;
+        var bytes = new byte[maximumBytes];
+        var bytesRead = 0;
+        while (bytesRead < bytes.Length)
+        {
+            var chunkLength = Math.Min(readChunkBytes, bytes.Length - bytesRead);
+            if (!ctx.Memory.TryRead(
+                    shaderAddress + (ulong)bytesRead,
+                    bytes.AsSpan(bytesRead, chunkLength)))
+            {
+                break;
+            }
+
+            bytesRead += chunkLength;
+        }
+
+        if (bytesRead == 0)
+        {
+            Console.Error.WriteLine(
+                $"[LOADER][TRACE] agc.shader_program_dump stage={stage} " +
+                $"addr=0x{shaderAddress:X16} error=read-failed");
+            return;
+        }
+
+        Array.Resize(ref bytes, bytesRead);
+        try
+        {
+            Directory.CreateDirectory(_dumpShaderProgramDirectory);
+            var name = $"{shaderAddress:X16}.{stage}";
+            var programPath = Path.Combine(_dumpShaderProgramDirectory, $"{name}.bin");
+            File.WriteAllBytes(programPath, bytes);
+
+            var dwordCount = bytes.Length / sizeof(uint);
+            var endProgramOffsets = new List<int>();
+            var nonzeroDwords = 0;
+            for (var index = 0; index < dwordCount; index++)
+            {
+                var word = BinaryPrimitives.ReadUInt32LittleEndian(
+                    bytes.AsSpan(index * sizeof(uint), sizeof(uint)));
+                if (word != 0)
+                {
+                    nonzeroDwords++;
+                }
+
+                if ((word & 0xFFFF0000u) == 0xBF810000u)
+                {
+                    endProgramOffsets.Add(index * sizeof(uint));
+                }
+            }
+
+            static string DescribeDwords(byte[] source, int startDword, int count)
+            {
+                var available = Math.Max(0, source.Length / sizeof(uint) - startDword);
+                return string.Join(
+                    ' ',
+                    Enumerable.Range(startDword, Math.Min(count, available))
+                        .Select(index => BinaryPrimitives.ReadUInt32LittleEndian(
+                            source.AsSpan(index * sizeof(uint), sizeof(uint))))
+                        .Select(word => $"{word:X8}"));
+            }
+
+            var tailStart = Math.Max(0, dwordCount - 32);
+            var declaredShaderSize = 0u;
+            if (shaderHeaderAddress != 0)
+            {
+                _ = TryReadUInt32(
+                    ctx,
+                    shaderHeaderAddress + ShaderSizeOffset,
+                    out declaredShaderSize);
+            }
+
+            var metadata = new List<string>
+            {
+                $"stage={stage}",
+                $"address=0x{shaderAddress:X16}",
+                $"header=0x{shaderHeaderAddress:X16}",
+                $"declared_shader_size=0x{declaredShaderSize:X}",
+                $"error={error}",
+                $"bytes={bytes.Length}",
+                $"dwords={dwordCount}",
+                $"nonzero_dwords={nonzeroDwords}",
+                $"sha256={Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes))}",
+                $"s_endpgm_offsets={string.Join(',', endProgramOffsets.Select(offset => $"0x{offset:X}"))}",
+                $"head={DescribeDwords(bytes, 0, 32)}",
+                $"tail={DescribeDwords(bytes, tailStart, 32)}",
+            };
+            File.WriteAllLines(
+                Path.Combine(_dumpShaderProgramDirectory, $"{name}.txt"),
+                metadata);
+
+            if (shaderHeaderAddress != 0)
+            {
+                var headerBytes = new byte[128];
+                if (ctx.Memory.TryRead(shaderHeaderAddress, headerBytes))
+                {
+                    File.WriteAllBytes(
+                        Path.Combine(_dumpShaderProgramDirectory, $"{name}.header.bin"),
+                        headerBytes);
+                }
+            }
+
+            Console.Error.WriteLine(
+                $"[LOADER][TRACE] agc.shader_program_dump stage={stage} " +
+                $"addr=0x{shaderAddress:X16} header=0x{shaderHeaderAddress:X16} " +
+                $"bytes={bytes.Length} nonzero_dw={nonzeroDwords}/{dwordCount} " +
+                $"endpgm={endProgramOffsets.Count} path={programPath}");
+        }
+        catch (IOException exception)
+        {
+            Console.Error.WriteLine(
+                $"[LOADER][TRACE] agc.shader_program_dump stage={stage} " +
+                $"addr=0x{shaderAddress:X16} error={exception.GetType().Name}");
+        }
     }
 
     private static void TraceCreateShader(ulong destinationAddress, ulong headerAddress, ulong codeAddress, string detail)

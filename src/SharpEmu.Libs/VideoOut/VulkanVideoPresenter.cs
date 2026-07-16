@@ -2415,6 +2415,7 @@ internal static unsafe class VulkanVideoPresenter
         private readonly HashSet<(ulong Address, ulong Size)> _tracedGlobalWritebacks = new();
         private readonly Dictionary<(ulong Shader, ulong Address, ulong Size), int>
             _tracedAddressFilteredGlobalWritebacks = new();
+        private readonly HashSet<string> _tracedAddressFilteredGlobalBindings = new();
         private readonly HashSet<(ulong Shader, uint X, uint Y, uint Z, string Reason)>
             _rejectedComputeDispatches = new();
         private int _tracedSmallGlobalWritebackEvents;
@@ -5427,7 +5428,10 @@ internal static unsafe class VulkanVideoPresenter
                 for (var index = 0; index < draw.GlobalMemoryBuffers.Count; index++)
                 {
                     resources.GlobalMemoryBuffers[index] =
-                        CreateGlobalBufferResource(draw.GlobalMemoryBuffers[index]);
+                        CreateGlobalBufferResource(
+                            draw.GlobalMemoryBuffers[index],
+                            "graphics",
+                            shaderAddress);
                 }
 
                 var sharedVertexResources = new Dictionary<
@@ -5569,7 +5573,10 @@ internal static unsafe class VulkanVideoPresenter
                 for (var index = 0; index < dispatch.GlobalMemoryBuffers.Count; index++)
                 {
                     resources.GlobalMemoryBuffers[index] =
-                        CreateGlobalBufferResource(dispatch.GlobalMemoryBuffers[index]);
+                        CreateGlobalBufferResource(
+                            dispatch.GlobalMemoryBuffers[index],
+                            "compute",
+                            dispatch.ShaderAddress);
                 }
 
                 if (traceResources)
@@ -7652,7 +7659,9 @@ internal static unsafe class VulkanVideoPresenter
         }
 
         private GlobalBufferResource CreateGlobalBufferResource(
-            GuestMemoryBuffer guestBuffer)
+            GuestMemoryBuffer guestBuffer,
+            string shaderStage,
+            ulong shaderAddress)
         {
             if (guestBuffer.BaseAddress == 0)
             {
@@ -7749,6 +7758,43 @@ internal static unsafe class VulkanVideoPresenter
                     ObjectType.Buffer,
                     allocation.Buffer.Handle,
                     $"SharpEmu global 0x{guestBuffer.BaseAddress:X16} {guestBuffer.Length}b");
+            }
+
+            if (ShouldTraceGlobalBufferForDiagnostics(
+                    guestBuffer.BaseAddress,
+                    size))
+            {
+                var candidates = _guestBufferAllocations
+                    .Where(candidate =>
+                        candidate.BaseAddress <= guestBuffer.BaseAddress &&
+                        candidate.BaseAddress + candidate.Size >= endAddress)
+                    .Select(candidate =>
+                        $"{candidate.QueueName}:0x{candidate.Buffer.Handle:X}:" +
+                        $"0x{candidate.BaseAddress:X16}+0x{candidate.Size:X}")
+                    .ToArray();
+                var diagnosticKey =
+                    $"{shaderStage}|{shaderAddress:X16}|" +
+                    $"{guestBuffer.BaseAddress:X16}|{size:X}|" +
+                    $"{guestBuffer.Writable}|{guestBuffer.WriteBackToGuest}|" +
+                    $"{allocation.QueueName}|{allocation.Buffer.Handle:X}|" +
+                    string.Join(',', candidates);
+                if (_tracedAddressFilteredGlobalBindings.Count < 2048 &&
+                    _tracedAddressFilteredGlobalBindings.Add(diagnosticKey))
+                {
+                    Console.Error.WriteLine(
+                        "[LOADER][TRACE] " +
+                        $"vk.global_binding stage={shaderStage} " +
+                        $"shader=0x{shaderAddress:X16} " +
+                        $"base=0x{guestBuffer.BaseAddress:X16} bytes={size} " +
+                        $"writable={(guestBuffer.Writable ? 1 : 0)} " +
+                        $"writeback={(guestBuffer.WriteBackToGuest ? 1 : 0)} " +
+                        $"active_queue={_activeGuestQueue.Name} " +
+                        $"selected_queue={allocation.QueueName} " +
+                        $"selected_buffer=0x{allocation.Buffer.Handle:X} " +
+                        $"allocation=0x{allocation.BaseAddress:X16}+0x{allocation.Size:X} " +
+                        $"guest_offset=0x{guestOffset:X} descriptor_offset=0x{descriptorOffset:X} " +
+                        $"candidates=[{string.Join(',', candidates)}]");
+                }
             }
 
             if (guestBuffer.Pooled)
@@ -9136,7 +9182,7 @@ internal static unsafe class VulkanVideoPresenter
             TranslatedDrawResources resources,
             ulong shaderAddress)
         {
-            const int maximumTracesPerBuffer = 128;
+            const int maximumOccurrencesPerBuffer = 4096;
             const int maximumTrackedBuffers = 256;
             var seen = new HashSet<(ulong Address, ulong Size)>();
             foreach (var buffer in resources.GlobalMemoryBuffers)
@@ -9159,7 +9205,7 @@ internal static unsafe class VulkanVideoPresenter
                     out var previousOccurrence)
                     ? previousOccurrence + 1
                     : 1;
-                if (occurrence > maximumTracesPerBuffer ||
+                if (occurrence > maximumOccurrencesPerBuffer ||
                     (!_tracedAddressFilteredGlobalWritebacks.ContainsKey(key) &&
                      _tracedAddressFilteredGlobalWritebacks.Count >= maximumTrackedBuffers))
                 {
@@ -9184,6 +9230,13 @@ internal static unsafe class VulkanVideoPresenter
                 var summary = GlobalBufferWritebackDiagnostics.Summarize(
                     mappedBytes,
                     previousBytes);
+                if (!GlobalBufferWritebackDiagnostics.ShouldEmitAddressFilteredTrace(
+                        occurrence,
+                        summary.ChangedBytes))
+                {
+                    continue;
+                }
+
                 var changedHead = summary.FirstChangedOffset >= 0
                     ? mappedBytes.Slice(
                         summary.FirstChangedOffset,
@@ -9193,7 +9246,7 @@ internal static unsafe class VulkanVideoPresenter
                     "[LOADER][TRACE] " +
                     $"vk.global_writeback_full stage=post_fence_pre_publish " +
                     $"base=0x{buffer.BaseAddress:X16} bytes={byteCount} " +
-                    $"cs=0x{shaderAddress:X16} occurrence={occurrence}/{maximumTracesPerBuffer} " +
+                    $"cs=0x{shaderAddress:X16} occurrence={occurrence}/{maximumOccurrencesPerBuffer} " +
                     $"writable=1 writeback={(buffer.WriteBackToGuest ? 1 : 0)} " +
                     $"last_use={allocation.LastUseTimeline} completed={_completedTimeline} " +
                     $"changed_bytes={summary.ChangedBytes}/{byteCount} " +
@@ -9203,6 +9256,15 @@ internal static unsafe class VulkanVideoPresenter
                     $"changed_head={Convert.ToHexString(changedHead)}");
             }
         }
+
+        private static bool HasAddressFilteredWritableGlobalBuffer(
+            TranslatedDrawResources resources) =>
+            resources.GlobalMemoryBuffers.Any(buffer =>
+                buffer.Writable &&
+                buffer.GuestSize != 0 &&
+                ShouldTraceGlobalBufferForDiagnostics(
+                    buffer.BaseAddress,
+                    buffer.GuestSize));
 
         private void WriteBackAllDirtyGuestBuffers(string? queueName = null)
         {
@@ -9952,6 +10014,19 @@ internal static unsafe class VulkanVideoPresenter
                 }
                 MarkSampledImagesInitialized(resources);
                 MarkStorageImagesInitialized(resources, traceContents: false);
+
+                if (HasAddressFilteredWritableGlobalBuffer(resources))
+                {
+                    // Diagnostic-only synchronization for graphics-stage
+                    // storage-buffer writers. Compute writers already take
+                    // this path; without the graphics equivalent a VS, ES,
+                    // GS, or PS producer can evade the target readback.
+                    WaitForActiveGuestQueueSubmissionsForCpuVisibility();
+                    TraceAddressFilteredGlobalBufferWritebacks(
+                        resources,
+                        work.ShaderAddress);
+                    WriteBackAllDirtyGuestBuffers(_activeGuestQueue.Name);
+                }
 
                 if (work.PublishTarget)
                 {

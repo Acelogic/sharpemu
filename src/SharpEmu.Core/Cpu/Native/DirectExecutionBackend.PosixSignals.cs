@@ -212,6 +212,11 @@ public sealed unsafe partial class DirectExecutionBackend
 			// address (safe for host and guest threads alike) and must resume
 			// the faulting write immediately after restoring write access.
 			byte* writeTrackerRegisters = GetPosixRegisterBase(ucontext);
+			var writeStackPointer = writeTrackerRegisters == null
+				? 0
+				: *(ulong*)(writeTrackerRegisters + PosixRegisterOffsets[4]);
+			var captureWriteStack = writeStackPointer >= 0x10000 &&
+				writeStackPointer <= 0x00007FFF_FFFF_FFC0;
 			var writeContext = writeTrackerRegisters == null
 				? default
 				: new GuestWriteFaultContext(
@@ -227,7 +232,15 @@ public sealed unsafe partial class DirectExecutionBackend
 					R12: *(ulong*)(writeTrackerRegisters + PosixRegisterOffsets[12]),
 					R13: *(ulong*)(writeTrackerRegisters + PosixRegisterOffsets[13]),
 					R14: *(ulong*)(writeTrackerRegisters + PosixRegisterOffsets[14]),
-					R15: *(ulong*)(writeTrackerRegisters + PosixRegisterOffsets[15]));
+					R15: *(ulong*)(writeTrackerRegisters + PosixRegisterOffsets[15]),
+					Stack0: captureWriteStack ? *(ulong*)(writeStackPointer + 0x00) : 0,
+					Stack1: captureWriteStack ? *(ulong*)(writeStackPointer + 0x08) : 0,
+					Stack2: captureWriteStack ? *(ulong*)(writeStackPointer + 0x10) : 0,
+					Stack3: captureWriteStack ? *(ulong*)(writeStackPointer + 0x18) : 0,
+					Stack4: captureWriteStack ? *(ulong*)(writeStackPointer + 0x20) : 0,
+					Stack5: captureWriteStack ? *(ulong*)(writeStackPointer + 0x28) : 0,
+					Stack6: captureWriteStack ? *(ulong*)(writeStackPointer + 0x30) : 0,
+					Stack7: captureWriteStack ? *(ulong*)(writeStackPointer + 0x38) : 0);
 			if (signal != PosixSigIll &&
 				siginfo != 0 &&
 				SharpEmu.HLE.GuestImageWriteTracker.TryHandleWriteFault(
