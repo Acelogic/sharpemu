@@ -1242,10 +1242,33 @@ public static class Gen5ShaderTranslator
         name = opcode switch
         {
             0x00 => "DsAddU32",
+            0x01 => "DsSubU32",
+            0x03 => "DsIncU32",
+            0x04 => "DsDecU32",
+            0x05 => "DsMinI32",
+            0x06 => "DsMaxI32",
+            0x07 => "DsMinU32",
+            0x08 => "DsMaxU32",
+            0x09 => "DsAndB32",
+            0x0A => "DsOrB32",
+            0x0B => "DsXorB32",
             0x0D => "DsWriteB32",
             0x0E => "DsWrite2B32",
             0x0F => "DsWrite2St64B32",
+            0x10 => "DsCmpstB32",
             0x20 => "DsAddRtnU32",
+            0x21 => "DsSubRtnU32",
+            0x23 => "DsIncRtnU32",
+            0x24 => "DsDecRtnU32",
+            0x25 => "DsMinRtnI32",
+            0x26 => "DsMaxRtnI32",
+            0x27 => "DsMinRtnU32",
+            0x28 => "DsMaxRtnU32",
+            0x29 => "DsAndRtnB32",
+            0x2A => "DsOrRtnB32",
+            0x2B => "DsXorRtnB32",
+            0x2D => "DsWrxchgRtnB32",
+            0x30 => "DsCmpstRtnB32",
             0x35 => "DsSwizzleB32",
             0x36 => "DsReadB32",
             0x37 => "DsRead2B32",
@@ -1344,8 +1367,19 @@ public static class Gen5ShaderTranslator
             0x23 => "BufferLoadSbyteD16Hi",
             0x24 => "BufferLoadShortD16",
             0x25 => "BufferLoadShortD16Hi",
+            0x30 => "BufferAtomicSwap",
+            0x31 => "BufferAtomicCmpswap",
             0x32 => "BufferAtomicAdd",
-            0x38 => "BufferAtomicUMax",
+            0x33 => "BufferAtomicSub",
+            0x35 => "BufferAtomicSmin",
+            0x36 => "BufferAtomicUmin",
+            0x37 => "BufferAtomicSmax",
+            0x38 => "BufferAtomicUmax",
+            0x39 => "BufferAtomicAnd",
+            0x3A => "BufferAtomicOr",
+            0x3B => "BufferAtomicXor",
+            0x3C => "BufferAtomicInc",
+            0x3D => "BufferAtomicDec",
             _ => $"MubufRaw{opcode:X2}",
         };
         sizeDwords = (extra >> 24) == 0xFF ? 3u : 2u;
@@ -1463,7 +1497,18 @@ public static class Gen5ShaderTranslator
             0x08 => "ImageStore",
             0x09 => "ImageStoreMip",
             0x0E => "ImageGetResinfo",
+            0x0F => "ImageAtomicSwap",
             0x10 => "ImageAtomicCmpswap",
+            0x11 => "ImageAtomicAdd",
+            0x12 => "ImageAtomicSub",
+            0x14 => "ImageAtomicSmin",
+            0x15 => "ImageAtomicUmin",
+            0x16 => "ImageAtomicSmax",
+            0x17 => "ImageAtomicUmax",
+            0x18 => "ImageAtomicAnd",
+            0x19 => "ImageAtomicOr",
+            0x1A => "ImageAtomicXor",
+            0x1B => "ImageAtomicInc",
             0x1C => "ImageAtomicDec",
             0x20 => "ImageSample",
             0x22 => "ImageSampleD",
@@ -1563,6 +1608,18 @@ public static class Gen5ShaderTranslator
         name.StartsWith("ImageLoad", StringComparison.Ordinal) ||
         name.StartsWith("ImageStore", StringComparison.Ordinal) ||
         name.StartsWith("ImageAtomic", StringComparison.Ordinal);
+
+    public static bool IsDataShareAtomic(string name) => name switch
+    {
+        "DsAddU32" or "DsSubU32" or "DsIncU32" or "DsDecU32" or
+        "DsMinI32" or "DsMaxI32" or "DsMinU32" or "DsMaxU32" or
+        "DsAndB32" or "DsOrB32" or "DsXorB32" or "DsCmpstB32" or
+        "DsAddRtnU32" or "DsSubRtnU32" or "DsIncRtnU32" or "DsDecRtnU32" or
+        "DsMinRtnI32" or "DsMaxRtnI32" or "DsMinRtnU32" or "DsMaxRtnU32" or
+        "DsAndRtnB32" or "DsOrRtnB32" or "DsXorRtnB32" or
+        "DsWrxchgRtnB32" or "DsCmpstRtnB32" => true,
+        _ => false,
+    };
 
     private static Gen5ShaderInstruction CreateInstruction(
         uint pc,
@@ -1843,9 +1900,9 @@ public static class Gen5ShaderTranslator
                 destinations = [Gen5Operand.Vector(word & 0xFF)];
                 if (opcode == "VReadlaneB32")
                 {
-                    // VReadlaneB32 writes to scalar destination (bits 8-14), not vector.
-                    // Bits 0-7 are unused for this opcode.
-                    destinations = [Gen5Operand.Scalar((word >> 8) & 0x7F)];
+                    // The scalar destination lives in the low vdst byte (bits 0-7);
+                    // bits 8-14 are the VOP3B carry-out sdst, which readlane lacks.
+                    destinations = [Gen5Operand.Scalar(word & 0xFF)];
                 }
                 var isVop3B = IsVop3BOpcode((word >> 16) & 0x3FF);
                 control = new Gen5Vop3Control(
@@ -1870,10 +1927,6 @@ public static class Gen5ShaderTranslator
                     ((word >> 17) & 1) != 0);
                 sources = opcode switch
                 {
-                    "DsAddU32" or "DsAddRtnU32" => [
-                        Gen5Operand.Vector(vectorAddress),
-                        Gen5Operand.Vector(vectorData0),
-                    ],
                     "DsWriteB32" => [
                         Gen5Operand.Vector(vectorAddress),
                         Gen5Operand.Vector(vectorData0),
@@ -1906,6 +1959,17 @@ public static class Gen5ShaderTranslator
                         Gen5Operand.Vector(vectorAddress),
                         Gen5Operand.Vector(vectorData0),
                     ],
+                    // DS_CMPST operand order is reversed vs buffer/image cmpswap:
+                    // DATA0 holds the comparator, DATA1 holds the new value.
+                    "DsCmpstB32" or "DsCmpstRtnB32" => [
+                        Gen5Operand.Vector(vectorAddress),
+                        Gen5Operand.Vector(vectorData0),
+                        Gen5Operand.Vector(vectorData1),
+                    ],
+                    _ when IsDataShareAtomic(opcode) => [
+                        Gen5Operand.Vector(vectorAddress),
+                        Gen5Operand.Vector(vectorData0),
+                    ],
                     _ => [Gen5Operand.Vector(vectorAddress)],
                 };
                 destinations = opcode switch
@@ -1930,6 +1994,10 @@ public static class Gen5ShaderTranslator
                         Gen5Operand.Vector(vectorDestination + 1),
                         Gen5Operand.Vector(vectorDestination + 2),
                         Gen5Operand.Vector(vectorDestination + 3),
+                    ],
+                    _ when IsDataShareAtomic(opcode) &&
+                        opcode.Contains("Rtn", StringComparison.Ordinal) => [
+                        Gen5Operand.Vector(vectorDestination),
                     ],
                     _ => [],
                 };
@@ -2036,8 +2104,8 @@ public static class Gen5ShaderTranslator
                     "BufferStoreDwordx2" => 2u,
                     "BufferStoreDwordx3" => 3u,
                     "BufferStoreDwordx4" => 4u,
-                    "BufferAtomicAdd" => 1u,
-                    "BufferAtomicUMax" => 1u,
+                    "BufferAtomicCmpswap" => 2u,
+                    _ when opcode.StartsWith("BufferAtomic", StringComparison.Ordinal) => 1u,
                     _ => 0u,
                 };
                 sources =

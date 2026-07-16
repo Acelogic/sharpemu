@@ -12,6 +12,7 @@ using SharpEmu.Libs.Kernel;
 using SharpEmu.Libs.AppContent;
 using SharpEmu.Libs.SaveData;
 using SharpEmu.Libs.Fiber;
+using SharpEmu.Libs.SystemService;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Linq;
@@ -141,6 +142,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         var image = LoadImage(normalizedEbootPath);
         VideoOutExports.ConfigureApplicationInfo(image.Title, image.TitleId, image.Version);
         SaveDataExports.ConfigureApplicationInfo(image.TitleId);
+        SystemServiceExports.ConfigureApplicationInfo(image.TitleId);
         _ = RegisterLoadedModule(normalizedEbootPath, image, isMain: true, isSystemModule: false);
         KernelRuntimeCompatExports.ConfigureProcessProcParamAddress(image.ProcParamAddress);
         Console.Error.WriteLine($"[RUNTIME] Entry: 0x{image.EntryPoint:X16}");

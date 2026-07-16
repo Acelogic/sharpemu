@@ -15,6 +15,62 @@ public static class SystemServiceExports
     private const int DisplaySafeAreaInfoSize = sizeof(float) + 128;
     private const int HdrToneMapLuminanceSize = sizeof(float) * 3;
 
+    private const int TitleIdFieldSize = 0x10;
+
+    private static string? _mainAppTitleId;
+
+    public static void ConfigureApplicationInfo(string? titleId)
+    {
+        _mainAppTitleId = string.IsNullOrWhiteSpace(titleId) ? null : titleId.Trim();
+    }
+
+    [SysAbiExport(
+        Nid = "3RQ5aQfnstU",
+        ExportName = "sceSystemServiceGetNoticeScreenSkipFlag",
+        Target = Generation.Gen5,
+        LibraryName = "libSceSystemService")]
+    public static int SystemServiceGetNoticeScreenSkipFlag(CpuContext ctx)
+    {
+        var flagAddress = ctx[CpuRegister.Rdi];
+        if (flagAddress == 0)
+        {
+            return ctx.SetReturn(OrbisSystemServiceErrorParameter);
+        }
+
+        // No system notice screen to skip in the emulator; report "do not skip".
+        Span<byte> flagBytes = stackalloc byte[sizeof(int)];
+        BinaryPrimitives.WriteInt32LittleEndian(flagBytes, 0);
+        return ctx.Memory.TryWrite(flagAddress, flagBytes)
+            ? ctx.SetReturn(0)
+            : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+    }
+
+    [SysAbiExport(
+        Nid = "4veE0XiIugA",
+        ExportName = "sceSystemServiceGetMainAppTitleId",
+        Target = Generation.Gen5,
+        LibraryName = "libSceSystemService")]
+    public static int SystemServiceGetMainAppTitleId(CpuContext ctx)
+    {
+        var titleIdAddress = ctx[CpuRegister.Rdi];
+        if (titleIdAddress == 0)
+        {
+            return ctx.SetReturn(OrbisSystemServiceErrorParameter);
+        }
+
+        // Title IDs are a fixed 9-char format written into a 0x10-byte field;
+        // bound the length so a malformed param.json cannot drive an unbounded
+        // stack allocation or overrun the guest buffer.
+        var titleId = _mainAppTitleId ?? "PPSA00000";
+        var length = Math.Min(titleId.Length, TitleIdFieldSize - 1);
+        Span<byte> titleIdBytes = stackalloc byte[TitleIdFieldSize];
+        titleIdBytes.Clear();
+        System.Text.Encoding.ASCII.GetBytes(titleId.AsSpan(0, length), titleIdBytes);
+        return ctx.Memory.TryWrite(titleIdAddress, titleIdBytes[..(length + 1)])
+            ? ctx.SetReturn(0)
+            : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+    }
+
     [SysAbiExport(
         Nid = "fZo48un7LK4",
         ExportName = "sceSystemServiceParamGetInt",

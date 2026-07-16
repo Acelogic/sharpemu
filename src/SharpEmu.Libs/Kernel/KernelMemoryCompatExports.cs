@@ -102,7 +102,11 @@ public static partial class KernelMemoryCompatExports
     private static readonly object _guestMountGate = new();
     private static readonly Dictionary<ulong, DirectAllocation> _directAllocations = new();
     private static readonly Dictionary<ulong, LibcHeapAllocation> _libcAllocations = new();
-    private static readonly Dictionary<ulong, MappedRegion> _mappedRegions = new();
+    // Keyed by (and kept sorted on) region base address so VirtualQuery can find a
+    // containing/next region with a binary search instead of an O(n) scan. Every
+    // write uses the region's own Address as the key (see AddMappedRegionSliceLocked
+    // and the mmap sites), so Values enumerate in ascending address order.
+    private static readonly SortedList<ulong, MappedRegion> _mappedRegions = new();
     private static readonly Dictionary<ulong, string> _mappedRegionNames = new();
     private static readonly Dictionary<string, string> _guestMounts = new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> _tracedStatResults = new(StringComparer.Ordinal);
@@ -1574,7 +1578,27 @@ public static partial class KernelMemoryCompatExports
         ExportName = "stat",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libc")]
-    public static int PosixStat(CpuContext ctx) => KernelStat(ctx);
+    public static int PosixStat(CpuContext ctx)
+    {
+        var result = KernelStat(ctx);
+        if (result == (int)OrbisGen2Result.ORBIS_GEN2_OK)
+        {
+            return 0;
+        }
+
+        // stat(2) follows the libc/POSIX ABI: failures return -1 and expose
+        // the reason through errno. Returning the raw Orbis kernel code here
+        // makes callers treat a missing file as a non-negative success value.
+        var errno = result switch
+        {
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT => Einval,
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT => Efault,
+            _ => 2, // ENOENT
+        };
+        KernelRuntimeCompatExports.TrySetErrno(ctx, errno);
+        ctx[CpuRegister.Rax] = ulong.MaxValue;
+        return -1;
+    }
 
     [SysAbiExport(
         Nid = "gEpBkcwxUjw",
@@ -4019,7 +4043,7 @@ public static partial class KernelMemoryCompatExports
                             _ => unchecked((int)argumentSource.NextGpArg())
                         };
 
-                        var formatted = value.ToString();
+                        var formatted = value.ToString(CultureInfo.InvariantCulture);
                         if (showSign && value >= 0)
                             formatted = "+" + formatted;
                         else if (spaceForSign && value >= 0)
@@ -4039,7 +4063,7 @@ public static partial class KernelMemoryCompatExports
                             _ => (uint)argumentSource.NextGpArg()
                         };
 
-                        var formatted = value.ToString();
+                        var formatted = value.ToString(CultureInfo.InvariantCulture);
                         sb.Append(PadString(formatted, width, leftAlign, padWithZero && !leftAlign));
                     }
                     break;
@@ -4056,8 +4080,8 @@ public static partial class KernelMemoryCompatExports
                         };
 
                         var formatted = specifier == 'x'
-                            ? value.ToString("x")
-                            : value.ToString("X");
+                            ? value.ToString("x", CultureInfo.InvariantCulture)
+                            : value.ToString("X", CultureInfo.InvariantCulture);
 
                         if (alternateForm && value != 0)
                             formatted = specifier == 'x' ? "0x" + formatted : "0X" + formatted;
@@ -4161,7 +4185,10 @@ public static partial class KernelMemoryCompatExports
                         var formatStr = precision >= 0
                             ? $"{{0:{specifier}{precision}}}"
                             : $"{{0:{specifier}}}";
-                        var formatted = string.Format(formatStr, value);
+                        var formatted = string.Format(
+                            CultureInfo.InvariantCulture,
+                            formatStr,
+                            value);
 
                         if (showSign && value >= 0)
                             formatted = "+" + formatted;
@@ -4225,31 +4252,50 @@ public static partial class KernelMemoryCompatExports
     {
         private readonly CpuContext _ctx;
         private int _gpIndex;
+        private int _fpIndex;
+        private int _stackIndex;
 
         public RegisterPrintfArgumentSource(CpuContext ctx, int gpIndex)
         {
             _ctx = ctx;
             _gpIndex = gpIndex;
+            _fpIndex = 0;
+            _stackIndex = 0;
         }
 
         public ulong NextGpArg()
         {
-            var index = _gpIndex++;
-            return index switch
+            var index = _gpIndex;
+            if (index < 6)
             {
-                0 => _ctx[CpuRegister.Rdi],
-                1 => _ctx[CpuRegister.Rsi],
-                2 => _ctx[CpuRegister.Rdx],
-                3 => _ctx[CpuRegister.Rcx],
-                4 => _ctx[CpuRegister.R8],
-                5 => _ctx[CpuRegister.R9],
-                _ => ReadStackArg(_ctx, (ulong)(index - 6) * 8)
-            };
+                _gpIndex++;
+                return index switch
+                {
+                    0 => _ctx[CpuRegister.Rdi],
+                    1 => _ctx[CpuRegister.Rsi],
+                    2 => _ctx[CpuRegister.Rdx],
+                    3 => _ctx[CpuRegister.Rcx],
+                    4 => _ctx[CpuRegister.R8],
+                    _ => _ctx[CpuRegister.R9],
+                };
+            }
+
+            return ReadStackArg(_ctx, (ulong)(_stackIndex++) * 8);
         }
 
         public double NextFloatArg()
         {
-            return BitConverter.Int64BitsToDouble(unchecked((long)NextGpArg()));
+            ulong bits;
+            if (_fpIndex < 8)
+            {
+                _ctx.GetXmmRegister(_fpIndex++, out bits, out _);
+            }
+            else
+            {
+                bits = ReadStackArg(_ctx, (ulong)(_stackIndex++) * 8);
+            }
+
+            return BitConverter.Int64BitsToDouble(unchecked((long)bits));
         }
     }
 
@@ -4812,8 +4858,19 @@ public static partial class KernelMemoryCompatExports
     private static bool IsMutatingOpen(int flags) =>
         (flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND)) != 0;
 
+    // Dev-build dumps (unpackaged UE titles, etc.) may write their Saved/ tree under
+    // /app0, which is read-only on retail hardware. Opt in via SHARPEMU_WRITABLE_APP0=1
+    // to allow those writes so such dumps can boot; defaults off to keep retail semantics.
+    private static readonly bool _writableApp0 =
+        string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_WRITABLE_APP0"), "1", StringComparison.Ordinal);
+
     public static bool IsReadOnlyGuestMutationPath(string guestPath)
     {
+        if (_writableApp0)
+        {
+            return false;
+        }
+
         var normalized = NormalizeGuestStatCachePath(guestPath);
         return normalized is not null &&
                (string.Equals(normalized, "/app0", StringComparison.OrdinalIgnoreCase) ||
@@ -5433,7 +5490,9 @@ public static partial class KernelMemoryCompatExports
 
         var affected = new List<MappedRegion>();
         var cursor = address;
-        foreach (var region in _mappedRegions.Values.OrderBy(static region => region.Address))
+        // _mappedRegions is a SortedList keyed by address, so Values already
+        // enumerate in ascending address order.
+        foreach (var region in _mappedRegions.Values)
         {
             if (!TryAddU64(region.Address, region.Length, out var regionEnd) || regionEnd <= cursor)
             {
@@ -5594,9 +5653,33 @@ public static partial class KernelMemoryCompatExports
     private static bool TryFindVirtualQueryRegionLocked(ulong queryAddress, bool findNext, out MappedRegion region)
     {
         region = default;
-        var foundNext = false;
-        foreach (var candidate in _mappedRegions.Values)
+        var keys = _mappedRegions.Keys;
+        var values = _mappedRegions.Values;
+        var count = keys.Count;
+
+        // First index whose region address is >= queryAddress.
+        var lo = 0;
+        var hi = count;
+        while (lo < hi)
         {
+            var mid = (int)(((uint)lo + (uint)hi) >> 1);
+            if (keys[mid] < queryAddress)
+            {
+                lo = mid + 1;
+            }
+            else
+            {
+                hi = mid;
+            }
+        }
+
+        // Regions do not overlap, so only the one with the greatest base address
+        // <= queryAddress can contain it — index lo when it starts exactly at
+        // queryAddress, otherwise lo - 1.
+        var floorIndex = (lo < count && keys[lo] == queryAddress) ? lo : lo - 1;
+        if (floorIndex >= 0)
+        {
+            var candidate = values[floorIndex];
             if (TryAddU64(candidate.Address, candidate.Length, out var candidateEnd) &&
                 queryAddress >= candidate.Address &&
                 queryAddress < candidateEnd)
@@ -5604,20 +5687,16 @@ public static partial class KernelMemoryCompatExports
                 region = candidate;
                 return true;
             }
-
-            if (!findNext || candidate.Address < queryAddress)
-            {
-                continue;
-            }
-
-            if (!foundNext || candidate.Address < region.Address)
-            {
-                region = candidate;
-                foundNext = true;
-            }
         }
 
-        return foundNext;
+        // findNext: the region with the smallest base address >= queryAddress.
+        if (findNext && lo < count)
+        {
+            region = values[lo];
+            return true;
+        }
+
+        return false;
     }
 
     private static void TraceDirectMemoryCall(
@@ -5646,10 +5725,12 @@ public static partial class KernelMemoryCompatExports
             $"[LOADER][TRACE] {operation}: ret=0x{returnRip:X16} len=0x{length:X16} align=0x{alignment:X16} type=0x{memoryType:X8} out=0x{outAddress:X16} selected=0x{selectedAddress:X16} result={result?.ToString() ?? "<pending>"}");
     }
 
-    private static bool ShouldTraceDirectMemory()
-    {
-        return string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_DIRECT_MEMORY"), "1", StringComparison.Ordinal);
-    }
+    // Cached once so the ~8 direct-memory call sites don't each do a
+    // GetEnvironmentVariable P/Invoke per operation.
+    private static readonly bool _traceDirectMemory = string.Equals(
+        Environment.GetEnvironmentVariable("SHARPEMU_LOG_DIRECT_MEMORY"), "1", StringComparison.Ordinal);
+
+    private static bool ShouldTraceDirectMemory() => _traceDirectMemory;
 
     private static bool TryReleaseDirectMemoryRangeLocked(ulong start, ulong length)
     {
