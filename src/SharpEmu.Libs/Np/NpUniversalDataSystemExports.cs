@@ -16,18 +16,23 @@ public static class NpUniversalDataSystemExports
     private const int NpUniversalDataSystemErrorNotInitialized = unchecked((int)0x80553117);
     private const int NpUniversalDataSystemErrorPropertyReplacement = unchecked((int)0x80553101);
     private const int NpUniversalDataSystemInternalErrorPropertyReplacement = unchecked((int)0x8055BB02);
+    private const int NpUniversalDataSystemInternalErrorArrayFull = unchecked((int)0x8055BB09);
+    private const int NpUniversalDataSystemInternalErrorMissingBacking = unchecked((int)0x8055BB0C);
     private const int MaximumEventPropertyStringLength = 16 * 1024;
+    private const int MaximumEventPropertyDepth = 64;
+    private const int MaximumEventPropertyNodes = 4096;
     private const int ValidPrimitivePropertyTypeMask = 0x799;
     private const ushort EventPropertyStringType = 0x2001;
     private const ushort EventPropertyArrayType = 0x2002;
+    private const ushort EventPropertyObjectType = 0x2003;
     private static readonly UTF8Encoding _strictUtf8 = new(false, true);
     private static readonly object _eventGate = new();
     private static readonly HashSet<int> _createdEvents = [];
-    private static readonly ConcurrentDictionary<ulong, EventPropertyArrayStringShadow> _eventPropertyArrayStrings = new();
+    private static readonly ConcurrentDictionary<ulong, EventPropertyArrayStringShadow[]> _eventPropertyArrayStrings = new();
     private static int _nextHandle = 1;
     private static int _nextEvent = 1;
     private static int _isInitialized;
-    private static int _eventPropertyArraySetterResultForTests;
+    private static int _eventPropertyArrayAllocationFailureForTests;
 
     private sealed record EventPropertyArrayStringShadow(ushort TemporaryType, string Value);
 
@@ -207,14 +212,7 @@ public static class NpUniversalDataSystemExports
             return ctx.SetReturn(NpUniversalDataSystemErrorSetTargetInvalid, typeof(long));
         }
 
-        Span<byte> propertyTypeBytes = stackalloc byte[sizeof(ushort)];
-        if (!ctx.Memory.TryRead(propertyArrayAddress, propertyTypeBytes))
-        {
-            return ctx.SetReturn(NpUniversalDataSystemErrorInvalidProperty, typeof(long));
-        }
-
-        var propertyType = BinaryPrimitives.ReadUInt16LittleEndian(propertyTypeBytes);
-        if (!IsValidEventPropertyType(propertyType))
+        if (!IsValidEventProperty(ctx, propertyArrayAddress))
         {
             return ctx.SetReturn(NpUniversalDataSystemErrorInvalidProperty, typeof(long));
         }
@@ -224,7 +222,7 @@ public static class NpUniversalDataSystemExports
             return ctx.SetReturn(NpUniversalDataSystemErrorInvalidProperty, typeof(long));
         }
 
-        var setterResult = ApplyEventPropertyArrayString(propertyArrayAddress, propertyType, value);
+        var setterResult = ApplyEventPropertyArrayString(ctx, propertyArrayAddress, value);
         return ctx.SetReturn(setterResult, typeof(long));
     }
 
@@ -260,9 +258,9 @@ public static class NpUniversalDataSystemExports
 
     internal static bool TryGetEventPropertyArrayStringForTests(ulong address, out string value)
     {
-        if (_eventPropertyArrayStrings.TryGetValue(address, out var state))
+        if (_eventPropertyArrayStrings.TryGetValue(address, out var states) && states.Length != 0)
         {
-            value = state.Value;
+            value = states[^1].Value;
             return true;
         }
 
@@ -275,8 +273,9 @@ public static class NpUniversalDataSystemExports
         out ushort temporaryType,
         out string value)
     {
-        if (_eventPropertyArrayStrings.TryGetValue(address, out var state))
+        if (_eventPropertyArrayStrings.TryGetValue(address, out var states) && states.Length != 0)
         {
+            var state = states[^1];
             temporaryType = state.TemporaryType;
             value = state.Value;
             return true;
@@ -287,13 +286,27 @@ public static class NpUniversalDataSystemExports
         return false;
     }
 
-    internal static void SetEventPropertyArraySetterResultForTests(int result) =>
-        Volatile.Write(ref _eventPropertyArraySetterResultForTests, result);
+    internal static bool TryGetEventPropertyArrayStringsForTests(
+        ulong address,
+        out IReadOnlyList<string> values)
+    {
+        if (_eventPropertyArrayStrings.TryGetValue(address, out var states))
+        {
+            values = states.Select(static state => state.Value).ToArray();
+            return true;
+        }
+
+        values = Array.Empty<string>();
+        return false;
+    }
+
+    internal static void SetEventPropertyArrayAllocationFailureForTests(bool fail) =>
+        Volatile.Write(ref _eventPropertyArrayAllocationFailureForTests, fail ? 1 : 0);
 
     internal static void ResetForTests()
     {
         Volatile.Write(ref _isInitialized, 0);
-        Volatile.Write(ref _eventPropertyArraySetterResultForTests, 0);
+        Volatile.Write(ref _eventPropertyArrayAllocationFailureForTests, 0);
         _eventPropertyArrayStrings.Clear();
         lock (_eventGate)
         {
@@ -304,7 +317,80 @@ public static class NpUniversalDataSystemExports
         _nextEvent = 1;
     }
 
-    private static bool IsValidEventPropertyType(ushort type)
+    private static bool IsValidEventProperty(CpuContext ctx, ulong address)
+    {
+        var activeVariants = new HashSet<ulong>();
+        var activeBackings = new HashSet<ulong>();
+        var remainingNodes = MaximumEventPropertyNodes;
+        return IsValidEventProperty(
+            ctx,
+            address,
+            depth: 0,
+            activeVariants,
+            activeBackings,
+            ref remainingNodes);
+    }
+
+    private static bool IsValidEventProperty(
+        CpuContext ctx,
+        ulong address,
+        int depth,
+        HashSet<ulong> activeVariants,
+        HashSet<ulong> activeBackings,
+        ref int remainingNodes)
+    {
+        if (address == 0 ||
+            depth > MaximumEventPropertyDepth ||
+            !activeVariants.Add(address))
+        {
+            return false;
+        }
+
+        try
+        {
+            if (!TryReadEventPropertyType(ctx, address, out var type))
+            {
+                return false;
+            }
+
+            if (IsValidPrimitiveEventPropertyType(type))
+            {
+                return true;
+            }
+
+            return type switch
+            {
+                EventPropertyStringType => IsValidEventPropertyString(
+                    ctx,
+                    address,
+                    requireNonEmpty: false),
+                EventPropertyArrayType => IsValidEventPropertyContainer(
+                    ctx,
+                    address,
+                    isObject: false,
+                    depth,
+                    activeVariants,
+                    activeBackings,
+                    ref remainingNodes),
+                EventPropertyObjectType => IsValidEventPropertyContainer(
+                    ctx,
+                    address,
+                    isObject: true,
+                    depth,
+                    activeVariants,
+                    activeBackings,
+                    ref remainingNodes),
+                0x2004 => true,
+                _ => false,
+            };
+        }
+        finally
+        {
+            activeVariants.Remove(address);
+        }
+    }
+
+    private static bool IsValidPrimitiveEventPropertyType(ushort type)
     {
         if (type is >= 0x1001 and <= 0x100B)
         {
@@ -312,33 +398,198 @@ public static class NpUniversalDataSystemExports
             return (ValidPrimitivePropertyTypeMask & (1 << typeBit)) != 0;
         }
 
-        return type is >= 0x2001 and <= 0x2004;
+        return false;
     }
 
-    private static int ApplyEventPropertyArrayString(ulong address, ushort propertyType, string value)
+    private static bool IsValidEventPropertyString(
+        CpuContext ctx,
+        ulong variantAddress,
+        bool requireNonEmpty)
     {
-        // The firmware wrapper accepts any recursively-valid property, then its
-        // replacement helper rejects targets that are not the array container.
-        if (propertyType != EventPropertyArrayType)
+        if (!TryReadEventPropertyType(ctx, variantAddress, out var type) ||
+            type != EventPropertyStringType ||
+            !TryReadPointer(ctx, variantAddress, 0x08, out var backingAddress) ||
+            backingAddress == 0 ||
+            !TryReadPointer(ctx, backingAddress, 0x18, out var stringAddress) ||
+            !TryReadStrictUtf8CString(ctx, stringAddress, out var value))
         {
-            return NpUniversalDataSystemErrorInvalidProperty;
+            return false;
         }
 
-        var setterResult = NormalizeEventPropertyArraySetterResult(
-            Volatile.Read(ref _eventPropertyArraySetterResultForTests));
-        if (setterResult < 0)
+        return !requireNonEmpty || value.Length != 0;
+    }
+
+    private static bool IsValidEventPropertyContainer(
+        CpuContext ctx,
+        ulong variantAddress,
+        bool isObject,
+        int depth,
+        HashSet<ulong> activeVariants,
+        HashSet<ulong> activeBackings,
+        ref int remainingNodes)
+    {
+        if (!TryReadPointer(ctx, variantAddress, 0x08, out var backingAddress))
         {
-            return setterResult;
+            return false;
         }
 
-        // Firmware constructs a temporary type-0x2001 string value, replaces
-        // the array entry from that temporary, then destroys it. The nested
-        // list layout is not yet proven, so the HLE keeps the deep-copied value
-        // in a typed shadow instead of inventing guest list pointers.
-        _eventPropertyArrayStrings[address] = new EventPropertyArrayStringShadow(
+        // A null backing represents an empty/unmaterialized container. The
+        // array setter reports its own 0x8055BB0C error for this state.
+        if (backingAddress == 0)
+        {
+            return true;
+        }
+
+        if (!activeBackings.Add(backingAddress))
+        {
+            return false;
+        }
+
+        try
+        {
+            if (!TryReadPointer(ctx, backingAddress, 0x20, out var nodeAddress))
+            {
+                return false;
+            }
+
+            var visitedNodes = new HashSet<ulong>();
+            while (nodeAddress != 0)
+            {
+                if (remainingNodes-- <= 0 || !visitedNodes.Add(nodeAddress))
+                {
+                    return false;
+                }
+
+                if (!TryReadPointer(ctx, nodeAddress, 0x08, out var nextNodeAddress))
+                {
+                    return false;
+                }
+
+                if (isObject)
+                {
+                    if (!TryAddAddress(nodeAddress, 0x18, out var keyVariantAddress) ||
+                        !IsValidEventPropertyString(
+                            ctx,
+                            keyVariantAddress,
+                            requireNonEmpty: true) ||
+                        !TryAddAddress(nodeAddress, 0x28, out var valueVariantAddress) ||
+                        !IsValidEventProperty(
+                            ctx,
+                            valueVariantAddress,
+                            depth + 1,
+                            activeVariants,
+                            activeBackings,
+                            ref remainingNodes))
+                    {
+                        return false;
+                    }
+                }
+                else
+                {
+                    if (!TryAddAddress(nodeAddress, 0x18, out var valueVariantAddress) ||
+                        !IsValidEventProperty(
+                            ctx,
+                            valueVariantAddress,
+                            depth + 1,
+                            activeVariants,
+                            activeBackings,
+                            ref remainingNodes))
+                    {
+                        return false;
+                    }
+                }
+
+                nodeAddress = nextNodeAddress;
+            }
+
+            return true;
+        }
+        finally
+        {
+            activeBackings.Remove(backingAddress);
+        }
+    }
+
+    private static int ApplyEventPropertyArrayString(CpuContext ctx, ulong address, string value)
+    {
+        if (!TryReadPointer(ctx, address, 0x08, out var backingAddress) || backingAddress == 0)
+        {
+            return NpUniversalDataSystemInternalErrorMissingBacking;
+        }
+
+        if (!TryReadPointer(ctx, backingAddress, 0x30, out var count))
+        {
+            return NpUniversalDataSystemInternalErrorMissingBacking;
+        }
+
+        if (count == ulong.MaxValue)
+        {
+            return NpUniversalDataSystemInternalErrorArrayFull;
+        }
+
+        if (Volatile.Read(ref _eventPropertyArrayAllocationFailureForTests) != 0)
+        {
+            return NormalizeEventPropertyArraySetterResult(
+                NpUniversalDataSystemInternalErrorPropertyReplacement);
+        }
+
+        if (!TryAddAddress(backingAddress, 0x30, out var countAddress) ||
+            !ctx.TryWriteUInt64(countAddress, count + 1))
+        {
+            return NpUniversalDataSystemInternalErrorMissingBacking;
+        }
+
+        // Firmware appends a newly allocated 0x28-byte node at the tail. The
+        // node allocator is not exposed to this HLE, so preserve that append
+        // behavior in a typed shadow without inventing guest node pointers.
+        var appendedValue = new EventPropertyArrayStringShadow(
             EventPropertyStringType,
             value);
+        _eventPropertyArrayStrings.AddOrUpdate(
+            address,
+            [appendedValue],
+            (_, existing) => [.. existing, appendedValue]);
         return 0;
+    }
+
+    private static bool TryReadEventPropertyType(CpuContext ctx, ulong address, out ushort type)
+    {
+        Span<byte> typeBytes = stackalloc byte[sizeof(ushort)];
+        if (!ctx.Memory.TryRead(address, typeBytes))
+        {
+            type = 0;
+            return false;
+        }
+
+        type = BinaryPrimitives.ReadUInt16LittleEndian(typeBytes);
+        return true;
+    }
+
+    private static bool TryReadPointer(
+        CpuContext ctx,
+        ulong address,
+        ulong offset,
+        out ulong value)
+    {
+        if (!TryAddAddress(address, offset, out var fieldAddress))
+        {
+            value = 0;
+            return false;
+        }
+
+        return ctx.TryReadUInt64(fieldAddress, out value);
+    }
+
+    private static bool TryAddAddress(ulong address, ulong offset, out ulong result)
+    {
+        if (address > ulong.MaxValue - offset)
+        {
+            result = 0;
+            return false;
+        }
+
+        result = address + offset;
+        return true;
     }
 
     private static int NormalizeEventPropertyArraySetterResult(int result)

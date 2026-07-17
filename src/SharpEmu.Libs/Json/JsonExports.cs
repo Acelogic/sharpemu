@@ -34,6 +34,7 @@ public static class JsonExports
     private static readonly JsonElement _nullElement = CreateNullElement();
     private static readonly object _globalNullAccessCallbackGate = new();
     private static bool _json2GlobalInitialized;
+    private static bool _initializerInitialize2AllocationFailureForTests;
 
     private const int SceJsonErrorInitializationFailed = unchecked((int)0x80848102);
     private const int SceJsonErrorNotInitialized = unchecked((int)0x80848110);
@@ -275,14 +276,44 @@ public static class JsonExports
         Nid = "IXW-z8pggfg",
         ExportName = "_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E",
         Target = Generation.Gen5,
-        LibraryName = "libSceJson")]
+        LibraryName = "libSceJson2")]
     public static int InitializerInitialize2(CpuContext ctx)
     {
         var thisAddress = ctx[CpuRegister.Rdi];
         var initParameterAddress = ctx[CpuRegister.Rsi];
-        if (thisAddress == 0 || initParameterAddress == 0)
+        Span<byte> initialized = stackalloc byte[1];
+        if (thisAddress == 0 || !ctx.Memory.TryRead(thisAddress, initialized))
         {
-            return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+            return SetReturn(ctx, SceJsonErrorAlreadyInitialized);
+        }
+
+        lock (_globalNullAccessCallbackGate)
+        {
+            if (_json2GlobalInitialized || initialized[0] != 0)
+            {
+                return SetReturn(ctx, SceJsonErrorAlreadyInitialized);
+            }
+
+            Span<byte> initParameters = stackalloc byte[0x28];
+            if (initParameterAddress == 0 ||
+                !ctx.Memory.TryRead(initParameterAddress, initParameters) ||
+                BinaryPrimitives.ReadUInt64LittleEndian(initParameters) == 0 ||
+                BinaryPrimitives.ReadUInt32LittleEndian(initParameters[0x18..]) >= 3)
+            {
+                return SetReturn(ctx, SceJsonErrorInvalidCallback);
+            }
+
+            if (_initializerInitialize2AllocationFailureForTests)
+            {
+                return SetReturn(ctx, SceJsonErrorInitializationFailed);
+            }
+
+            if (!ctx.Memory.TryWrite(thisAddress, new byte[] { 1 }))
+            {
+                return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            _json2GlobalInitialized = true;
         }
 
         TraceJson("Initializer.initialize2", thisAddress, initParameterAddress);
@@ -802,6 +833,15 @@ public static class JsonExports
         lock (_globalNullAccessCallbackGate)
         {
             _json2GlobalInitialized = false;
+            _initializerInitialize2AllocationFailureForTests = false;
+        }
+    }
+
+    internal static void SetInitializerInitialize2AllocationFailureForTests(bool fail)
+    {
+        lock (_globalNullAccessCallbackGate)
+        {
+            _initializerInitialize2AllocationFailureForTests = fail;
         }
     }
 

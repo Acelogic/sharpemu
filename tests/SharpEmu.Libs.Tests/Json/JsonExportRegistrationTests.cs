@@ -27,6 +27,7 @@ public sealed class JsonExportRegistrationTests
         ("cG1VE2HMl6c", "_ZN3sce4Json6StringD1Ev"),
         ("+drDFyAS6u4", "_ZN3sce4Json11Initializer27setGlobalNullAccessCallbackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_"),
         ("00oCq0RwSAY", "_ZN3sce4Json11Initializer27setGlobalNullAccessCallBackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_"),
+        ("IXW-z8pggfg", "_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E"),
     };
 
     private static ModuleManager CreateRegisteredManager()
@@ -45,7 +46,9 @@ public sealed class JsonExportRegistrationTests
         {
             Assert.True(manager.TryGetExport(nid, out var export), $"NID {nid} did not register.");
             Assert.Equal(name, export.Name);
-            Assert.Equal(nid == "00oCq0RwSAY" ? "libSceJson2" : "libSceJson", export.LibraryName);
+            Assert.Equal(
+                nid is "00oCq0RwSAY" or "IXW-z8pggfg" ? "libSceJson2" : "libSceJson",
+                export.LibraryName);
         }
     }
 
@@ -137,6 +140,75 @@ public sealed class JsonExportRegistrationTests
 
         Assert.Equal(unchecked((int)0x80848120), JsonExports.InitializerSetGlobalNullAccessCallBack(ctx));
         Assert.Equal(0UL, JsonObjectHeap.GlobalNullAccessCallback);
+    }
+
+    [Fact]
+    public void InitializerInitialize2_ConstructorToCallbackFlowSetsSharedLifecycle()
+    {
+        const ulong initializerAddress = 0x1_0000_0000;
+        const ulong parameterAddress = initializerAddress + 0x100;
+        const ulong callback = 0x8_0012_3456;
+        JsonObjectHeap.ResetForTests();
+        var memory = new FakeCpuMemory(initializerAddress, 0x1000);
+        var ctx = new CpuContext(memory, Generation.Gen5);
+
+        ctx[CpuRegister.Rdi] = initializerAddress;
+        Assert.Equal(0, JsonExports.InitializerConstructor(ctx));
+        ctx[CpuRegister.Rdi] = parameterAddress;
+        Assert.Equal(0, JsonExports.InitParameter2Constructor(ctx));
+        ctx[CpuRegister.Rdi] = parameterAddress;
+        ctx[CpuRegister.Rsi] = initializerAddress + 0x300;
+        ctx[CpuRegister.Rdx] = initializerAddress + 0x400;
+        Assert.Equal(0, JsonExports.InitParameter2SetAllocator(ctx));
+        ctx[CpuRegister.Rdi] = initializerAddress;
+        ctx[CpuRegister.Rsi] = parameterAddress;
+        Assert.Equal(0, JsonExports.InitializerInitialize2(ctx));
+
+        Span<byte> initialized = stackalloc byte[1];
+        Assert.True(memory.TryRead(initializerAddress, initialized));
+        Assert.Equal(1, initialized[0]);
+        Assert.Equal(unchecked((int)0x80848111), JsonExports.InitializerInitialize2(ctx));
+
+        ctx[CpuRegister.Rdi] = initializerAddress;
+        ctx[CpuRegister.Rsi] = callback;
+        ctx[CpuRegister.Rdx] = initializerAddress + 0x800;
+        Assert.Equal(0, JsonExports.InitializerSetGlobalNullAccessCallBack(ctx));
+        Assert.Equal(callback, JsonObjectHeap.GlobalNullAccessCallback);
+    }
+
+    [Fact]
+    public void InitializerInitialize2_RejectsInvalidModeAndAllocationFailureWithoutInitializing()
+    {
+        const ulong initializerAddress = 0x1_0000_0000;
+        const ulong parameterAddress = initializerAddress + 0x100;
+        JsonObjectHeap.ResetForTests();
+        var memory = new FakeCpuMemory(initializerAddress, 0x1000);
+        var ctx = new CpuContext(memory, Generation.Gen5);
+        ctx[CpuRegister.Rdi] = initializerAddress;
+        Assert.Equal(0, JsonExports.InitializerConstructor(ctx));
+        ctx[CpuRegister.Rdi] = parameterAddress;
+        Assert.Equal(0, JsonExports.InitParameter2Constructor(ctx));
+
+        ctx[CpuRegister.Rdi] = initializerAddress;
+        ctx[CpuRegister.Rsi] = parameterAddress;
+        Assert.Equal(unchecked((int)0x80848120), JsonExports.InitializerInitialize2(ctx));
+
+        ctx[CpuRegister.Rdi] = parameterAddress;
+        ctx[CpuRegister.Rsi] = initializerAddress + 0x300;
+        ctx[CpuRegister.Rdx] = initializerAddress + 0x400;
+        Assert.Equal(0, JsonExports.InitParameter2SetAllocator(ctx));
+        Assert.True(ctx.TryWriteUInt32(parameterAddress + 0x18, 3));
+        ctx[CpuRegister.Rdi] = initializerAddress;
+        ctx[CpuRegister.Rsi] = parameterAddress;
+        Assert.Equal(unchecked((int)0x80848120), JsonExports.InitializerInitialize2(ctx));
+
+        Assert.True(ctx.TryWriteUInt32(parameterAddress + 0x18, 2));
+        JsonExports.SetInitializerInitialize2AllocationFailureForTests(true);
+        Assert.Equal(unchecked((int)0x80848102), JsonExports.InitializerInitialize2(ctx));
+
+        Span<byte> initialized = stackalloc byte[1];
+        Assert.True(memory.TryRead(initializerAddress, initialized));
+        Assert.Equal(0, initialized[0]);
     }
 
     [Fact]
