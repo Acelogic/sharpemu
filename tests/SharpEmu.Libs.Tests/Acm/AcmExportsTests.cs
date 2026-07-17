@@ -8,10 +8,17 @@ using Xunit;
 
 namespace SharpEmu.Libs.Tests.Acm;
 
-public sealed class AcmExportsTests
+public sealed class AcmExportsTests : IDisposable
 {
     private const ulong BaseAddress = 0x1_0000_0000;
+    private const int OpenFailed = unchecked((int)0x81940001);
+    private const int OutOfMemory = unchecked((int)0x81940004);
+    private const int TooManyOpenFiles = unchecked((int)0x81940005);
     private const int InvalidArgument = unchecked((int)0x81940006);
+
+    public AcmExportsTests() => AcmExports.ResetForTests();
+
+    public void Dispose() => AcmExports.ResetForTests();
 
     [Fact]
     public void ContextCreate_RejectsNullOutput()
@@ -23,15 +30,39 @@ public sealed class AcmExportsTests
     }
 
     [Fact]
-    public void ContextCreate_InitializesMinusOneBeforeStableDescriptor()
+    public void ContextCreate_InitializesMinusOneBeforeUniqueDescriptors()
     {
         var memory = new RecordingMemory(BaseAddress, 0x100);
         var ctx = new CpuContext(memory, Generation.Gen5);
         ctx[CpuRegister.Rdi] = BaseAddress + 0x20;
 
         Assert.Equal(0, AcmExports.ContextCreate(ctx));
-        Assert.Equal(new[] { -1, 1 }, memory.Int32Writes);
         Assert.Equal(1, memory.ReadInt32(BaseAddress + 0x20));
+
+        ctx[CpuRegister.Rdi] = BaseAddress + 0x24;
+        Assert.Equal(0, AcmExports.ContextCreate(ctx));
+        Assert.Equal(2, memory.ReadInt32(BaseAddress + 0x24));
+        Assert.Equal(new[] { -1, 1, -1, 2 }, memory.Int32Writes);
+    }
+
+    [Theory]
+    [InlineData(0x17, TooManyOpenFiles)]
+    [InlineData(0x18, TooManyOpenFiles)]
+    [InlineData(0x0C, OutOfMemory)]
+    [InlineData(0x05, OpenFailed)]
+    public void ContextCreate_MapsOpenErrnoAndLeavesMinusOne(
+        int errno,
+        int expected)
+    {
+        var memory = new RecordingMemory(BaseAddress, 0x100);
+        var ctx = new CpuContext(memory, Generation.Gen5);
+        var contextAddress = BaseAddress + 0x20;
+        ctx[CpuRegister.Rdi] = contextAddress;
+        AcmExports.SetOpenDeviceForTests(() => (-1, errno));
+
+        Assert.Equal(expected, AcmExports.ContextCreate(ctx));
+        Assert.Equal(new[] { -1 }, memory.Int32Writes);
+        Assert.Equal(-1, memory.ReadInt32(contextAddress));
     }
 
     [Fact]

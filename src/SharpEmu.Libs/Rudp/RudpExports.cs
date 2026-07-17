@@ -11,6 +11,7 @@ public static class RudpExports
     private const int RudpErrorInvalidArgument = unchecked((int)0x80770004);
     private const int RudpErrorOutOfMemory = unchecked((int)0x80770007);
     private const int MinimumAllocatorStorageSize = 0xF8 + 0x2D8;
+    private const int GuestBufferProbeSize = 4096;
 
     private static readonly object StateGate = new();
     private static bool _initialized;
@@ -34,6 +35,7 @@ public static class RudpExports
                 return ctx.SetReturn(RudpErrorAlreadyInitialized);
             }
 
+            ClearRetainedState();
             if (bufferAddress == 0 || bufferSize < 1)
             {
                 return ctx.SetReturn(RudpErrorInvalidArgument);
@@ -60,15 +62,30 @@ public static class RudpExports
         ulong bufferAddress,
         int bufferSize)
     {
-        var finalOffset = (ulong)(bufferSize - 1);
-        if (bufferAddress > ulong.MaxValue - finalOffset)
+        var byteCount = (ulong)bufferSize;
+        if (bufferAddress > ulong.MaxValue - (byteCount - 1))
         {
             return false;
         }
 
-        Span<byte> probe = stackalloc byte[1];
-        return ctx.Memory.TryRead(bufferAddress, probe) &&
-               ctx.Memory.TryRead(bufferAddress + finalOffset, probe);
+        Span<byte> probe = stackalloc byte[GuestBufferProbeSize];
+        for (ulong offset = 0; offset < byteCount;)
+        {
+            var length = (int)Math.Min(
+                (ulong)GuestBufferProbeSize,
+                byteCount - offset);
+            var chunk = probe[..length];
+            var address = bufferAddress + offset;
+            if (!ctx.Memory.TryRead(address, chunk) ||
+                !ctx.Memory.TryWrite(address, chunk))
+            {
+                return false;
+            }
+
+            offset += (ulong)length;
+        }
+
+        return true;
     }
 
     internal static (bool Initialized, ulong BufferAddress, int BufferSize)
@@ -84,9 +101,14 @@ public static class RudpExports
     {
         lock (StateGate)
         {
-            _initialized = false;
-            _retainedBufferAddress = 0;
-            _retainedBufferSize = 0;
+            ClearRetainedState();
         }
+    }
+
+    private static void ClearRetainedState()
+    {
+        _initialized = false;
+        _retainedBufferAddress = 0;
+        _retainedBufferSize = 0;
     }
 }

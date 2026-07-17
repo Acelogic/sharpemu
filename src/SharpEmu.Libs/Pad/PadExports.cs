@@ -37,10 +37,14 @@ public static class PadExports
     [ThreadStatic]
     private static PadState _cachedInputState;
 
-    private static bool _initialized;
+    private static int _initialized;
     private static int _primaryPadDeviceState;
     private static int _controlsAnnouncementLogged;
     private static readonly object PadStateGate = new();
+    private static readonly HashSet<int> ActivePadHandles = [];
+    private static Func<int, (int Result, byte LeftState, byte RightState)>
+        _queryTriggerEffectState = QueryUnsupportedTriggerEffectState;
+    private static IHostInput? _hostInputForTests;
 
     [SysAbiExport(
         Nid = "hv1luiJrqQM",
@@ -51,10 +55,11 @@ public static class PadExports
     {
         lock (PadStateGate)
         {
-            _initialized = true;
+            ActivePadHandles.Clear();
+            Volatile.Write(ref _initialized, 1);
         }
 
-        HostPlatform.Current.Input.EnsureStarted();
+        GetHostInput().EnsureStarted();
         return ctx.SetReturn(0);
     }
 
@@ -67,7 +72,7 @@ public static class PadExports
     {
         var handle = unchecked((int)ctx[CpuRegister.Rdi]);
         var stateAddress = ctx[CpuRegister.Rsi];
-        if (!_initialized)
+        if (Volatile.Read(ref _initialized) == 0)
         {
             return ctx.SetReturn(OrbisPadErrorNotInitialized);
         }
@@ -79,7 +84,7 @@ public static class PadExports
 
         lock (PadStateGate)
         {
-            if (!IsPrimaryPadHandle(handle))
+            if (!IsPrimaryPadHandle(handle) || !ActivePadHandles.Contains(handle))
             {
                 return ctx.SetReturn(OrbisPadErrorInvalidHandle);
             }
@@ -89,11 +94,34 @@ public static class PadExports
                 return ctx.SetReturn(OrbisPadErrorInvalidArgument);
             }
 
-            // The current host backends do not expose independent adaptive-trigger
-            // mode state. Firmware normalizes that unsupported-backend result to a
-            // successful all-zero state, written as exactly two uint32 values.
             Span<byte> state = stackalloc byte[2 * sizeof(uint)];
             state.Clear();
+            if (!ctx.Memory.TryWrite(stateAddress, state))
+            {
+                return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            var backend = _queryTriggerEffectState(handle);
+            if (backend.Result == unchecked((int)0x803B0003))
+            {
+                return ctx.SetReturn(0);
+            }
+
+            if (backend.Result != 0)
+            {
+                return ctx.SetReturn(backend.Result);
+            }
+
+            BinaryPrimitives.WriteUInt32LittleEndian(
+                state,
+                backend.LeftState == byte.MaxValue
+                    ? uint.MaxValue
+                    : backend.LeftState);
+            BinaryPrimitives.WriteUInt32LittleEndian(
+                state[sizeof(uint)..],
+                backend.RightState == byte.MaxValue
+                    ? uint.MaxValue
+                    : backend.RightState);
             return ctx.Memory.TryWrite(stateAddress, state)
                 ? ctx.SetReturn(0)
                 : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
@@ -106,10 +134,54 @@ public static class PadExports
     {
         lock (PadStateGate)
         {
-            _initialized = initialized;
+            ActivePadHandles.Clear();
+            Volatile.Write(ref _initialized, initialized ? 1 : 0);
             _primaryPadDeviceState = deviceState;
+            _queryTriggerEffectState = QueryUnsupportedTriggerEffectState;
+            _hostInputForTests = null;
         }
     }
+
+    internal static void SetPrimaryPadOpenForTests(bool open)
+    {
+        lock (PadStateGate)
+        {
+            if (open)
+            {
+                ActivePadHandles.Add(PrimaryPadHandle);
+            }
+            else
+            {
+                ActivePadHandles.Remove(PrimaryPadHandle);
+            }
+        }
+    }
+
+    internal static void SetTriggerEffectStateBackendForTests(
+        Func<int, (int Result, byte LeftState, byte RightState)> backend)
+    {
+        ArgumentNullException.ThrowIfNull(backend);
+        lock (PadStateGate)
+        {
+            _queryTriggerEffectState = backend;
+        }
+    }
+
+    internal static void SetHostInputForTests(IHostInput hostInput)
+    {
+        ArgumentNullException.ThrowIfNull(hostInput);
+        lock (PadStateGate)
+        {
+            _hostInputForTests = hostInput;
+        }
+    }
+
+    private static (int Result, byte LeftState, byte RightState)
+        QueryUnsupportedTriggerEffectState(int handle) =>
+            (unchecked((int)0x803B0003), 0, 0);
+
+    private static IHostInput GetHostInput() =>
+        _hostInputForTests ?? HostPlatform.Current.Input;
 
     [SysAbiExport(
         Nid = "xk0AcarP3V4",
@@ -133,7 +205,7 @@ public static class PadExports
         var type = unchecked((int)ctx[CpuRegister.Rsi]);
         var index = unchecked((int)ctx[CpuRegister.Rdx]);
         var parameterAddress = ctx[CpuRegister.Rcx];
-        if (!_initialized)
+        if (Volatile.Read(ref _initialized) == 0)
         {
             return ctx.SetReturn(OrbisPadErrorNotInitialized);
         }
@@ -149,13 +221,19 @@ public static class PadExports
             return ctx.SetReturn(OrbisPadErrorDeviceNotConnected);
         }
 
-        var input = HostPlatform.Current.Input;
+        var input = GetHostInput();
         input.EnsureStarted();
         if (Interlocked.Exchange(ref _controlsAnnouncementLogged, 1) == 0)
         {
             Console.Error.WriteLine(input.DescribeConnectedGamepad() is { } gamepadName
                 ? $"[LOADER][INFO] Controls: {gamepadName} connected (keyboard fallback also active)."
                 : "[LOADER][INFO] Keyboard controls: Arrow keys = D-pad, WASD = left stick, IJKL = right stick, Z/Enter = Cross, X/Esc = Circle, C = Square, V = Triangle, Q = L1, E = R1, R = L2, F = R2, Tab/Backspace = Options. A DualSense or Xbox controller will be used automatically when plugged in.");
+        }
+
+        lock (PadStateGate)
+        {
+            ActivePadHandles.Add(PrimaryPadHandle);
+            _primaryPadDeviceState = 0;
         }
 
         return ctx.SetReturn(PrimaryPadHandle);
@@ -169,9 +247,17 @@ public static class PadExports
     public static int PadClose(CpuContext ctx)
     {
         var handle = unchecked((int)ctx[CpuRegister.Rdi]);
-        return IsPrimaryPadHandle(handle)
-            ? ctx.SetReturn(0)
-            : ctx.SetReturn(OrbisPadErrorInvalidHandle);
+        if (!IsPrimaryPadHandle(handle))
+        {
+            return ctx.SetReturn(OrbisPadErrorInvalidHandle);
+        }
+
+        lock (PadStateGate)
+        {
+            ActivePadHandles.Remove(handle);
+        }
+
+        return ctx.SetReturn(0);
     }
 
     [SysAbiExport(

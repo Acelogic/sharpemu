@@ -15,7 +15,7 @@ public sealed class AgcRecoveredExportsTests
     private const int DescriptorSize = 0x60;
 
     [Fact]
-    public void GetIsTrinityMode_WritesOneZeroByteWithoutPromisingRax()
+    public void GetIsTrinityMode_WritesOneZeroByteAndPreservesRax()
     {
         var memory = new FakeCpuMemory(BaseAddress, 0x100);
         var ctx = new CpuContext(memory, Generation.Gen5);
@@ -30,8 +30,28 @@ public sealed class AgcRecoveredExportsTests
         Span<byte> actual = stackalloc byte[2];
         Assert.True(memory.TryRead(BaseAddress + 0x20, actual));
         Assert.Equal(new byte[] { 0, 0xBB }, actual.ToArray());
-        Assert.False(ctx.WasRaxWritten);
+        Assert.True(ctx.WasRaxWritten);
         Assert.Equal(0x1122_3344_5566_7788UL, ctx[CpuRegister.Rax]);
+    }
+
+    [Fact]
+    public void GetIsTrinityMode_ModuleDispatchPreservesIncomingRax()
+    {
+        var memory = new FakeCpuMemory(BaseAddress, 0x100);
+        var ctx = new CpuContext(memory, Generation.Gen5);
+        var manager = new ModuleManager();
+        manager.RegisterExports(
+            SharpEmu.Generated.SysAbiExportRegistry.CreateExports(Generation.Gen5));
+        ctx[CpuRegister.Rdi] = BaseAddress + 0x20;
+        ctx[CpuRegister.Rax] = 0x8877_6655_4433_2211;
+
+        Assert.True(
+            manager.TryDispatch("BfBDZGbti7A", ctx, out var result));
+
+        Assert.Equal(OrbisGen2Result.ORBIS_GEN2_OK, result);
+        Assert.Equal(0x8877_6655_4433_2211UL, ctx[CpuRegister.Rax]);
+        Assert.True(ctx.WasRaxWritten);
+        Assert.Equal(0, ReadByte(memory, BaseAddress + 0x20));
     }
 
     [Theory]

@@ -817,10 +817,14 @@ public static partial class AgcExports
     public static int GetIsTrinityMode(CpuContext ctx)
     {
         // This is a void firmware ABI. SharpEmu currently models base Prospero,
-        // so write one false byte and deliberately leave RAX untouched.
+        // so write one false byte. Mark the incoming RAX value as explicitly
+        // preserved so ModuleManager/native dispatch does not replace it with
+        // this handler's internal return value.
+        var preservedRax = ctx[CpuRegister.Rax];
         Span<byte> mode = stackalloc byte[1];
         mode[0] = 0;
         _ = ctx.Memory.TryWrite(ctx[CpuRegister.Rdi], mode);
+        ctx[CpuRegister.Rax] = preservedRax;
         return 0;
     }
 

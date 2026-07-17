@@ -1,7 +1,9 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using System.Buffers.Binary;
 using SharpEmu.HLE;
+using SharpEmu.HLE.Host;
 using SharpEmu.Libs.Pad;
 using Xunit;
 
@@ -58,22 +60,22 @@ public sealed class PadExportsTests
         PadExports.ResetTriggerEffectStateForTests(
             initialized: true,
             deviceState: 3);
+        PadExports.SetPrimaryPadOpenForTests(true);
         _ctx[CpuRegister.Rdi] = 1;
         Assert.Equal(InvalidArgument, PadExports.PadGetTriggerEffectState(_ctx));
         AssertBytes(stateAddress, sentinel);
     }
 
-    [Theory]
-    [InlineData(0)]
-    [InlineData(1)]
-    public void GetTriggerEffectState_WritesExactlyEightZeroBytes(int handle)
+    [Fact]
+    public void GetTriggerEffectState_NormalizesUnsupportedBackendToEightZeroBytes()
     {
         var stateAddress = Base + 0x200;
         Span<byte> sentinel = stackalloc byte[12];
         sentinel.Fill(0xCC);
         Assert.True(_memory.TryWrite(stateAddress, sentinel));
         PadExports.ResetTriggerEffectStateForTests(initialized: true);
-        _ctx[CpuRegister.Rdi] = unchecked((ulong)handle);
+        PadExports.SetPrimaryPadOpenForTests(true);
+        _ctx[CpuRegister.Rdi] = 1;
         _ctx[CpuRegister.Rsi] = stateAddress;
 
         Assert.Equal(0, PadExports.PadGetTriggerEffectState(_ctx));
@@ -82,6 +84,72 @@ public sealed class PadExportsTests
         Assert.True(_memory.TryRead(stateAddress, actual));
         Assert.Equal(new byte[8], actual[..8].ToArray());
         Assert.Equal(new byte[] { 0xCC, 0xCC, 0xCC, 0xCC }, actual[8..].ToArray());
+    }
+
+    [Fact]
+    public void PadOpenAndClose_ControlTriggerEffectHandleLifetime()
+    {
+        var stateAddress = Base + 0x280;
+        PadExports.ResetTriggerEffectStateForTests(initialized: true);
+        PadExports.SetHostInputForTests(new TestHostInput());
+        _ctx[CpuRegister.Rdi] = 0x1000_0000;
+        _ctx[CpuRegister.Rsi] = 0;
+        _ctx[CpuRegister.Rdx] = 0;
+        _ctx[CpuRegister.Rcx] = 0;
+
+        Assert.Equal(1, PadExports.PadOpen(_ctx));
+
+        _ctx[CpuRegister.Rdi] = 1;
+        _ctx[CpuRegister.Rsi] = stateAddress;
+        Assert.Equal(0, PadExports.PadGetTriggerEffectState(_ctx));
+
+        _ctx[CpuRegister.Rdi] = 1;
+        Assert.Equal(0, PadExports.PadClose(_ctx));
+
+        Span<byte> sentinel = stackalloc byte[8];
+        sentinel.Fill(0xA7);
+        Assert.True(_memory.TryWrite(stateAddress, sentinel));
+        _ctx[CpuRegister.Rsi] = stateAddress;
+        Assert.Equal(InvalidHandle, PadExports.PadGetTriggerEffectState(_ctx));
+        AssertBytes(stateAddress, sentinel);
+    }
+
+    [Fact]
+    public void GetTriggerEffectState_MapsFfAndCopiesSupportedState()
+    {
+        var stateAddress = Base + 0x300;
+        PadExports.ResetTriggerEffectStateForTests(initialized: true);
+        PadExports.SetPrimaryPadOpenForTests(true);
+        PadExports.SetTriggerEffectStateBackendForTests(
+            _ => (0, byte.MaxValue, 7));
+        _ctx[CpuRegister.Rdi] = 1;
+        _ctx[CpuRegister.Rsi] = stateAddress;
+
+        Assert.Equal(0, PadExports.PadGetTriggerEffectState(_ctx));
+
+        Span<byte> actual = stackalloc byte[8];
+        Assert.True(_memory.TryRead(stateAddress, actual));
+        Assert.Equal(uint.MaxValue, BinaryPrimitives.ReadUInt32LittleEndian(actual));
+        Assert.Equal(7u, BinaryPrimitives.ReadUInt32LittleEndian(actual[4..]));
+    }
+
+    [Fact]
+    public void GetTriggerEffectState_PropagatesBackendErrorAfterZeroingOutput()
+    {
+        const int BackendError = unchecked((int)0x8123_4567);
+        var stateAddress = Base + 0x380;
+        Span<byte> sentinel = stackalloc byte[8];
+        sentinel.Fill(0x5C);
+        Assert.True(_memory.TryWrite(stateAddress, sentinel));
+        PadExports.ResetTriggerEffectStateForTests(initialized: true);
+        PadExports.SetPrimaryPadOpenForTests(true);
+        PadExports.SetTriggerEffectStateBackendForTests(
+            _ => (BackendError, 4, 5));
+        _ctx[CpuRegister.Rdi] = 1;
+        _ctx[CpuRegister.Rsi] = stateAddress;
+
+        Assert.Equal(BackendError, PadExports.PadGetTriggerEffectState(_ctx));
+        AssertBytes(stateAddress, new byte[8]);
     }
 
     [Fact]
@@ -101,5 +169,36 @@ public sealed class PadExportsTests
         Span<byte> actual = stackalloc byte[expected.Length];
         Assert.True(_memory.TryRead(address, actual));
         Assert.Equal(expected.ToArray(), actual.ToArray());
+    }
+
+    private sealed class TestHostInput : IHostInput
+    {
+        public void EnsureStarted()
+        {
+        }
+
+        public int GetGamepadStates(Span<HostGamepadState> destination) => 0;
+
+        public string? DescribeConnectedGamepad() => null;
+
+        public void SetRumble(byte largeMotor, byte smallMotor)
+        {
+        }
+
+        public void SetTriggerRumble(byte? leftTrigger, byte? rightTrigger)
+        {
+        }
+
+        public void SetLightbar(byte red, byte green, byte blue)
+        {
+        }
+
+        public void ResetLightbar()
+        {
+        }
+
+        public bool IsHostWindowFocused() => false;
+
+        public bool IsKeyDown(int virtualKey) => false;
     }
 }

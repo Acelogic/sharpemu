@@ -64,6 +64,26 @@ public sealed class RudpExportsTests : IDisposable
             RudpExports.GetStateForTests());
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Init_MiddleGapOrWriteFailureLeavesStateUnpublished(
+        bool failWrite)
+    {
+        var faultAddress = BaseAddress + 0x1000;
+        var memory = new FaultingMemory(
+            BaseAddress,
+            0x3000,
+            failWrite ? null : faultAddress,
+            failWrite ? faultAddress : null);
+        var ctx = new CpuContext(memory, Generation.Gen5);
+        ctx[CpuRegister.Rdi] = BaseAddress;
+        ctx[CpuRegister.Rsi] = 0x2000;
+
+        Assert.Equal(OutOfMemory, RudpExports.Init(ctx));
+        Assert.Equal((false, 0UL, 0), RudpExports.GetStateForTests());
+    }
+
     [Fact]
     public void InitNid_RegistersWithRudpIdentity()
     {
@@ -78,4 +98,82 @@ public sealed class RudpExportsTests : IDisposable
 
     private static CpuContext CreateContext() =>
         new(new FakeCpuMemory(BaseAddress, 0x4000), Generation.Gen5);
+
+    private sealed class FaultingMemory : ICpuMemory
+    {
+        private readonly ulong _baseAddress;
+        private readonly byte[] _storage;
+        private readonly ulong? _readFaultAddress;
+        private readonly ulong? _writeFaultAddress;
+
+        public FaultingMemory(
+            ulong baseAddress,
+            int size,
+            ulong? readFaultAddress,
+            ulong? writeFaultAddress)
+        {
+            _baseAddress = baseAddress;
+            _storage = new byte[size];
+            _readFaultAddress = readFaultAddress;
+            _writeFaultAddress = writeFaultAddress;
+        }
+
+        public bool TryRead(ulong virtualAddress, Span<byte> destination)
+        {
+            if (!TryResolve(virtualAddress, destination.Length, out var offset) ||
+                IntersectsFault(
+                    virtualAddress,
+                    destination.Length,
+                    _readFaultAddress))
+            {
+                return false;
+            }
+
+            _storage.AsSpan(offset, destination.Length).CopyTo(destination);
+            return true;
+        }
+
+        public bool TryWrite(
+            ulong virtualAddress,
+            ReadOnlySpan<byte> source)
+        {
+            if (!TryResolve(virtualAddress, source.Length, out var offset) ||
+                IntersectsFault(
+                    virtualAddress,
+                    source.Length,
+                    _writeFaultAddress))
+            {
+                return false;
+            }
+
+            source.CopyTo(_storage.AsSpan(offset, source.Length));
+            return true;
+        }
+
+        private static bool IntersectsFault(
+            ulong address,
+            int length,
+            ulong? faultAddress) =>
+            faultAddress is { } fault &&
+            address <= fault &&
+            fault - address < (ulong)length;
+
+        private bool TryResolve(ulong address, int length, out int offset)
+        {
+            offset = 0;
+            if (address < _baseAddress)
+            {
+                return false;
+            }
+
+            var relative = address - _baseAddress;
+            if (relative + (ulong)length > (ulong)_storage.Length)
+            {
+                return false;
+            }
+
+            offset = (int)relative;
+            return true;
+        }
+    }
 }
