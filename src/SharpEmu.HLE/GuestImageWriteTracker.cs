@@ -518,12 +518,14 @@ public static unsafe class GuestImageWriteTracker
                 continue;
             }
 
-            var wasArmed = Interlocked.Exchange(ref range.Armed, 0) != 0;
-            if (wasArmed &&
-                Interlocked.CompareExchange(ref range.FirstCpuWriteSeen, 1, 0) == 0)
+            _ = Interlocked.Exchange(ref range.Armed, 0);
+            if (Interlocked.CompareExchange(ref range.FirstCpuWriteSeen, 1, 0) == 0)
             {
                 // Signal context: capture preallocated scalar fields only.
-                // Formatting and I/O are deferred to a locked safe path.
+                // Formatting and I/O are deferred to a locked safe path. The
+                // handler call itself is authoritative even when mprotect
+                // could not arm the page, so diagnostics are not lost merely
+                // because the platform protection fallback was unavailable.
                 range.FirstCpuWriteAddress = faultAddress;
                 range.FirstCpuWritePage = faultAddress & ~0xFFFUL;
                 range.FirstCpuWriteContext = context;

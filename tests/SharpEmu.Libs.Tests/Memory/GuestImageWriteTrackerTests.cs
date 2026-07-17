@@ -8,6 +8,12 @@ using Xunit;
 
 namespace SharpEmu.Libs.Tests.Memory;
 
+[CollectionDefinition("GuestImageWriteTracker", DisableParallelization = true)]
+public sealed class GuestImageWriteTrackerTestCollection
+{
+}
+
+[Collection("GuestImageWriteTracker")]
 public sealed unsafe class GuestImageWriteTrackerTests
 {
     private const nuint PageSize = 4096;
