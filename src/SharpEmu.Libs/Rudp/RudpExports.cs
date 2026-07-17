@@ -11,8 +11,10 @@ public static class RudpExports
     private const int RudpErrorAlreadyInitialized = unchecked((int)0x80770002);
     private const int RudpErrorInvalidArgument = unchecked((int)0x80770004);
     private const int RudpErrorOutOfMemory = unchecked((int)0x80770007);
+    private const int RudpErrorInternalIoThreadAlreadyEnabled = unchecked((int)0x80770010);
     private const int RudpErrorInvalidEventHandler = unchecked((int)0x80770022);
     private const int MinimumAllocatorStorageSize = 0xF8 + 0x2D8;
+    private const uint MinimumInternalIoThreadStackSize = 0x4000;
     private const int GuestBufferProbeSize = 4096;
 
     private static readonly object StateGate = new();
@@ -21,6 +23,9 @@ public static class RudpExports
     private static int _retainedBufferSize;
     private static ulong _eventHandlerAddress;
     private static ulong _eventHandlerUserData;
+    private static bool _internalIoThreadEnabled;
+    private static uint _internalIoThreadStackSize;
+    private static int _internalIoThreadPriority;
 
     [SysAbiExport(
         Nid = "amuBfI-AQc4",
@@ -89,6 +94,41 @@ public static class RudpExports
         }
     }
 
+    [SysAbiExport(
+        Nid = "6PBNpsgyaxw",
+        ExportName = "sceRudpEnableInternalIOThread",
+        Target = Generation.Gen5,
+        LibraryName = "libSceRudp")]
+    public static int EnableInternalIoThread(CpuContext ctx)
+    {
+        var requestedStackSize = unchecked((uint)ctx[CpuRegister.Rdi]);
+        var priority = unchecked((int)ctx[CpuRegister.Rsi]);
+
+        lock (StateGate)
+        {
+            if (!_initialized)
+            {
+                return ctx.SetReturn(RudpErrorNotInitialized);
+            }
+
+            if (_internalIoThreadEnabled)
+            {
+                return ctx.SetReturn(RudpErrorInternalIoThreadAlreadyEnabled);
+            }
+
+            // Firmware starts one module-owned worker after normalizing the
+            // requested stack size. The HLE retains that lifecycle boundary;
+            // it does not need a host socket, poll object, or background thread
+            // until an implemented RUDP context can consume that machinery.
+            _internalIoThreadStackSize = Math.Max(
+                requestedStackSize,
+                MinimumInternalIoThreadStackSize);
+            _internalIoThreadPriority = priority;
+            _internalIoThreadEnabled = true;
+            return ctx.SetReturn(0);
+        }
+    }
+
     private static bool IsGuestBufferAvailable(
         CpuContext ctx,
         ulong bufferAddress,
@@ -138,6 +178,18 @@ public static class RudpExports
         }
     }
 
+    internal static (bool Enabled, uint StackSize, int Priority)
+        GetInternalIoThreadStateForTests()
+    {
+        lock (StateGate)
+        {
+            return (
+                _internalIoThreadEnabled,
+                _internalIoThreadStackSize,
+                _internalIoThreadPriority);
+        }
+    }
+
     internal static void ResetForTests()
     {
         lock (StateGate)
@@ -153,5 +205,8 @@ public static class RudpExports
         _retainedBufferSize = 0;
         _eventHandlerAddress = 0;
         _eventHandlerUserData = 0;
+        _internalIoThreadEnabled = false;
+        _internalIoThreadStackSize = 0;
+        _internalIoThreadPriority = 0;
     }
 }

@@ -14,6 +14,7 @@ public sealed class RudpExportsTests : IDisposable
     private const int AlreadyInitialized = unchecked((int)0x80770002);
     private const int InvalidArgument = unchecked((int)0x80770004);
     private const int OutOfMemory = unchecked((int)0x80770007);
+    private const int InternalIoThreadAlreadyEnabled = unchecked((int)0x80770010);
     private const int InvalidEventHandler = unchecked((int)0x80770022);
 
     public RudpExportsTests() => RudpExports.ResetForTests();
@@ -169,6 +170,108 @@ public sealed class RudpExportsTests : IDisposable
         RudpExports.ResetForTests();
 
         Assert.Equal((0UL, 0UL), RudpExports.GetEventHandlerStateForTests());
+        Assert.False(RudpExports.GetStateForTests().Initialized);
+    }
+
+    [Fact]
+    public void EnableInternalIoThreadNid_RegistersForGen5WithRudpIdentity()
+    {
+        var manager = new ModuleManager();
+        manager.RegisterExports(
+            SharpEmu.Generated.SysAbiExportRegistry.CreateExports(Generation.Gen5));
+
+        Assert.True(manager.TryGetExport("6PBNpsgyaxw", out var export));
+        Assert.Equal("sceRudpEnableInternalIOThread", export.Name);
+        Assert.Equal("libSceRudp", export.LibraryName);
+    }
+
+    [Fact]
+    public void EnableInternalIoThread_RequiresInitializationBeforeArguments()
+    {
+        var ctx = CreateContext();
+        ctx[CpuRegister.Rdi] = uint.MaxValue;
+        ctx[CpuRegister.Rsi] = uint.MaxValue;
+
+        Assert.Equal(NotInitialized, RudpExports.EnableInternalIoThread(ctx));
+        Assert.Equal(
+            (false, 0U, 0),
+            RudpExports.GetInternalIoThreadStateForTests());
+    }
+
+    [Theory]
+    [InlineData(0U, 0x4000U)]
+    [InlineData(1U, 0x4000U)]
+    [InlineData(0x4000U, 0x4000U)]
+    [InlineData(0x8000U, 0x8000U)]
+    public void EnableInternalIoThread_NormalizesStackAndRetainsRawPriority(
+        uint requestedStackSize,
+        uint expectedStackSize)
+    {
+        var ctx = CreateInitializedContext();
+        ctx[CpuRegister.Rdi] = requestedStackSize;
+        ctx[CpuRegister.Rsi] = unchecked((ulong)-7L);
+
+        Assert.Equal(0, RudpExports.EnableInternalIoThread(ctx));
+        Assert.Equal(
+            (true, expectedStackSize, -7),
+            RudpExports.GetInternalIoThreadStateForTests());
+    }
+
+    [Fact]
+    public void EnableInternalIoThread_DuplicateReturnsErrorWithoutReplacingConfiguration()
+    {
+        var ctx = CreateInitializedContext();
+        ctx[CpuRegister.Rdi] = 0x5000;
+        ctx[CpuRegister.Rsi] = 2;
+        Assert.Equal(0, RudpExports.EnableInternalIoThread(ctx));
+
+        ctx[CpuRegister.Rdi] = 0x9000;
+        ctx[CpuRegister.Rsi] = 3;
+
+        Assert.Equal(
+            InternalIoThreadAlreadyEnabled,
+            RudpExports.EnableInternalIoThread(ctx));
+        Assert.Equal(
+            (true, 0x5000U, 2),
+            RudpExports.GetInternalIoThreadStateForTests());
+    }
+
+    [Fact]
+    public void EnableInternalIoThread_RemainsIndependentFromEventHandlerReplacement()
+    {
+        var ctx = CreateInitializedContext();
+        ctx[CpuRegister.Rdi] = 0x1234_5678;
+        ctx[CpuRegister.Rsi] = 0x8765_4321;
+        Assert.Equal(0, RudpExports.SetEventHandler(ctx));
+
+        ctx[CpuRegister.Rdi] = 0x8000;
+        ctx[CpuRegister.Rsi] = 4;
+        Assert.Equal(0, RudpExports.EnableInternalIoThread(ctx));
+
+        ctx[CpuRegister.Rdi] = 0xAAAA_BBBB;
+        ctx[CpuRegister.Rsi] = 0;
+        Assert.Equal(0, RudpExports.SetEventHandler(ctx));
+        Assert.Equal(
+            (0xAAAA_BBBBUL, 0UL),
+            RudpExports.GetEventHandlerStateForTests());
+        Assert.Equal(
+            (true, 0x8000U, 4),
+            RudpExports.GetInternalIoThreadStateForTests());
+    }
+
+    [Fact]
+    public void ResetForTests_ClearsInternalIoThreadLifecycleState()
+    {
+        var ctx = CreateInitializedContext();
+        ctx[CpuRegister.Rdi] = 0x8000;
+        ctx[CpuRegister.Rsi] = 4;
+        Assert.Equal(0, RudpExports.EnableInternalIoThread(ctx));
+
+        RudpExports.ResetForTests();
+
+        Assert.Equal(
+            (false, 0U, 0),
+            RudpExports.GetInternalIoThreadStateForTests());
         Assert.False(RudpExports.GetStateForTests().Initialized);
     }
 
