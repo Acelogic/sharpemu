@@ -1,6 +1,6 @@
 # ASTRO BOT menu progress
 
-Last updated: 2026-07-16
+Last updated: 2026-07-17
 
 This is the canonical working journal. The compact decisive-experiment ledger is in
 [`docs/astro-bot/experiments.md`](docs/astro-bot/experiments.md). Earlier
@@ -16,8 +16,9 @@ diagnostic controls only.
 ## Current checkpoint
 
 - Worktree: `/Users/mcruz/Developer/sharpemu-astro-playable-next`
-- Branch: `codex/astro-playable-next`
-- Current upstream integration: merge commit `2787757`, incorporating
+- Branch: `main`
+- Current upstream integration: documentation tip `06e6738` over merge commit
+  `2787757`, incorporating
   `par274/main` through `24b82a7` without dropping the ASTRO fixes. The final
   post-validation upstream delta was CI-only (`notify-site.yml`).
 - The original-shader boot sequence renders boot art, multiple controller-symbol
@@ -30,10 +31,16 @@ diagnostic controls only.
 - E218 confirms the same ordered controller-symbol animation and PS Studios
   wordmark survive the latest upstream merge before exact title start.
 - The title/worldmap output is still a uniform red frame rather than the
-  recognizable menu, and sustained title performance is about 1.2 FPS.
-- E206 proves the four rotating 96 KiB CPU selector tables are populated once the
-  title is live. The active boundary has moved downstream to ObjectUpdate output,
-  Emitter output, and vertex record 24736.
+  recognizable menu. Sustained title performance is about 1.2 FPS on macOS and
+  1.2-1.4 FPS on the current Windows control.
+- Historical E206 proves the four rotating 96 KiB CPU selector tables can be
+  populated once the title is live. E234-E236 reproduce the same 653-byte
+  refill and `list_counts=28/0/0/0` at every committed boundary through clean
+  `06e6738`. E226-E227's zero-selector result is therefore caused by the local
+  uncommitted experiment layer, not the upstream merge.
+- E232-E233 reach the same red title endpoint on Windows from the normal GUI
+  library tile with zero environment toggles. Automatic guest `INT 0x41`
+  debug-trap recovery removes the Windows-only crash at `0x8000012B4`.
 
 ## Solved blockers
 
@@ -51,6 +58,9 @@ diagnostic controls only.
 | Post-sync title-start regression | E197-E201 | Replace the sticky 128 MiB host-buffer admission policy with a bounded global LRU that evicts cold idle allocations. |
 | Video layout and packed target order | E208 | Honor extended NV12 pitch/plane layout and `CB_COLOR_INFO.COMP_SWAP`; retain the focused layout/format tests. |
 | Pixel/vertex semantic linkage | E215-E216 | Match AGC semantic IDs, retain custom/flat controls, use unique host pixel locations, and fan guest vertex exports into every consuming attribute. |
+| Windows stock-launch imports | E228 | Implement the required font, pad, AvPlayer/tool-discovery, and audio-propagation exports; do not rely on GUI environment toggles. |
+| Compute writeback starvation | E229-E231 | Reject unchanged 4 KiB pages with vectorized comparisons before byte-run scanning. The large Emitter writeback fell from about 1.6 seconds to about 56 ms. |
+| Windows guest debug traps | E232 | Treat guest `INT 0x41` as an automatic debugger/assert notification in direct execution, with an explicit recovery opt-out for debugger-oriented runs. |
 
 ## Decisive recent evidence
 
@@ -73,6 +83,31 @@ diagnostic controls only.
 | E215 | Static headers prove PS semantics `0,2,3` map to VS outputs `0,2,3`; input 3 is custom/flat and carries the packed-normal values. The runtime registers are exactly `0x000,0x002,0x423`. Controller geometry/color becomes coherent, but other shaders expose duplicate host locations. | The earlier conclusion that packed VS parameter 3 was unused was wrong. Generic semantic mapping is required. | `artifacts/astro-bot/runs/20260716-225754-e215-semantic-interpolant-mapping/`. |
 | E216 | Host locations keyed by pixel attribute plus vertex-export fan-out eliminate duplicate `locn0` declarations. Fourteen interpolation and two AGC mapping tests pass. A visible original-shader run renders the corrected controller sequence, reaches exact title start, loads `worldmap`, and reports no MoltenVK/pipeline errors; the final frame remains uniform red. | Stage linkage is fixed without title-specific shader replacement. Resume at the existing title producer/composition boundary; the menu is not rendered yet. | `artifacts/astro-bot/runs/20260716-230809-e216-unique-host-interpolants/`. |
 | E218 | Merging the runtime-affecting `par274/main` delta through `a9a4f51` required only AGC and Vulkan-presenter conflict resolution. Release publishes cleanly; 256 library, 27 shader, 33 source-generator, and 6 harness tests pass. The visible original-shader run captures 136 frames, classifies the ordered animation/controller/wordmark sequence, reaches exact title start at 112.497 seconds, loads `worldmap`, and ends on the same uniform-red title frame. Upstream then advanced to CI-only `24b82a7`, merged as `2787757`. | Current upstream preserves the controller-symbol regression gate and all known ASTRO progress. The red menu output remains the active graphics blocker. | `artifacts/astro-bot/runs/20260716-233311-e218-post-upstream-controller-direct/`. |
+| E219-E222 | Post-fence full readback found both rotating 1.5 MiB outputs of CS `0x50740A700` uniformly zero. All 71 observed dispatches bind the input at `s8` and the writable output through `s20/s0`; translation reports GPU execution and global writes with no raw or unsupported opcode. Disabling translated bounds did not change the result. A one-word direct sentinel did survive the Vulkan fence and GPU-to-guest writeback. | Descriptor binding, writable storage, fence completion, and writeback work. Bounds are not the blocker. E221's forced first-store experiment was inconclusive because E224 later proved that path is not selected. | `artifacts/astro-bot/runs/20260717-033050-e219c-live-1p5m-post-fence/`, `.../20260717-033530-e219e-live-compute-binding-shapes-guardfix/`, `.../20260717-033932-e220-unchecked-target-buffer-bounds/`, `.../20260717-034909-e222b-direct-output-binding-sentinel/`. |
+| E223-E224 | An initial eight-marker probe wrote the same words from every invocation and starved presentation; it is diagnostic perturbation only. Restricting markers to workgroup zero/local invocation zero restored `ps_logo` and reached `title_controller_ship` in 50.6 seconds. Runtime bytes prove entry `0x30` and compare `0x22C` execute, branch `0x230` skips the first output path `0x234..0x9D4`, and the alternate path enters through `0x9DC` and `0x9E4`. Both real outputs otherwise remain zero. | The first-store block is not the active producer path. Continue inside the alternate `0x9E4..0xA40` load/store block and capture its address, EXEC, and source values. | Invalid control: `artifacts/astro-bot/runs/20260717-035640-e223-live-compute-block-reachability/`; decisive run: `artifacts/astro-bot/runs/20260717-040329-e224-single-invocation-block-reachability/`. |
+| E225 | At PC `0x9FC`, local invocation zero has `v43=0`, EXEC active, and all 32 payload VGPRs zero. Independent markers after stores `0xA00` and `0xA40` both survive, so the complete alternate store sequence executes. Static slicing shows most payload registers are loaded directly from the zero 1.5 MiB `s8` record, while the active-record decision begins with a two-dword load from the 96 KiB `s24` selector table at PC `0x38`. | Store control flow, EXEC, address, bounds, and writeback are exonerated. Compare the live CPU selector bytes with the Vulkan resource backing `s24`; stale CPU-to-GPU upload is now the leading hypothesis. | `artifacts/astro-bot/runs/20260717-040836-e225-alternate-store-source-values/`. |
+| E226-E227 | Immediate upload comparisons and a 60-second post-title run found the queued snapshot, live guest bytes, and Vulkan shadow identical and uniformly zero for all four 96 KiB `s24` tables. Replaying the exact E206 trace controls produced 136 source snapshots (34 per table), all zero, with `list_counts=0/0/0/0`; the old 653-byte refill did not recur. | Stale CPU-to-GPU upload is rejected. E234-E236 supersede the upstream-regression interpretation: the zero-selector result belongs to the uncommitted experiment layer in the playable worktree. | `artifacts/astro-bot/runs/20260717-041700-e226b-selector-upload-snapshot-vs-live-nidfix/`, `.../20260717-041902-e226c-selector-refill-live-transition/`, `.../20260717-042253-e227-replay-e206-selector-controls/`. |
+| E228 | A clean Windows GUI-library launch with no environment toggles resolves the newly implemented compatibility NIDs, reaches `ps_logo`, loads `title_controller_ship`, and no longer stops at the earlier missing audio-propagation import. The guest image remains black/checkerboard and compute runs near 0.5 FPS. | Windows startup/import parity is restored. Rendering and throughput remain separate blockers. | `artifacts/astro-bot/windows/20260717-e228-e233-stock-parity/e228-stock-t95.log`. |
+| E229-E231 | Shader step limits of 4096 and 64 do not change the large Emitter timing. AGC tracing shows the RTX queue wait is below 1 ms, while E230 phase timing attributes about 1.6 seconds to scanning 17.5 MiB of potentially writable host buffers. A vectorized unchanged-page fast path cuts the Emitter writeback to about 56 ms and raises early Windows presentation as high as 5.8 FPS. | The large shader is not slow on the GPU and is not trapped in the translated dispatcher. CPU writeback comparison was the dominant starvation source; retain the generic page fast path. | `artifacts/astro-bot/windows/20260717-e228-e233-stock-parity/e229-agc-trace.log`, `.../e230-phase-timing.log`. |
+| E232 | Windows Event Log identifies the old close as `0xC0000005` at guest `0x8000012B4`, whose bytes are `CD 41`. KawaiiDra decompilation of the mapped raw slice shows this instruction on an error-report/assert path. With generic recovery enabled by default, a zero-toggle stock GUI launch recovers the site twice, decodes 23 PS Studios frames through 8.325 seconds, starts `title_controller_ship`, reaches the red endpoint, remains alive for more than three minutes, and logs no fatal native exception. Five policy tests pass. | The Windows-only post-logo crash is fixed without a launch flag. Windows now reaches the same known red title blocker as macOS. | `artifacts/astro-bot/forensics/e232-windows-int41/`, `artifacts/astro-bot/windows/20260717-e228-e233-stock-parity/e232-stock-parity.log`, `.../e232-stock-red.png`. |
+| E233 | A whole-range `SequenceEqual` control leaves the Emitter median writeback near 56.5 ms, proving its dirty ranges contain at least one changed page. The zero-toggle run again decodes the full video, recovers two `INT 0x41` traps, starts the title, reaches red, and remains fatal-free. | Keep the safe whole-range fast path for fully unchanged descriptors, but do not treat it as the remaining ASTRO performance or menu fix. Resume the 96 KiB selector regression boundary. | `artifacts/astro-bot/windows/20260717-e228-e233-stock-parity/e233-full-range-control.log`, `.../e233-stock-red.png`. |
+| E234-E236 | Replayed the exact E206 selector probe with a visible emulator at `4b4379a`, post-upstream-merge `2effc63`, and clean current tip `06e6738`. Every build reaches gate `0x800253C42`, refill `0x800253C48`, `list_counts=28/0/0/0`, and four selector tables with 653 nonzero bytes and hash `0xADD07B945876F716`. | The semantic shader commit, upstream merge, and clean current tip are exonerated. The E227 selector regression is entirely within the uncommitted dirty experiment layer. Isolate its only default-active CPU change first: adding both mutex-lock NIDs as import-loop guard boundaries. | `artifacts/astro-bot/runs/20260717-054630-e234-selector-boundary-4b4379a/`, `.../20260717-055205-e235-selector-boundary-2effc63/`, `.../20260717-055548-e236-clean-06e6738-selector-control/`. |
+| E237 | Applied only the two dirty mutex-lock boundary lines to clean `06e6738` and replayed E206. The run reaches `title_controller_ship`, but the refill executes with `list_counts=0/0/0/0`; no selector table ever reaches 653 nonzero bytes. The log records millions of `scePthreadMutexLock` calls. | Culprit confirmed. A mutex acquisition is not a yielding boundary: resetting the import-loop history on every lock hides the busy loop that the watchdog must break, starving the scene-registration path. Remove both boundary additions; keep the actual wait/usleep boundaries. | `artifacts/astro-bot/runs/20260717-060449-e237-mutex-loop-boundary-isolation/`. |
+| E238 | Removed the two mutex boundary additions, rebuilt the full dirty playable tree, and replayed E206. The visible run completes its title milestone; all four selector tables return to 653 nonzero bytes, `list_counts=28/0/0/0`, `unique_targets=40`, and live ObjectUpdate fields at source records beginning with 10615. | The selector → ObjectUpdate boundary is restored in the real working tree, not only the clean control. Target global invocation 10615 next instead of invocation zero. | `artifacts/astro-bot/runs/20260717-060846-e238-restored-selector-chain/`. |
+| E239 | Added an environment-selected global-invocation filter to the bounded compute probe and sampled invocation 10615. The heavy probe was killed before the title milestone, but its second attempt completed the relevant dispatches: EXEC is active at PC `0x38`, `v43=10615`, and both `v5/v6` remain zero after the selector load. The alternate path at `0x9E4..0xA40` executes with zero `v0..v7`; its two markers survive writeback. | Invocation-zero evidence is superseded, but the payload result is unchanged on a genuinely selected record. The first-zero boundary is now the PC `0x38` load from the live 96 KiB `s24` table. Compare the nonzero guest snapshot, Vulkan shadow, and shader-visible descriptor in one run, and dump the decoded IR to verify destination/address semantics. | `artifacts/astro-bot/runs/20260717-061443-e239-active-selector-invocation-10615/`. |
+| E240 | Replayed invocation 10615 with address-filtered upload comparison and dumped all three observed variants of CS `0x50740A700`. When the CPU fills selector table `0x400AE4280`, the queued snapshot and live guest memory both contain 653 nonzero bytes with hash `0xB7CB7CC253C30996`; the old GPU shadow is still zero immediately before that dispatch's refresh. On the following dispatch snapshot, shadow, and live memory all contain the same 653 bytes and hash. The decoded IR consistently identifies PC `0x38` as indexed `BufferLoadDwordx2 v5,v6 <- v43,s24`, and the paired 1.5 MiB target begins changing after selectors appear. | The CPU producer and Vulkan upload path are working. Do not add a forced upload or reopen scene registration. The remaining narrow question is the shader-visible `s24/s25` descriptor and exact post-load values for active invocation 10615. Add exact-offset readback so the capture is observable even when unrelated output bytes change earlier in the buffer. | `artifacts/astro-bot/runs/20260717-061907-e240-selector-read-coherence/` (including preserved IR/SPIR-V under `shader-dumps/`). |
+| E241 | Added bounded exact-dword writeback logging and captured invocation 10615's post-PC-`0x38` state. Before selector refill, the capture shows `s24=0x00BD4300`, `s25=0x00080004`, `v43=10615`, and EXEC=1: the shader-visible descriptor is base `0x400BD4300` with an 8-byte stride. All four selector tables later reach 653 nonzero bytes and snapshot/shadow/live agree. The requested capture slots nevertheless logged zero because the probe's diagnostic stores were 208 bytes early, exactly the low-address bias of the Vulkan-aligned binding; marker bytes in `changed_head` prove the offset error. | Runtime descriptor decoding and stride are correct. The observed post-refill value is still unreadable because of a probe-only alignment bug, not proven zero. Apply `ApplyGuestBufferByteBias` to diagnostic stores, rebuild, and repeat the same bounded capture. | `artifacts/astro-bot/runs/20260717-062733-e241-runtime-selector-descriptor/`. |
+| E242 | Rebuilt with the guest-byte-bias correction. Exact dword readback now works and confirms the pre-refill state (`v5/v6=0`, valid 8-byte descriptor, `v43=10615`, EXEC=1, both markers intact). This attempt exited at 41 seconds, before selector refill, when the import-loop watchdog fired on `9UK1vLZQft4` (`scePthreadMutexLock`) at the root guest context. | Inconclusive GPU result. This is the known intermittent top-level mutex-loop unwind, not a shader/presenter crash. Do not change mutex-boundary semantics; repeat the same bounded capture on a successful boot. | `artifacts/astro-bot/runs/20260717-063117-e242-post-refill-selector-value/`. |
+| E243 | Repeated the corrected capture with retries. Attempts 1 and 2 hit the same early top-level mutex-loop unwind; attempt 3 reached `title_controller_ship`, filled all four selector tables, and continued to worldmap. After refill, the output-buffer slots contained `1/4/.../0x40000000` and both markers were gone. Those words are real later shader output overwriting the diagnostic slots, not the PC `0x38` capture. | Successful boot, inconclusive post-load value. A writable producer output cannot preserve an early-instruction capture. Move the eight words to the read-only selector binding, trace them after the fence, and restore the GPU-only words from the allocation shadow so neither guest memory nor later dispatches are perturbed. | `artifacts/astro-bot/runs/20260717-063321-e243-post-refill-selector-value-retry/`. |
+| E244 | Redirected the eight-word PC `0x38` capture into the read-only selector binding and restored the touched words from its Vulkan shadow after each fence. The pre-refill result is exact and repeatable (`v5/v6=0`, valid stride-8 descriptor, `v43=10615`, EXEC=1, both markers intact). The successful title attempt was killed immediately after the selector tables reached 653 nonzero bytes, before a matching post-fence readback; all three attempts ended with `SIGKILL`. | Still no trustworthy post-refill value. Writing diagnostics into a live read-only selector creates an unsafe shader/readback race and may be the kill trigger. Do not touch a guest binding again; append a dedicated transient capture buffer to only the targeted compute dispatch and read it after the fence. | `artifacts/astro-bot/runs/20260717-063928-e244-readonly-selector-capture/`. |
+| E245-E245b | Added a 64-byte transient capture descriptor only to the selected compute shader. The first full run remained stable through title/worldmap but every capture was zero because synthetic descriptors have no entry in the guest runtime-length table, so the generic bounds guard suppressed all stores. A fixed-capacity direct-store correction then made the invocation-zero control exact: EXEC=1, valid stride-8 descriptor, and both constant markers survived the fence. | The isolated diagnostic path is now proven and no longer modifies guest memory. The initial all-zero E245 capture is a probe bug, not game evidence. | `artifacts/astro-bot/runs/20260717-065158-e245-dedicated-selector-capture/`, `.../20260717-065659-e245a-dedicated-buffer-invocation-zero/`, `.../20260717-065857-e245b-dedicated-buffer-invocation-zero-boundsfix/`. |
+| E246 | Replayed global invocation 10615 with the corrected isolated buffer. The probe matched 322 dispatches before selector refill (`v43=10615`, EXEC=1, markers intact), then matched none of the 17 dispatches after refill even though the tables became nonzero. | Host global-invocation numbering changes across the later dispatch/base shape. Do not infer a zero post-refill load from missing markers; match the semantic guest record register (`v43`) instead. | `artifacts/astro-bot/runs/20260717-065931-e246-post-refill-selector-load/`. |
+| E247 | Added a generic VGPR-value probe selector and matched `v43 == 10615` independent of host dispatch numbering. All 17 post-refill dispatches now capture reliably with EXEC=1, valid rotating descriptors, intact markers, and `v5/v6=0`. The indexed CPU summary, however, only proves 653 nonzero bytes somewhere in each table; it identifies record 10551, not 10615, as the first definitely nonzero selector (`first_nonzero=84408`, `10551 -> 15028`). | The GPU zero for record 10615 may be correct. Before reopening descriptor/upload translation, repeat the semantic capture at known-nonzero record 10551. | `artifacts/astro-bot/runs/20260717-070553-e247-semantic-selector-load/`. |
+| E248 | Matched known-nonzero selector record `v43 == 10551`. After all four CPU tables reached 653 nonzero bytes, every one of 16 rotating dispatches loaded the same nonzero pair at PC `0x38`: `v5=0x000007E4`, `v6=0x000039DC`, with EXEC=1 and both markers intact. | Selector creation, CPU-to-Vulkan upload, runtime descriptor/stride/bias, bounds, indexed `BufferLoadDwordx2`, and isolated readback all work. Do not revisit selector plumbing. Follow `v5/v6` through the next target-record load and branch/store boundary to find where the nonzero chain is lost before the 1.5 MiB output. | `artifacts/astro-bot/runs/20260717-071058-e248-known-nonzero-selector-load/`. |
+| E249 | Followed known-good record 10551 through the target-record reads and branch boundary. The shader loads `v22=1` and `v3=0x1CC`, keeps EXEC active through PCs `0xF8` and `0x22C`, and reaches the main output stores at `0x9B8`/`0x9D4`. The complement at `0x9DC` makes EXEC zero for this lane, so the apparent alternate-path markers are probe-only observations and its stores are correctly suppressed. Historical dispatch traces map `s8` to the 1.5 MiB input and both `s20` and `s0` to the same writable 1.5 MiB output; the two guest buffers ping-pong between dispatches. | The selector and target records are valid and the producer's main path executes. Stop debugging scene registration and control flow. Verify the record-10551 bytes written through `s20` survive the fence/writeback, then follow that output into the Emitter. | `artifacts/astro-bot/runs/20260717-071555-e249-known-nonzero-control-flow/`. |
+| E250-E250b | Traced both 1.5 MiB ping-pong buffers after the fence. They transition from zero to about 11,057 nonzero bytes, and the following dispatch sees identical nonzero snapshot, Vulkan shadow, and live guest hashes, proving GPU stores and dirty guest publication. The first exact-dword request used decimal text and was ignored by the hex parser; the corrected run read all 32 dwords of output record 10551. That particular record remains zero even while neighboring output records become nonzero. | The producer output and GPU-to-guest writeback work. Record 10551 was useful for proving selector/branch behavior but is not itself a nonzero geometry record; do not require it as the Emitter handoff. Trace address-filtered consumers of the two live ping-pong buffers and locate the actual Emitter input. | `artifacts/astro-bot/runs/20260717-072445-e250-known-nonzero-output-writeback/` and `artifacts/astro-bot/runs/20260717-072737-e250b-record10551-hex-readback/`. |
+| E251 | Address-filtered every consumer of the live 1.5 MiB ping-pong pair. Large compute shader `0x555F4F500` is the Emitter handoff, and vertex shaders `0x5001BBC00`, `0x5002B3000`, and target ES `0x5002A9A00` also read the same nonzero state buffers. At title, their snapshots contain about 10-11K nonzero bytes. The Emitter's late `s8` descriptor resolves to stride 64, 262,144 records, and a 16 MiB address (`0x553F41DD0` or `0x554F41DD0`), matching the rotating geometry buffers isolated in E190. | The 1.5 MiB producer output reaches both Emitter and target ES; the handoff is not missing. Inspect the real 16 MiB `s8` Emitter outputs and exact 64-byte record 24736. | `artifacts/astro-bot/runs/20260717-073315-e251-pingpong-consumer-map/`. |
+| E252-E252c | The initial generic 16 MiB diagnostic repeatedly distorted boot by hashing/copying every large binding, so it was replaced with a generic readback-only mode that skips upload probes and reads only requested post-fence dwords. The constant-cost run reached `title_controller_ship`; exact stride-64 geometry record 24736 at `0x553F41DD0 + 0x182800` changed from all zero to three stable nonzero words: dword 8 `0x3F7FFFEF`, dword 10 `0x3F800000`, and dword 12 `0x0000293B`. | Selector, ObjectUpdate, 1.5 MiB producer, GPU publication, Emitter, and rotating 16 MiB geometry are all working. Record 24736 is no longer the blocker. Validate target ES `0x5002A9A00` input and position exports next. | Inconclusive heavy probes: `artifacts/astro-bot/runs/20260717-073804-e252-emitter-geometry-record24736/` and `.../20260717-074512-e252b-emitter-record24736-readback-only/`; decisive slice: `artifacts/astro-bot/runs/20260717-075049-e252c-emitter-record24736-slice/`. |
 
 ## Corrected conclusions: do not repeat
 
@@ -98,32 +133,42 @@ diagnostic controls only.
 - Never declare two Vulkan fragment inputs at the same host location when guest
   controls alias one vertex parameter. Keep pixel locations unique and duplicate
   the source value in the vertex stage.
+- Do not force or debug the first CS `0x50740A700` output block at
+  `0x234..0x9D4`: E224 proves the live branch takes the alternate path.
+- A fixed diagnostic write from every compute invocation creates extreme
+  contention and invalidates timing. Restrict fixed-address probes to one
+  invocation or give every invocation a unique address.
+- Do not add a forced live upload for `s24`: E240 proves the queued snapshot and
+  live guest memory agree when the producer fills, and the allocation shadow
+  matches on the following dispatch after the normal refresh.
+- Do not infer a zero runtime descriptor or zero stride at PC `0x38`: E241
+  captures `s24=0x00BD4300` and `s25=0x00080004`, which is base
+  `0x400BD4300` with an 8-byte stride.
 
 ## Current producer chain
 
 ```text
-scene lists               live (28 active records)
-  -> 96 KiB selectors     live (653 nonzero bytes/table)
-  -> indexed state table  live (40 selected records; active gates)
-  -> CS 0x50740A700       dispatch/translation known; output now unclassified
-  -> paired 1.5 MiB outputs
-  -> large Emitter CS     exact-size decode and dispatch fixed
-  -> rotating 16 MiB geometry buffers / record 24736
-  -> ES 0x5002A9A00 position export
+scene lists               repaired playable build: 28 active records
+  -> 96 KiB selectors     653 nonzero bytes/table
+  -> indexed state table  40 selected records; live fields begin at record 10615
+  -> Vulkan selector view snapshot/shadow/live match after normal refresh
+  -> CS 0x50740A700       selector + target loads and main output path proven
+  -> paired 1.5 MiB data  ping-pongs input/output; verify record 10551 writeback
+  -> large Emitter CS     exact-size decode, dispatch, and live input proven
+  -> rotating 16 MiB geometry / record 24736 becomes nonzero at title
+  -> ES 0x5002A9A00      validate geometry reads and position export
   -> final composition and blue/striped color handling
 ```
 
 ## Next experiment
 
-1. At a live exact title, hash/read back the complete paired 1.5 MiB outputs of
-   compute shader `0x50740A700` after the fence, not just their heads.
-2. If either output changes, trace only its address-filtered consumers into the
-   large Emitter and verify the rotating 16 MiB targets plus exact record 24736.
-3. If both stay zero despite E206's active selectors/gates, use KawaiiDra on the
-   first active sample/store path and inspect lane reachability, sampled values,
-   EXEC survival, and the writable binding.
-4. Once record 24736 is nonzero, validate ES `0x5002A9A00`; only then return to
-   packed-half exports, component swaps, and final render-to-texture composition.
+1. Address-filter target ES `0x5002A9A00` against both rotating 16 MiB geometry
+   buffers and verify it receives the nonzero record-24736 generation.
+2. Inspect the original ES IR/SPIR-V position-export path and capture the first
+   title draw's position values without replacing the shader.
+3. If positions are valid, return to packed-half exports, component swaps, and
+   final render-to-texture composition; if they are not, fix only the evidenced
+   ES instruction or binding fault.
 
 The E206 no-screenshot control was:
 
@@ -144,11 +189,11 @@ python3 scripts/astro-test.py test \
 
 - Release `osx-x64` publish passed after the `par274/main` merge with zero
   warning or error lines.
-- Library tests: 256/256 passed (including the upstream additions and AGC mapping tests).
-- Shader tests: 27/27 passed (including 14/14 interpolation tests).
+- Library tests: 271/271 passed in the Windows-parity worktree.
+- Shader tests: 30/30 passed (including the wave-mask branch tests).
 - Source-generator tests: 33/33 passed.
 - Harness tests: 6/6 passed.
-- No SharpEmu process remained after E218.
+- No SharpEmu process remained after E233.
 - Retain the PR #216 baseline at
   `artifacts/astro-bot/baselines/pr216/attempt-01-contact-sheet.png`.
 - Retain compact proof for E190, E193, E194, E196, E198-E201, E203, E204, and
