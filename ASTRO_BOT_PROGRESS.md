@@ -17,8 +17,9 @@ diagnostic controls only.
 
 - Worktree: `/Users/mcruz/Developer/sharpemu-astro-playable-next`
 - Branch: `codex/astro-playable-next`
-- Current upstream integration: merge commit `2effc63`, incorporating
-  `par274/main` through `a9a4f51` without dropping the ASTRO fixes.
+- Current upstream integration: merge commit `2787757`, incorporating
+  `par274/main` through `24b82a7` without dropping the ASTRO fixes. The final
+  post-validation upstream delta was CI-only (`notify-site.yml`).
 - The original-shader boot sequence renders boot art, multiple controller-symbol
   animation frames, and the PS Studios wordmark. The F1 performance overlay is
   enabled by default.
@@ -71,7 +72,7 @@ diagnostic controls only.
 | E212-E214 | Immediate post-draw readback already contained the repeated bands. Shader dumps identified ES `0x50076BE00` and PS `0x50076D300`; treating their attributes as identity-mapped was the remaining false assumption. | Corruption originated before presentation. Decode the AGC semantic tables rather than tuning the presenter. | `artifacts/astro-bot/runs/20260716-221034-e212-vinterp-uniform-readback/`, `.../20260716-223129-e214b-vinterp-vertex-program/`. |
 | E215 | Static headers prove PS semantics `0,2,3` map to VS outputs `0,2,3`; input 3 is custom/flat and carries the packed-normal values. The runtime registers are exactly `0x000,0x002,0x423`. Controller geometry/color becomes coherent, but other shaders expose duplicate host locations. | The earlier conclusion that packed VS parameter 3 was unused was wrong. Generic semantic mapping is required. | `artifacts/astro-bot/runs/20260716-225754-e215-semantic-interpolant-mapping/`. |
 | E216 | Host locations keyed by pixel attribute plus vertex-export fan-out eliminate duplicate `locn0` declarations. Fourteen interpolation and two AGC mapping tests pass. A visible original-shader run renders the corrected controller sequence, reaches exact title start, loads `worldmap`, and reports no MoltenVK/pipeline errors; the final frame remains uniform red. | Stage linkage is fixed without title-specific shader replacement. Resume at the existing title producer/composition boundary; the menu is not rendered yet. | `artifacts/astro-bot/runs/20260716-230809-e216-unique-host-interpolants/`. |
-| E218 | Merging `par274/main` through `a9a4f51` required only AGC and Vulkan-presenter conflict resolution. Release publishes cleanly; 256 library, 27 shader, 33 source-generator, and 6 harness tests pass. The visible original-shader run captures 136 frames, classifies the ordered animation/controller/wordmark sequence, reaches exact title start at 112.497 seconds, loads `worldmap`, and ends on the same uniform-red title frame. | The upstream merge preserves the controller-symbol regression gate and all known ASTRO progress. The red menu output remains the active graphics blocker. | `artifacts/astro-bot/runs/20260716-233311-e218-post-upstream-controller-direct/`. |
+| E218 | Merging the runtime-affecting `par274/main` delta through `a9a4f51` required only AGC and Vulkan-presenter conflict resolution. Release publishes cleanly; 256 library, 27 shader, 33 source-generator, and 6 harness tests pass. The visible original-shader run captures 136 frames, classifies the ordered animation/controller/wordmark sequence, reaches exact title start at 112.497 seconds, loads `worldmap`, and ends on the same uniform-red title frame. Upstream then advanced to CI-only `24b82a7`, merged as `2787757`. | Current upstream preserves the controller-symbol regression gate and all known ASTRO progress. The red menu output remains the active graphics blocker. | `artifacts/astro-bot/runs/20260716-233311-e218-post-upstream-controller-direct/`. |
 
 ## Corrected conclusions: do not repeat
 
