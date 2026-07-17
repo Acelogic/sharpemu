@@ -33,6 +33,31 @@ public static class NpWebApi2Exports
     }
 
     [SysAbiExport(
+        Nid = "WV1GwM32NgY",
+        ExportName = "sceNpWebApi2PushEventCreateHandle",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceNpWebApi2")]
+    public static int NpWebApi2InitializeAlt(CpuContext ctx)
+    {
+        Interlocked.Exchange(ref _initialized, 1);
+        TraceNpWebApi2("init-alt", unchecked((int)ctx[CpuRegister.Rdi]), ctx[CpuRegister.Rsi]);
+        return ctx.SetReturn(0);
+    }
+
+    [SysAbiExport(
+        Nid = "sk54bi6FtYM",
+        ExportName = "sceNpWebApi2CreateUserContext",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceNpWebApi2")]
+    public static int NpWebApi2CreateUserContext(CpuContext ctx)
+    {
+        // No PSN backend: refuse user-context creation so the title's online
+        // layer backs off instead of driving a half-created context handle.
+        TraceNpWebApi2("create-user-context", unchecked((int)ctx[CpuRegister.Rdi]), ctx[CpuRegister.Rsi]);
+        return ctx.SetReturn(NpWebApi2ErrorInvalidArgument);
+    }
+
+    [SysAbiExport(
         Nid = "bEvXpcEk200",
         ExportName = "sceNpWebApi2Terminate",
         Target = Generation.Gen4 | Generation.Gen5,

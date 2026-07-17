@@ -7,6 +7,8 @@ on:
   push:
     branches:
       - "**"
+    tags:
+      - "v*"
     paths-ignore:
       - "**/*.md"
       - "**/*.png"
@@ -34,31 +36,36 @@ jobs:
     name: Init
     runs-on: ubuntu-latest
     outputs:
-      archive-name: ${{ steps.vars.outputs.archive-name }}
-      artifact-name: ${{ steps.vars.outputs.artifact-name }}
       release-name: ${{ steps.vars.outputs.release-name }}
       release-tag: ${{ steps.vars.outputs.release-tag }}
       safe-ref: ${{ steps.vars.outputs.safe-ref }}
       short-sha: ${{ steps.vars.outputs.short-sha }}
+      version: ${{ steps.vars.outputs.version }}
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
       - name: Compute workflow variables
         id: vars
         shell: bash
         run: |
           short_sha="${GITHUB_SHA::7}"
           safe_ref="$(echo "${GITHUB_REF_NAME}" | tr '[:upper:]' '[:lower:]' | sed 's#[^a-z0-9._-]#-#g')"
-          archive_name="sharpemu-win64-${short_sha}.zip"
-          artifact_name="sharpemu-win64-${short_sha}"
-          release_tag="win64-${safe_ref}-${short_sha}"
-          release_name="SharpEmu win64 ${short_sha}"
+          version="$(python3 -c 'import sys, xml.etree.ElementTree as ET; version = ET.parse("Directory.Build.props").getroot().findtext(".//SharpEmuVersion"); sys.exit("Directory.Build.props is missing SharpEmuVersion") if not version or not version.strip() else print(version.strip())')"
+          release_tag="v${version}"
+          release_name="SharpEmu v${version}"
+
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "${release_tag}" ]; then
+            echo "Release tag ${GITHUB_REF_NAME} does not match project version ${release_tag}." >&2
+            exit 1
+          fi
 
           {
             echo "short-sha=${short_sha}"
             echo "safe-ref=${safe_ref}"
-            echo "archive-name=${archive_name}"
-            echo "artifact-name=${artifact_name}"
             echo "release-tag=${release_tag}"
             echo "release-name=${release_name}"
+            echo "version=${version}"
           } >> "$GITHUB_OUTPUT"
 
   reuse:
@@ -94,13 +101,22 @@ jobs:
           cache: true
           cache-dependency-path: |
             Directory.Packages.props
-            src/**/packages.lock.json
+            Directory.Build.props
 
       - name: Restore solution
-        run: dotnet restore SharpEmu.slnx --locked-mode
+        run: dotnet restore SharpEmu.slnx
 
       - name: Build solution
         run: dotnet build SharpEmu.slnx -c Release --no-restore
+
+      # Runs every test project in the solution; a test failure fails the build, as
+      # does an aerolib.bin generation failure in the build step above (the MSBuild
+      # task logs an error and returns false).
+      - name: Run tests
+        run: dotnet test SharpEmu.slnx -c Release --no-build --verbosity normal
+
+      - name: Validate synthetic shaders
+        run: dotnet run --project tools/SharpEmu.Tools.ShaderDump/SharpEmu.Tools.ShaderDump.csproj -c Release -- artifacts/shader-dump
 
       - name: Publish win-x64 CLI
         run: dotnet publish src/SharpEmu.CLI/SharpEmu.CLI.csproj -c Release -r win-x64 --self-contained true --no-restore -p:PublishDir="${env:PUBLISH_DIR}"
@@ -109,7 +125,8 @@ jobs:
         run: |
           New-Item -ItemType Directory -Path $env:RELEASE_DIR -Force | Out-Null
 
-          $archivePath = Join-Path $env:RELEASE_DIR "${{ needs.init.outputs.archive-name }}"
+          $archiveName = "sharpemu-${{ needs.init.outputs.version }}-win-x64.zip"
+          $archivePath = Join-Path $env:RELEASE_DIR $archiveName
           if (Test-Path $archivePath) {
             Remove-Item $archivePath -Force
           }
@@ -119,8 +136,8 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ needs.init.outputs.artifact-name }}
-          path: ${{ env.RELEASE_DIR }}\${{ needs.init.outputs.archive-name }}
+          name: sharpemu-win-x64-${{ needs.init.outputs.short-sha }}
+          path: ${{ env.RELEASE_DIR }}\sharpemu-${{ needs.init.outputs.version }}-win-x64.zip
           if-no-files-found: error
 
   build-posix:
@@ -153,13 +170,18 @@ jobs:
           cache: true
           cache-dependency-path: |
             Directory.Packages.props
-            src/**/packages.lock.json
+            Directory.Build.props
 
       - name: Restore solution
-        run: dotnet restore SharpEmu.slnx --locked-mode
+        run: dotnet restore SharpEmu.slnx
 
       - name: Build solution
         run: dotnet build SharpEmu.slnx -c Release --no-restore
+
+      # Also runs on Linux/macOS: the aerolib.bin MSBuild task does platform-sensitive
+      # path handling, so a cross-platform generation regression surfaces here.
+      - name: Run tests
+        run: dotnet test SharpEmu.slnx -c Release --no-build --verbosity normal
 
       - name: Publish ${{ matrix.rid }} CLI
         run: dotnet publish src/SharpEmu.CLI/SharpEmu.CLI.csproj -c Release -r ${{ matrix.rid }} --self-contained true --no-restore -p:PublishDir="$PUBLISH_DIR"
@@ -172,14 +194,14 @@ jobs:
         run: |
           mkdir -p "$RELEASE_DIR"
           # tar keeps the executable bit, which zip would drop.
-          tar -czf "$RELEASE_DIR/sharpemu-${{ matrix.rid }}-${{ needs.init.outputs.short-sha }}.tar.gz" \
+          tar -czf "$RELEASE_DIR/sharpemu-${{ needs.init.outputs.version }}-${{ matrix.rid }}.tar.gz" \
             -C "$PUBLISH_DIR" .
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
         with:
           name: sharpemu-${{ matrix.rid }}-${{ needs.init.outputs.short-sha }}
-          path: ${{ env.RELEASE_DIR }}/sharpemu-${{ matrix.rid }}-${{ needs.init.outputs.short-sha }}.tar.gz
+          path: ${{ env.RELEASE_DIR }}/sharpemu-${{ needs.init.outputs.version }}-${{ matrix.rid }}.tar.gz
           if-no-files-found: error
 
   release:
@@ -187,78 +209,42 @@ jobs:
     needs:
       - init
       - build
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+      - build-posix
+    # Versioned releases are immutable and tag-driven. Branch and manual runs
+    # still produce Actions artifacts without modifying a published release.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Download build artifact
+      - name: Download build artifacts
         uses: actions/download-artifact@v8
         with:
-          name: ${{ needs.init.outputs.artifact-name }}
           path: release
 
-      - name: Create or update release
+      - name: Create release
         shell: bash
         env:
-          ARCHIVE_NAME: ${{ needs.init.outputs.archive-name }}
           GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_NAME: ${{ needs.init.outputs.release-name }}
           RELEASE_TAG: ${{ needs.init.outputs.release-tag }}
+          VERSION: ${{ needs.init.outputs.version }}
         run: |
-          asset_path="release/${ARCHIVE_NAME}"
-          notes="Automated Windows build for commit ${GITHUB_SHA}."
-
-          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
-            gh release upload "${RELEASE_TAG}" "${asset_path}" --clobber
-            gh release edit "${RELEASE_TAG}" --title "${RELEASE_NAME}" --notes "${notes}"
-          else
-            gh release create "${RELEASE_TAG}" "${asset_path}" \
-              --title "${RELEASE_NAME}" \
-              --notes "${notes}" \
-              --target "${GITHUB_SHA}"
+          mapfile -t assets < <(find release -type f \( -name '*.zip' -o -name '*.tar.gz' \) | sort)
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "No release assets found." >&2
+            exit 1
           fi
 
-  release-posix:
-    name: Publish GitHub Release (${{ matrix.rid }})
-    needs:
-      - init
-      - build-posix
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        rid: [linux-x64, osx-x64]
-    steps:
-      - name: Download build artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: sharpemu-${{ matrix.rid }}-${{ needs.init.outputs.short-sha }}
-          path: release
-
-      - name: Create or update release
-        shell: bash
-        env:
-          ARCHIVE_NAME: sharpemu-${{ matrix.rid }}-${{ needs.init.outputs.short-sha }}.tar.gz
-          GH_REPO: ${{ github.repository }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_NAME: SharpEmu ${{ matrix.rid }} ${{ needs.init.outputs.short-sha }}
-          RELEASE_TAG: ${{ matrix.rid }}-${{ needs.init.outputs.safe-ref }}-${{ needs.init.outputs.short-sha }}
-          RID: ${{ matrix.rid }}
-        run: |
-          asset_path="release/${ARCHIVE_NAME}"
-          notes="Automated ${RID} build for commit ${GITHUB_SHA}."
+          notes="Automated SharpEmu v${VERSION} build for commit ${GITHUB_SHA}."
 
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
-            gh release upload "${RELEASE_TAG}" "${asset_path}" --clobber
-            gh release edit "${RELEASE_TAG}" --title "${RELEASE_NAME}" --notes "${notes}"
-          else
-            gh release create "${RELEASE_TAG}" "${asset_path}" \
-              --title "${RELEASE_NAME}" \
-              --notes "${notes}" \
-              --target "${GITHUB_SHA}"
+            echo "Release ${RELEASE_TAG} already exists and will not be modified." >&2
+            exit 1
           fi
+
+          gh release create "${RELEASE_TAG}" "${assets[@]}" \
+            --verify-tag \
+            --title "${RELEASE_NAME}" \
+            --notes "${notes}"

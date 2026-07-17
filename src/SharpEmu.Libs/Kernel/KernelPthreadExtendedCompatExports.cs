@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using SharpEmu.HLE;
+using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Text;
+using System.Threading;
 using System.Diagnostics.CodeAnalysis;
 
 namespace SharpEmu.Libs.Kernel;
@@ -15,6 +17,8 @@ public static class KernelPthreadExtendedCompatExports
     private const int DefaultDetachState = 0;
     private const ulong DefaultGuardSize = 0x1000UL;
     private const ulong DefaultStackSize = 0x1_00000UL;
+    private const ulong NativeGuestStackSize = 0x20_0000UL;
+    private const ulong NativeGuestStackStride = 0x100_0000UL;
     private const int DefaultInheritSched = 4;
     private const int DefaultSchedPolicy = 1;
     private const int DefaultSchedPriority = DefaultThreadPriority;
@@ -32,6 +36,8 @@ public static class KernelPthreadExtendedCompatExports
     private static long _nextSyntheticRwlockHandleId = 1;
     private static long _nextSyntheticPthreadAttrHandleId = 1;
     private static long _nextSyntheticRwlockAttrHandleId = 1;
+    private static readonly bool _strictRwlockWriterPreference =
+        string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_STRICT_RWLOCK_WRITER_PREFERENCE"), "1", StringComparison.Ordinal);
 
     private static readonly ConcurrentDictionary<ulong, ConcurrentDictionary<int, ulong>> _threadLocalSpecific = new();
 
@@ -136,13 +142,22 @@ public static class KernelPthreadExtendedCompatExports
         public PthreadAttrState Attributes { get; set; } = PthreadAttrState.Default;
     }
 
+    // On the outer class deliberately: a static on the nested state class gives it a type
+    // initializer that first runs on a guest thread and fail-fasts the CLR.
+    private static long _nextRwlockWakeId;
+
     private sealed class PthreadRwlockState
     {
         public object SyncRoot { get; } = new();
         public Dictionary<ulong, int> ReaderCounts { get; } = new();
+        public Dictionary<ulong, int> CompatWriterCounts { get; } = new();
         public int ReaderTotalCount { get; set; }
+        public int CompatWriterTotalCount { get; set; }
         public ulong WriterThreadId { get; set; }
         public int WaitingWriters { get; set; }
+
+        // See PthreadMutexState.WakeKey.
+        public string WakeKey { get; } = "pthread_rwlock#" + Interlocked.Increment(ref _nextRwlockWakeId).ToString("X");
 
         public int GetReaderCount(ulong threadId)
         {
@@ -154,6 +169,33 @@ public static class KernelPthreadExtendedCompatExports
             ReaderCounts.TryGetValue(threadId, out var currentCount);
             ReaderCounts[threadId] = currentCount + 1;
             ReaderTotalCount++;
+        }
+
+        public void AddCompatWriter(ulong threadId)
+        {
+            CompatWriterCounts.TryGetValue(threadId, out var currentCount);
+            CompatWriterCounts[threadId] = currentCount + 1;
+            CompatWriterTotalCount++;
+        }
+
+        public bool RemoveCompatWriter(ulong threadId)
+        {
+            if (!CompatWriterCounts.TryGetValue(threadId, out var currentCount) || currentCount <= 0)
+            {
+                return false;
+            }
+
+            if (currentCount == 1)
+            {
+                CompatWriterCounts.Remove(threadId);
+            }
+            else
+            {
+                CompatWriterCounts[threadId] = currentCount - 1;
+            }
+
+            CompatWriterTotalCount = Math.Max(0, CompatWriterTotalCount - 1);
+            return true;
         }
 
         public bool RemoveReader(ulong threadId)
@@ -287,6 +329,17 @@ public static class KernelPthreadExtendedCompatExports
         return 0;
     }
 
+    private sealed class RwlockWaiter : IGuestThreadBlockWaiter
+    {
+        public required PthreadRwlockState Rwlock { get; init; }
+        public required ulong ThreadId { get; init; }
+        public required bool Write { get; init; }
+
+        public int Resume() => (int)OrbisGen2Result.ORBIS_GEN2_OK;
+
+        public bool TryWake() => TryAcquireBlockedRwlock(Rwlock, ThreadId, Write);
+    }
+
     private readonly record struct TlsKeyState(ulong Destructor);
 
     private readonly record struct PthreadAttrState(
@@ -399,6 +452,7 @@ public static class KernelPthreadExtendedCompatExports
             state.Attributes = state.Attributes with { AffinityMask = mask };
         }
 
+        _ = GuestThreadExecution.Scheduler?.TrySetGuestThreadAffinity(thread, mask);
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
@@ -452,7 +506,7 @@ public static class KernelPthreadExtendedCompatExports
             priority = GetOrCreateThreadStateLocked(thread).Priority;
         }
 
-        if (!ctx.TryWriteInt32(outPriorityAddress, priority))
+        if (!TryWriteInt32(ctx, outPriorityAddress, priority))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -480,6 +534,9 @@ public static class KernelPthreadExtendedCompatExports
             GetOrCreateThreadStateLocked(thread).Priority = priority;
         }
 
+        // Apply to the live scheduler thread so runtime priority changes take
+        // effect, not just the local bookkeeping snapshot.
+        _ = GuestThreadExecution.Scheduler?.TrySetGuestThreadPriority(thread, priority);
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
@@ -499,7 +556,7 @@ public static class KernelPthreadExtendedCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
 
-        if (!ctx.TryReadInt32(schedParamAddress, out var schedPriority))
+        if (!TryReadInt32(ctx, schedParamAddress, out var schedPriority))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -524,12 +581,26 @@ public static class KernelPthreadExtendedCompatExports
         ExportName = "pthread_getschedparam",
         Target = Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int PosixPthreadGetschedparam(CpuContext ctx)
+    public static int PosixPthreadGetschedparam(CpuContext ctx) => PthreadGetschedparam(ctx);
+
+    [SysAbiExport(
+        Nid = "oIRFTjoILbg",
+        ExportName = "scePthreadSetschedparam",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PthreadSetschedparam(CpuContext ctx) => PosixPthreadSetschedparam(ctx);
+
+    [SysAbiExport(
+        Nid = "P41kTWUS3EI",
+        ExportName = "scePthreadGetschedparam",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PthreadGetschedparam(CpuContext ctx)
     {
         var thread = ctx[CpuRegister.Rdi];
-        var outPolicyAddress = ctx[CpuRegister.Rsi];
-        var outSchedParamAddress = ctx[CpuRegister.Rdx];
-        if (thread == 0 || outPolicyAddress == 0 || outSchedParamAddress == 0)
+        var policyAddress = ctx[CpuRegister.Rsi];
+        var schedParamAddress = ctx[CpuRegister.Rdx];
+        if (thread == 0 || policyAddress == 0 || schedParamAddress == 0)
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
@@ -540,11 +611,11 @@ public static class KernelPthreadExtendedCompatExports
         {
             var state = GetOrCreateThreadStateLocked(thread);
             policy = state.Attributes.SchedPolicy;
-            priority = state.Attributes.SchedPriority;
+            priority = state.Priority;
         }
 
-        if (!ctx.TryWriteInt32(outPolicyAddress, policy) ||
-            !ctx.TryWriteInt32(outSchedParamAddress, priority))
+        if (!TryWriteInt32(ctx, policyAddress, policy) ||
+            !TryWriteInt32(ctx, schedParamAddress, priority))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -683,12 +754,50 @@ public static class KernelPthreadExtendedCompatExports
         lock (_stateGate)
         {
             var threadState = GetOrCreateThreadStateLocked(thread);
+
+			// The native executor maps guest pthread stacks itself, after the
+			// kernel-facing thread object has been created.  Report that live
+			// mapping when a thread asks for its own attributes.  IL2CPP's
+			// conservative collector uses these two fields to register the stack;
+			// returning the default null address lets it recycle objects that are
+			// still reachable only from guest registers/stack frames.
+			if (thread == KernelPthreadState.GetCurrentThreadHandle() &&
+				TryInferNativeGuestStack(ctx[CpuRegister.Rsp], out var stackAddress))
+			{
+				threadState.Attributes = threadState.Attributes with
+				{
+					StackAddress = stackAddress,
+					StackSize = NativeGuestStackSize,
+				};
+			}
             _attrStates[outAttrAddress] = threadState.Attributes;
         }
 
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
+
+	private static bool TryInferNativeGuestStack(ulong stackPointer, out ulong stackAddress)
+	{
+		stackAddress = 0;
+		var candidate = stackPointer & ~(NativeGuestStackStride - 1);
+		if (stackPointer - candidate >= NativeGuestStackSize)
+		{
+			return false;
+		}
+
+		var highestStack = OperatingSystem.IsWindows()
+			? 0x00007FFF_F000_0000UL
+			: 0x00006FFF_F000_0000UL;
+		var lowestStack = highestStack - (63 * NativeGuestStackStride);
+		if (candidate < lowestStack || candidate > highestStack)
+		{
+			return false;
+		}
+
+		stackAddress = candidate;
+		return true;
+	}
 
     [SysAbiExport(
         Nid = "8+s5BzZjxSg",
@@ -739,7 +848,7 @@ public static class KernelPthreadExtendedCompatExports
             state = GetOrCreateAttrStateLocked(attrAddress);
         }
 
-        if (!ctx.TryWriteInt32(outStateAddress, state.DetachState))
+        if (!TryWriteInt32(ctx, outStateAddress, state.DetachState))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -1025,7 +1134,7 @@ public static class KernelPthreadExtendedCompatExports
             state = GetOrCreateAttrStateLocked(attrAddress);
         }
 
-        if (!ctx.TryWriteInt32(schedParamAddress, state.SchedPriority))
+        if (!TryWriteInt32(ctx, schedParamAddress, state.SchedPriority))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -1048,7 +1157,7 @@ public static class KernelPthreadExtendedCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
 
-        if (!ctx.TryReadInt32(schedParamAddress, out var schedPriority))
+        if (!TryReadInt32(ctx, schedParamAddress, out var schedPriority))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -1223,7 +1332,7 @@ public static class KernelPthreadExtendedCompatExports
 
         lock (state.SyncRoot)
         {
-            if (state.WriterThreadId != 0 || state.ReaderTotalCount != 0 || state.WaitingWriters != 0)
+            if (state.WriterThreadId != 0 || state.ReaderTotalCount != 0 || state.WaitingWriters != 0 || state.CompatWriterTotalCount != 0)
             {
                 return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY;
             }
@@ -1291,7 +1400,7 @@ public static class KernelPthreadExtendedCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
 
-        if (!TryResolveRwlockState(ctx, rwlockAddress, createIfZero: false, out _, out var rwlock))
+        if (!TryResolveRwlockState(ctx, rwlockAddress, createIfZero: false, out var resolvedAddress, out var rwlock))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
         }
@@ -1302,7 +1411,11 @@ public static class KernelPthreadExtendedCompatExports
         {
             lock (rwlock.SyncRoot)
             {
-                if (rwlock.WriterThreadId == currentThreadId)
+                if (rwlock.RemoveCompatWriter(currentThreadId))
+                {
+                    Monitor.PulseAll(rwlock.SyncRoot);
+                }
+                else if (rwlock.WriterThreadId == currentThreadId)
                 {
                     rwlock.WriterThreadId = 0;
                     Monitor.PulseAll(rwlock.SyncRoot);
@@ -1325,6 +1438,7 @@ public static class KernelPthreadExtendedCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_PERMISSION_DENIED;
         }
 
+        _ = GuestThreadExecution.Scheduler?.WakeBlockedThreads(rwlock.WakeKey);
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
@@ -1400,7 +1514,7 @@ public static class KernelPthreadExtendedCompatExports
             }
         }
 
-        if (!ctx.TryWriteInt32(outKeyAddress, key))
+        if (!TryWriteInt32(ctx, outKeyAddress, key))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -1508,6 +1622,72 @@ public static class KernelPthreadExtendedCompatExports
         LibraryName = "libKernel")]
     public static int OrbisPthreadGetspecific(CpuContext ctx) => PosixPthreadGetspecific(ctx);
 
+    private const int PthreadDestructorIterations = 4;
+
+    /// <summary>
+    /// Runs the current thread's pthread TLS-key destructors, as POSIX
+    /// requires on thread exit. Each key holding a non-null value with a
+    /// registered destructor has its value cleared first and the destructor
+    /// then invoked with the previous value; this repeats up to
+    /// PTHREAD_DESTRUCTOR_ITERATIONS times so destructors that set new
+    /// thread-local values are themselves cleaned up. Called on the exiting
+    /// guest thread while it is still executable.
+    /// </summary>
+    public static void RunThreadLocalDestructors(CpuContext ctx)
+    {
+        var scheduler = GuestThreadExecution.Scheduler;
+        if (scheduler is null)
+        {
+            return;
+        }
+
+        var threadHandle = KernelPthreadState.GetCurrentThreadHandle();
+        if (!_threadLocalSpecific.TryGetValue(threadHandle, out var values))
+        {
+            return;
+        }
+
+        for (var iteration = 0; iteration < PthreadDestructorIterations; iteration++)
+        {
+            var ranAny = false;
+            foreach (var entry in values)
+            {
+                var value = entry.Value;
+                if (value == 0 ||
+                    !_tlsKeys.TryGetValue(entry.Key, out var keyState) ||
+                    keyState.Destructor == 0)
+                {
+                    continue;
+                }
+
+                // Clear before invoking, per POSIX, so a destructor that
+                // re-sets the key is handled on the next iteration.
+                if (!values.TryUpdate(entry.Key, 0, value))
+                {
+                    continue;
+                }
+
+                ranAny = true;
+                _ = scheduler.TryCallGuestFunction(
+                    ctx,
+                    keyState.Destructor,
+                    value,
+                    0,
+                    0,
+                    0,
+                    "pthread_tls_destructor",
+                    out _);
+            }
+
+            if (!ranAny)
+            {
+                break;
+            }
+        }
+
+        _threadLocalSpecific.TryRemove(threadHandle, out _);
+    }
+
     private static int PthreadRwlockLockCore(CpuContext ctx, ulong rwlockAddress, bool write)
     {
         if (rwlockAddress == 0)
@@ -1515,7 +1695,7 @@ public static class KernelPthreadExtendedCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
 
-        if (!TryResolveRwlockState(ctx, rwlockAddress, createIfZero: true, out _, out var rwlock))
+        if (!TryResolveRwlockState(ctx, rwlockAddress, createIfZero: true, out var resolvedAddress, out var rwlock))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
         }
@@ -1530,20 +1710,59 @@ public static class KernelPthreadExtendedCompatExports
                     return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_DEADLOCK;
                 }
 
+                if (rwlock.CompatWriterCounts.GetValueOrDefault(currentThreadId) > 0)
+                {
+                    rwlock.AddCompatWriter(currentThreadId);
+                    return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+                }
+
+                if (GuestThreadExecution.IsGuestThread &&
+                    !_strictRwlockWriterPreference &&
+                    rwlock.WriterThreadId == 0 &&
+                    rwlock.ReaderTotalCount == 0 &&
+                    rwlock.CompatWriterTotalCount == 0)
+                {
+                    rwlock.AddCompatWriter(currentThreadId);
+                    return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+                }
+
+                if (rwlock.WriterThreadId == 0 && rwlock.ReaderTotalCount == 0 && rwlock.CompatWriterTotalCount == 0)
+                {
+                    DetectRwlockWriterConflict(resolvedAddress, rwlock, currentThreadId, "wrlock");
+                    rwlock.WriterThreadId = currentThreadId;
+                    return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+                }
+
                 rwlock.WaitingWriters++;
+                var transferredToScheduler = false;
                 try
                 {
-                    while (rwlock.WriterThreadId != 0 || rwlock.ReaderTotalCount != 0)
+                    if (GuestThreadExecution.IsGuestThread &&
+                        GuestThreadExecution.TryGetCurrentImportCallFrame(out _) &&
+                        GuestThreadExecution.RequestCurrentThreadBlock(
+                            ctx,
+                            "pthread_rwlock_wrlock",
+                            rwlock.WakeKey,
+                            new RwlockWaiter { Rwlock = rwlock, ThreadId = currentThreadId, Write = true }))
+                    {
+                        transferredToScheduler = true;
+                        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+                    }
+
+                    while (rwlock.WriterThreadId != 0 || rwlock.ReaderTotalCount != 0 || rwlock.CompatWriterTotalCount != 0)
                     {
                         Monitor.Wait(rwlock.SyncRoot);
                     }
+
+                    rwlock.WriterThreadId = currentThreadId;
                 }
                 finally
                 {
-                    rwlock.WaitingWriters--;
+                    if (!transferredToScheduler)
+                    {
+                        rwlock.WaitingWriters = Math.Max(0, rwlock.WaitingWriters - 1);
+                    }
                 }
-
-                rwlock.WriterThreadId = currentThreadId;
             }
             else
             {
@@ -1552,17 +1771,114 @@ public static class KernelPthreadExtendedCompatExports
                     return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_DEADLOCK;
                 }
 
-                while (rwlock.WriterThreadId != 0 ||
-                       (rwlock.WaitingWriters > 0 && rwlock.GetReaderCount(currentThreadId) == 0))
+                while (ReaderMustWaitForRwlock(rwlock, currentThreadId))
                 {
+                    if (GuestThreadExecution.IsGuestThread &&
+                        GuestThreadExecution.TryGetCurrentImportCallFrame(out _) &&
+                        GuestThreadExecution.RequestCurrentThreadBlock(
+                            ctx,
+                            "pthread_rwlock_rdlock",
+                            rwlock.WakeKey,
+                            new RwlockWaiter { Rwlock = rwlock, ThreadId = currentThreadId, Write = false }))
+                    {
+                        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+                    }
+
                     Monitor.Wait(rwlock.SyncRoot);
                 }
 
+                if (rwlock.WriterThreadId != 0 ||
+                    rwlock.CompatWriterTotalCount > rwlock.CompatWriterCounts.GetValueOrDefault(currentThreadId))
+                {
+                    Console.Error.WriteLine(
+                        $"[LOADER][ERROR] RWLOCK READER/WRITER COEXIST: resolved=0x{resolvedAddress:X} reader=0x{currentThreadId:X} " +
+                        $"writer=0x{rwlock.WriterThreadId:X} compat_total={rwlock.CompatWriterTotalCount} readers_total={rwlock.ReaderTotalCount}");
+                }
                 rwlock.AddReader(currentThreadId);
             }
         }
 
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    private static bool TryAcquireBlockedRwlock(PthreadRwlockState rwlock, ulong currentThreadId, bool write)
+    {
+        lock (rwlock.SyncRoot)
+        {
+            if (write)
+            {
+                if (rwlock.WriterThreadId != 0 || rwlock.ReaderTotalCount != 0 || rwlock.CompatWriterTotalCount != 0)
+                {
+                    return false;
+                }
+
+                DetectRwlockWriterConflict(0, rwlock, currentThreadId, "wrlock-resume");
+                rwlock.WriterThreadId = currentThreadId;
+                rwlock.WaitingWriters = Math.Max(0, rwlock.WaitingWriters - 1);
+                return true;
+            }
+
+            if (ReaderMustWaitForRwlock(rwlock, currentThreadId))
+            {
+                return false;
+            }
+
+            rwlock.AddReader(currentThreadId);
+            return true;
+        }
+    }
+
+    // Call while holding lock(rwlock.SyncRoot): an existing reader/writer here means a
+    // writer would share the rwlock with another holder — a data race.
+    private static void DetectRwlockWriterConflict(ulong resolvedAddress, PthreadRwlockState rwlock, ulong currentThreadId, string site)
+    {
+        if (rwlock.WriterThreadId != 0 ||
+            rwlock.ReaderTotalCount != 0 ||
+            rwlock.CompatWriterTotalCount > rwlock.CompatWriterCounts.GetValueOrDefault(currentThreadId))
+        {
+            Console.Error.WriteLine(
+                $"[LOADER][ERROR] RWLOCK WRITER CONFLICT at {site}: resolved=0x{resolvedAddress:X} writer=0x{currentThreadId:X} " +
+                $"existing_writer=0x{rwlock.WriterThreadId:X} readers_total={rwlock.ReaderTotalCount} compat_total={rwlock.CompatWriterTotalCount}");
+        }
+    }
+
+    private static bool ReaderMustWaitForRwlock(PthreadRwlockState rwlock, ulong currentThreadId)
+    {
+        if (rwlock.WriterThreadId != 0)
+        {
+            return true;
+        }
+
+        if (rwlock.CompatWriterTotalCount > rwlock.CompatWriterCounts.GetValueOrDefault(currentThreadId))
+        {
+            return true;
+        }
+
+        return rwlock.WaitingWriters > 0 &&
+               rwlock.GetReaderCount(currentThreadId) == 0;
+    }
+
+    private static string GetRwlockWakeKey(ulong rwlockAddress) => $"pthread_rwlock:0x{rwlockAddress:X16}";
+
+    public static string? DumpRwlockStateForStall(ulong rwlockAddress)
+    {
+        PthreadRwlockState? rwlock;
+        lock (_stateGate)
+        {
+            if (!_rwlockStates.TryGetValue(rwlockAddress, out rwlock))
+            {
+                return null;
+            }
+        }
+
+        lock (rwlock.SyncRoot)
+        {
+            var readers = string.Join(",", rwlock.ReaderCounts.Select(pair => $"0x{pair.Key:X}x{pair.Value}"));
+            var compatWriters = string.Join(",", rwlock.CompatWriterCounts.Select(pair => $"0x{pair.Key:X}x{pair.Value}"));
+            return $"rwlock=0x{rwlockAddress:X16} writer=0x{rwlock.WriterThreadId:X} waiting_writers={rwlock.WaitingWriters} " +
+                   $"readers_total={rwlock.ReaderTotalCount} readers=[{readers}] " +
+                   $"compat_writers_total={rwlock.CompatWriterTotalCount} compat_writers=[{compatWriters}]";
+        }
     }
 
     private static ulong ResolveRwlockHandle(CpuContext ctx, ulong rwlockAddress)
@@ -1736,5 +2052,25 @@ public static class KernelPthreadExtendedCompatExports
         utf8.AsSpan(0, payloadLength).CopyTo(payload);
         payload[^1] = 0;
         return ctx.Memory.TryWrite(address, payload);
+    }
+
+    private static bool TryReadInt32(CpuContext ctx, ulong address, out int value)
+    {
+        Span<byte> bytes = stackalloc byte[sizeof(int)];
+        if (!ctx.Memory.TryRead(address, bytes))
+        {
+            value = 0;
+            return false;
+        }
+
+        value = BinaryPrimitives.ReadInt32LittleEndian(bytes);
+        return true;
+    }
+
+    private static bool TryWriteInt32(CpuContext ctx, ulong address, int value)
+    {
+        Span<byte> bytes = stackalloc byte[sizeof(int)];
+        BinaryPrimitives.WriteInt32LittleEndian(bytes, value);
+        return ctx.Memory.TryWrite(address, bytes);
     }
 }

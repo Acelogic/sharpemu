@@ -42,8 +42,16 @@ public sealed class GuiSettings
 
     public string? EmulatorPath { get; set; }
 
+    /// <summary>UI language, matching a file code under Languages/ (e.g. "en", "tr").</summary>
+    public string Language { get; set; } = "en";
+
     /// <summary>Publish launcher/game status to Discord Rich Presence.</summary>
     public bool DiscordRichPresence { get; set; } = true;
+
+    public bool CheckForUpdatesOnStartup { get; set; } = true;
+
+    /// <summary>Names of SHARPEMU_* switches set to "1" in the emulator's environment at launch.</summary>
+    public List<string> EnvironmentToggles { get; set; } = new();
 
     /// <summary>
     /// Discord application ID used for Rich Presence; the default is the

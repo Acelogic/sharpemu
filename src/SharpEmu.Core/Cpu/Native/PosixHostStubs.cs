@@ -42,6 +42,87 @@ internal static unsafe class PosixHostStubs
         get { EnsureInitialized(); return _sleepStub; }
     }
 
+    public static nint CreateWorkerEvent()
+    {
+        if (OperatingSystem.IsMacOS())
+        {
+            return dispatch_semaphore_create(0);
+        }
+
+        var semaphore = Marshal.AllocHGlobal(64);
+        if (sem_init(semaphore, 0, 0) != 0)
+        {
+            Marshal.FreeHGlobal(semaphore);
+            return 0;
+        }
+
+        return semaphore;
+    }
+
+    public static bool SignalWorkerEvent(nint handle)
+    {
+        if (OperatingSystem.IsMacOS())
+        {
+            _ = dispatch_semaphore_signal(handle);
+            return true;
+        }
+
+        return sem_post(handle) == 0;
+    }
+
+    public static bool WaitWorkerEvent(nint handle, int timeoutMilliseconds)
+    {
+        if (OperatingSystem.IsMacOS())
+        {
+            if (timeoutMilliseconds < 0)
+            {
+                return dispatch_semaphore_wait(handle, ulong.MaxValue) == 0;
+            }
+
+            var deadline = dispatch_time(0, timeoutMilliseconds * 1_000_000L);
+            return dispatch_semaphore_wait(handle, deadline) == 0;
+        }
+
+        if (timeoutMilliseconds < 0)
+        {
+            while (sem_wait(handle) != 0)
+            {
+            }
+
+            return true;
+        }
+
+        var deadlineTicks = Environment.TickCount64 + timeoutMilliseconds;
+        while (sem_trywait(handle) != 0)
+        {
+            if (Environment.TickCount64 >= deadlineTicks)
+            {
+                return false;
+            }
+
+            Thread.Sleep(1);
+        }
+
+        return true;
+    }
+
+    public static void DestroyWorkerEvent(nint handle)
+    {
+        if (handle == 0)
+        {
+            return;
+        }
+
+        if (OperatingSystem.IsMacOS())
+        {
+            dispatch_release(handle);
+            return;
+        }
+
+        _ = sem_destroy(handle);
+        Marshal.FreeHGlobal(handle);
+    }
+
     /// <summary>Allocates a pthread TLS key, mirroring kernel32!TlsAlloc.</summary>
     public static uint TlsAlloc()
     {
@@ -311,4 +392,34 @@ internal static unsafe class PosixHostStubs
 
     [DllImport("libc")]
     private static extern int gettid();
+
+    [DllImport("libc")]
+    private static extern nint dispatch_semaphore_create(long value);
+
+    [DllImport("libc")]
+    private static extern nint dispatch_semaphore_signal(nint semaphore);
+
+    [DllImport("libc")]
+    private static extern nint dispatch_semaphore_wait(nint semaphore, ulong timeout);
+
+    [DllImport("libc")]
+    private static extern ulong dispatch_time(ulong when, long deltaNanoseconds);
+
+    [DllImport("libc")]
+    private static extern void dispatch_release(nint handle);
+
+    [DllImport("libc")]
+    private static extern int sem_init(nint semaphore, int shared, uint value);
+
+    [DllImport("libc")]
+    private static extern int sem_post(nint semaphore);
+
+    [DllImport("libc")]
+    private static extern int sem_wait(nint semaphore);
+
+    [DllImport("libc")]
+    private static extern int sem_trywait(nint semaphore);
+
+    [DllImport("libc")]
+    private static extern int sem_destroy(nint semaphore);
 }
