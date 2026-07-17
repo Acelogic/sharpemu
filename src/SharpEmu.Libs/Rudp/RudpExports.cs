@@ -129,6 +129,29 @@ public static class RudpExports
         }
     }
 
+    [SysAbiExport(
+        Nid = "3hBvwqEwqj8",
+        ExportName = "sceRudpEnd",
+        Target = Generation.Gen5,
+        LibraryName = "libSceRudp")]
+    public static int End(CpuContext ctx)
+    {
+        lock (StateGate)
+        {
+            if (!_initialized)
+            {
+                return ctx.SetReturn(RudpErrorNotInitialized);
+            }
+
+            // Firmware marks the module uninitialized before stopping and
+            // destroying its owned worker. The HLE has no host worker to join,
+            // so clearing the retained ownership graph is the whole supported
+            // teardown boundary and makes a subsequent Init start fresh.
+            ClearRetainedState();
+            return ctx.SetReturn(0);
+        }
+    }
+
     private static bool IsGuestBufferAvailable(
         CpuContext ctx,
         ulong bufferAddress,
