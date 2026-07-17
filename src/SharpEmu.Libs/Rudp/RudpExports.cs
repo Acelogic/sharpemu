@@ -41,19 +41,19 @@ public static class RudpExports
         {
             if (_initialized)
             {
-                return ctx.SetReturn(RudpErrorAlreadyInitialized);
+                return SetReturn(ctx, RudpErrorAlreadyInitialized);
             }
 
             ClearRetainedState();
             if (bufferAddress == 0 || bufferSize < 1)
             {
-                return ctx.SetReturn(RudpErrorInvalidArgument);
+                return SetReturn(ctx, RudpErrorInvalidArgument);
             }
 
             if (bufferSize < MinimumAllocatorStorageSize ||
                 !IsGuestBufferAvailable(ctx, bufferAddress, bufferSize))
             {
-                return ctx.SetReturn(RudpErrorOutOfMemory);
+                return SetReturn(ctx, RudpErrorOutOfMemory);
             }
 
             // The firmware allocator and both RUDP objects are backed by this
@@ -62,7 +62,7 @@ public static class RudpExports
             _retainedBufferAddress = bufferAddress;
             _retainedBufferSize = bufferSize;
             _initialized = true;
-            return ctx.SetReturn(0);
+            return SetReturn(ctx, 0);
         }
     }
 
@@ -80,17 +80,17 @@ public static class RudpExports
         {
             if (!_initialized)
             {
-                return ctx.SetReturn(RudpErrorNotInitialized);
+                return SetReturn(ctx, RudpErrorNotInitialized);
             }
 
             if (handlerAddress == 0)
             {
-                return ctx.SetReturn(RudpErrorInvalidEventHandler);
+                return SetReturn(ctx, RudpErrorInvalidEventHandler);
             }
 
             _eventHandlerAddress = handlerAddress;
             _eventHandlerUserData = userData;
-            return ctx.SetReturn(0);
+            return SetReturn(ctx, 0);
         }
     }
 
@@ -108,12 +108,12 @@ public static class RudpExports
         {
             if (!_initialized)
             {
-                return ctx.SetReturn(RudpErrorNotInitialized);
+                return SetReturn(ctx, RudpErrorNotInitialized);
             }
 
             if (_internalIoThreadEnabled)
             {
-                return ctx.SetReturn(RudpErrorInternalIoThreadAlreadyEnabled);
+                return SetReturn(ctx, RudpErrorInternalIoThreadAlreadyEnabled);
             }
 
             // Firmware starts one module-owned worker after normalizing the
@@ -125,7 +125,7 @@ public static class RudpExports
                 MinimumInternalIoThreadStackSize);
             _internalIoThreadPriority = priority;
             _internalIoThreadEnabled = true;
-            return ctx.SetReturn(0);
+            return SetReturn(ctx, 0);
         }
     }
 
@@ -140,7 +140,7 @@ public static class RudpExports
         {
             if (!_initialized)
             {
-                return ctx.SetReturn(RudpErrorNotInitialized);
+                return SetReturn(ctx, RudpErrorNotInitialized);
             }
 
             // Firmware marks the module uninitialized before stopping and
@@ -148,8 +148,18 @@ public static class RudpExports
             // so clearing the retained ownership graph is the whole supported
             // teardown boundary and makes a subsequent Init start fresh.
             ClearRetainedState();
-            return ctx.SetReturn(0);
+            return SetReturn(ctx, 0);
         }
+    }
+
+    private static int SetReturn(CpuContext ctx, int result)
+    {
+        // These firmware wrappers return through EAX, which zero-extends the
+        // 32-bit status into RAX even when its signed int representation is
+        // negative. Writing RAX here also prevents ModuleManager dispatch from
+        // replacing the result with a sign-extended managed int.
+        ctx[CpuRegister.Rax] = unchecked((uint)result);
+        return result;
     }
 
     private static bool IsGuestBufferAvailable(
