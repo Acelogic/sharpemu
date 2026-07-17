@@ -22,7 +22,10 @@ public sealed class NpUniversalDataSystemExportsTests
     private const ulong KeyStringBackingAddress = BaseAddress + 0xC00;
     private const ulong KeyStringAddress = BaseAddress + 0xD00;
 
-    private readonly FakeCpuMemory _memory = new(BaseAddress, 0x2000);
+    private readonly AllocatingCpuMemory _memory = new(
+        BaseAddress,
+        size: 0x4000,
+        allocationStart: BaseAddress + 0x2000);
     private readonly CpuContext _ctx;
 
     public NpUniversalDataSystemExportsTests()
@@ -66,7 +69,7 @@ public sealed class NpUniversalDataSystemExportsTests
     }
 
     [Fact]
-    public void EventPropertyArraySetString_AppendsValidUtf8IntoArrayState()
+    public void EventPropertyArraySetString_MaterializesAndRecursivelyRevalidatesAppendedNodes()
     {
         Initialize();
         WriteEmptyArray();
@@ -75,8 +78,46 @@ public sealed class NpUniversalDataSystemExportsTests
         _ctx[CpuRegister.Rsi] = StringAddress;
 
         Assert.Equal(0, NpUniversalDataSystemExports.NpUniversalDataSystemEventPropertyArraySetString(_ctx));
+        Assert.True(_ctx.TryReadUInt64(ArrayBackingAddress + 0x20, out var firstNode));
+        Assert.True(_ctx.TryReadUInt64(ArrayBackingAddress + 0x28, out var firstTail));
+        Assert.Equal(firstNode, firstTail);
+        Assert.NotEqual(0UL, firstNode);
+        Assert.True(_ctx.TryReadUInt64(firstNode, out var firstReserved));
+        Assert.True(_ctx.TryReadUInt64(firstNode + 0x08, out var firstNext));
+        Assert.True(_ctx.TryReadUInt64(firstNode + 0x10, out var firstPrevious));
+        Assert.Equal(0UL, firstReserved);
+        Assert.Equal(0UL, firstNext);
+        Assert.Equal(0UL, firstPrevious);
+        Assert.Equal(0x2001, ReadPropertyType(firstNode + 0x18));
+        Assert.True(_ctx.TryReadUInt64(firstNode + 0x20, out var firstStringBacking));
+        Assert.True(_ctx.TryReadUInt64(firstStringBacking + 0x18, out var firstString));
+        Assert.Equal(firstNode + 0x28, firstStringBacking);
+        Assert.Equal(firstNode + 0x48, firstString);
+        Assert.Equal("astro-🌟", ReadMaterializedString(firstNode + 0x18));
+        Assert.True(_ctx.TryReadUInt64(ArrayBackingAddress + 0x30, out var firstCount));
+        Assert.Equal(1UL, firstCount);
+
         _memory.WriteCString(StringAddress, "second");
+        // This call first recursively validates the node materialized above.
         Assert.Equal(0, NpUniversalDataSystemExports.NpUniversalDataSystemEventPropertyArraySetString(_ctx));
+        Assert.True(_ctx.TryReadUInt64(ArrayBackingAddress + 0x20, out var head));
+        Assert.True(_ctx.TryReadUInt64(ArrayBackingAddress + 0x28, out var secondNode));
+        Assert.Equal(firstNode, head);
+        Assert.NotEqual(firstNode, secondNode);
+        Assert.True(_ctx.TryReadUInt64(firstNode + 0x08, out firstNext));
+        Assert.True(_ctx.TryReadUInt64(secondNode, out var secondReserved));
+        Assert.True(_ctx.TryReadUInt64(secondNode + 0x08, out var secondNext));
+        Assert.True(_ctx.TryReadUInt64(secondNode + 0x10, out var secondPrevious));
+        Assert.Equal(secondNode, firstNext);
+        Assert.Equal(0UL, secondReserved);
+        Assert.Equal(0UL, secondNext);
+        Assert.Equal(firstNode, secondPrevious);
+        Assert.Equal(0x2001, ReadPropertyType(secondNode + 0x18));
+        Assert.True(_ctx.TryReadUInt64(secondNode + 0x20, out var secondStringBacking));
+        Assert.True(_ctx.TryReadUInt64(secondStringBacking + 0x18, out var secondString));
+        Assert.Equal(secondNode + 0x28, secondStringBacking);
+        Assert.Equal(secondNode + 0x48, secondString);
+        Assert.Equal("second", ReadMaterializedString(secondNode + 0x18));
         Assert.True(NpUniversalDataSystemExports.TryGetEventPropertyArrayStringStateForTests(
             ArrayAddress,
             out var temporaryType,
@@ -148,6 +189,9 @@ public sealed class NpUniversalDataSystemExportsTests
         _ctx[CpuRegister.Rdi] = ArrayAddress;
         _ctx[CpuRegister.Rsi] = StringAddress;
         Assert.Equal(0, NpUniversalDataSystemExports.NpUniversalDataSystemEventPropertyArraySetString(_ctx));
+        Assert.True(_ctx.TryReadUInt64(ArrayBackingAddress + 0x20, out var originalHead));
+        Assert.True(_ctx.TryReadUInt64(ArrayBackingAddress + 0x28, out var originalTail));
+        var originalAllocationCount = _memory.AllocationCount;
 
         _memory.WriteCString(StringAddress, "replacement");
         NpUniversalDataSystemExports.SetEventPropertyArrayAllocationFailureForTests(true);
@@ -158,6 +202,69 @@ public sealed class NpUniversalDataSystemExportsTests
         Assert.Equal("existing", value);
         Assert.True(_ctx.TryReadUInt64(ArrayBackingAddress + 0x30, out var count));
         Assert.Equal(1UL, count);
+        Assert.True(_ctx.TryReadUInt64(ArrayBackingAddress + 0x20, out var head));
+        Assert.True(_ctx.TryReadUInt64(ArrayBackingAddress + 0x28, out var tail));
+        Assert.Equal(originalHead, head);
+        Assert.Equal(originalTail, tail);
+        Assert.Equal(originalAllocationCount, _memory.AllocationCount);
+    }
+
+    [Fact]
+    public void EventPropertyArraySetString_AllocationFailureLeavesGuestAndShadowUnmodified()
+    {
+        Initialize();
+        WriteEmptyArray();
+        _memory.WriteCString(StringAddress, "not-stored");
+        _memory.SuccessfulAllocationsBeforeFailure = 0;
+        _ctx[CpuRegister.Rdi] = ArrayAddress;
+        _ctx[CpuRegister.Rsi] = StringAddress;
+
+        Assert.Equal(
+            unchecked((int)0x80553101),
+            NpUniversalDataSystemExports.NpUniversalDataSystemEventPropertyArraySetString(_ctx));
+        Assert.True(_ctx.TryReadUInt64(ArrayBackingAddress + 0x20, out var head));
+        Assert.True(_ctx.TryReadUInt64(ArrayBackingAddress + 0x28, out var tail));
+        Assert.True(_ctx.TryReadUInt64(ArrayBackingAddress + 0x30, out var count));
+        Assert.Equal(0UL, head);
+        Assert.Equal(0UL, tail);
+        Assert.Equal(0UL, count);
+        Assert.Equal(0, _memory.AllocationCount);
+        Assert.False(NpUniversalDataSystemExports.TryGetEventPropertyArrayStringForTests(ArrayAddress, out _));
+    }
+
+    [Fact]
+    public void EventPropertyArraySetString_FinalLinkFailureRestoresTailCountAndShadow()
+    {
+        Initialize();
+        WriteEmptyArray();
+        _memory.WriteCString(StringAddress, "existing");
+        _ctx[CpuRegister.Rdi] = ArrayAddress;
+        _ctx[CpuRegister.Rsi] = StringAddress;
+        Assert.Equal(0, NpUniversalDataSystemExports.NpUniversalDataSystemEventPropertyArraySetString(_ctx));
+        Assert.True(_ctx.TryReadUInt64(ArrayBackingAddress + 0x20, out var originalHead));
+        Assert.True(_ctx.TryReadUInt64(ArrayBackingAddress + 0x28, out var originalTail));
+        Assert.True(_ctx.TryReadUInt64(ArrayBackingAddress + 0x30, out var originalCount));
+        var originalAllocationCount = _memory.AllocationCount;
+
+        _memory.WriteCString(StringAddress, "not-linked");
+        _memory.FailNextWriteAddress = originalTail + 0x08;
+        Assert.Equal(
+            unchecked((int)0x80553101),
+            NpUniversalDataSystemExports.NpUniversalDataSystemEventPropertyArraySetString(_ctx));
+
+        Assert.True(_ctx.TryReadUInt64(ArrayBackingAddress + 0x20, out var head));
+        Assert.True(_ctx.TryReadUInt64(ArrayBackingAddress + 0x28, out var tail));
+        Assert.True(_ctx.TryReadUInt64(ArrayBackingAddress + 0x30, out var count));
+        Assert.True(_ctx.TryReadUInt64(originalTail + 0x08, out var next));
+        Assert.Equal(originalHead, head);
+        Assert.Equal(originalTail, tail);
+        Assert.Equal(originalCount, count);
+        Assert.Equal(0UL, next);
+        Assert.Equal(originalAllocationCount + 1, _memory.AllocationCount);
+        Assert.True(NpUniversalDataSystemExports.TryGetEventPropertyArrayStringsForTests(
+            ArrayAddress,
+            out var values));
+        Assert.Equal(["existing"], values);
     }
 
     [Fact]
@@ -279,5 +386,108 @@ public sealed class NpUniversalDataSystemExportsTests
         Span<byte> bytes = stackalloc byte[sizeof(ushort)];
         BinaryPrimitives.WriteUInt16LittleEndian(bytes, type);
         Assert.True(_memory.TryWrite(address, bytes));
+    }
+
+    private ushort ReadPropertyType(ulong address)
+    {
+        Span<byte> bytes = stackalloc byte[sizeof(ushort)];
+        Assert.True(_memory.TryRead(address, bytes));
+        return BinaryPrimitives.ReadUInt16LittleEndian(bytes);
+    }
+
+    private string ReadMaterializedString(ulong variantAddress)
+    {
+        Assert.True(_ctx.TryReadUInt64(variantAddress + 0x08, out var backingAddress));
+        Assert.True(_ctx.TryReadUInt64(backingAddress + 0x18, out var stringAddress));
+        return _memory.ReadCString(stringAddress);
+    }
+
+    private sealed class AllocatingCpuMemory : ICpuMemory, IGuestMemoryAllocator
+    {
+        private readonly FakeCpuMemory _memory;
+        private readonly HashSet<ulong> _allocations = [];
+        private readonly ulong _endAddress;
+        private ulong _nextAddress;
+
+        public AllocatingCpuMemory(ulong baseAddress, int size, ulong allocationStart)
+        {
+            _memory = new FakeCpuMemory(baseAddress, size);
+            _nextAddress = allocationStart;
+            _endAddress = baseAddress + (ulong)size;
+        }
+
+        public int SuccessfulAllocationsBeforeFailure { get; set; } = -1;
+
+        public ulong? FailNextWriteAddress { get; set; }
+
+        public int AllocationCount => _allocations.Count;
+
+        public bool TryRead(ulong virtualAddress, Span<byte> destination) =>
+            _memory.TryRead(virtualAddress, destination);
+
+        public bool TryWrite(ulong virtualAddress, ReadOnlySpan<byte> source)
+        {
+            if (FailNextWriteAddress == virtualAddress)
+            {
+                FailNextWriteAddress = null;
+                return false;
+            }
+
+            return _memory.TryWrite(virtualAddress, source);
+        }
+
+        public ulong WriteCString(ulong virtualAddress, string text) =>
+            _memory.WriteCString(virtualAddress, text);
+
+        public string ReadCString(ulong virtualAddress)
+        {
+            var bytes = new byte[16 * 1024];
+            Span<byte> current = stackalloc byte[1];
+            for (var index = 0; index < bytes.Length; index++)
+            {
+                Assert.True(TryRead(virtualAddress + (ulong)index, current));
+                if (current[0] == 0)
+                {
+                    return System.Text.Encoding.UTF8.GetString(bytes, 0, index);
+                }
+
+                bytes[index] = current[0];
+            }
+
+            throw new Xunit.Sdk.XunitException("Guest string was not null terminated.");
+        }
+
+        public bool TryAllocateGuestMemory(ulong size, ulong alignment, out ulong address)
+        {
+            address = 0;
+            if (SuccessfulAllocationsBeforeFailure == 0)
+            {
+                SuccessfulAllocationsBeforeFailure = -1;
+                return false;
+            }
+
+            if (SuccessfulAllocationsBeforeFailure > 0)
+            {
+                SuccessfulAllocationsBeforeFailure--;
+            }
+
+            if (size == 0 || alignment == 0 || (alignment & (alignment - 1)) != 0)
+            {
+                return false;
+            }
+
+            var aligned = (_nextAddress + alignment - 1) & ~(alignment - 1);
+            if (aligned > _endAddress || size > _endAddress - aligned)
+            {
+                return false;
+            }
+
+            address = aligned;
+            _nextAddress = aligned + size;
+            _allocations.Add(address);
+            return true;
+        }
+
+        public bool TryFreeGuestMemory(ulong address) => _allocations.Remove(address);
     }
 }

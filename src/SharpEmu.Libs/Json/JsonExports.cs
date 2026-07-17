@@ -28,12 +28,18 @@ public static class JsonExports
 
     private readonly record struct JsonReferenceKey(ulong ValueAddress, string Key);
 
+    private sealed record Json2InitializationState(
+        ulong Allocator,
+        ulong AllocatorContext,
+        ulong FileBufferSize,
+        uint Mode);
+
     private static readonly ConcurrentDictionary<ulong, JsonValueState> _values = new();
     private static readonly ConcurrentDictionary<ulong, JsonStringState> _strings = new();
     private static readonly ConcurrentDictionary<JsonReferenceKey, ulong> _valueReferences = new();
     private static readonly JsonElement _nullElement = CreateNullElement();
     private static readonly object _globalNullAccessCallbackGate = new();
-    private static bool _json2GlobalInitialized;
+    private static Json2InitializationState? _json2InitializationState;
     private static bool _initializerInitialize2AllocationFailureForTests;
 
     private const int SceJsonErrorInitializationFailed = unchecked((int)0x80848102);
@@ -114,7 +120,7 @@ public static class JsonExports
 
         lock (_globalNullAccessCallbackGate)
         {
-            if (_json2GlobalInitialized || initialized[0] != 0)
+            if (_json2InitializationState is not null || initialized[0] != 0)
             {
                 return SetReturn(ctx, SceJsonErrorAlreadyInitialized);
             }
@@ -125,8 +131,13 @@ public static class JsonExports
             }
 
             Span<byte> initParameters = stackalloc byte[0x18];
-            if (!ctx.Memory.TryRead(initParameterAddress, initParameters) ||
-                BinaryPrimitives.ReadUInt64LittleEndian(initParameters) == 0)
+            if (!ctx.Memory.TryRead(initParameterAddress, initParameters))
+            {
+                return SetReturn(ctx, SceJsonErrorInitializationFailed);
+            }
+
+            var allocator = BinaryPrimitives.ReadUInt64LittleEndian(initParameters);
+            if (allocator == 0)
             {
                 return SetReturn(ctx, SceJsonErrorInitializationFailed);
             }
@@ -136,7 +147,13 @@ public static class JsonExports
                 return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
             }
 
-            _json2GlobalInitialized = true;
+            // Retain the guest allocator contract for lifecycle fidelity. Calling
+            // its guest vtable remains an explicit HLE boundary.
+            _json2InitializationState = new Json2InitializationState(
+                allocator,
+                BinaryPrimitives.ReadUInt64LittleEndian(initParameters[0x08..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(initParameters[0x10..]),
+                Mode: 0);
         }
 
         TraceJson("Initializer.initialize", thisAddress, initParameterAddress);
@@ -177,7 +194,7 @@ public static class JsonExports
         lock (_globalNullAccessCallbackGate)
         {
             Span<byte> initialized = stackalloc byte[1];
-            if (!_json2GlobalInitialized ||
+            if (_json2InitializationState is null ||
                 thisAddress == 0 ||
                 !ctx.Memory.TryRead(thisAddress, initialized) ||
                 initialized[0] == 0)
@@ -289,16 +306,21 @@ public static class JsonExports
 
         lock (_globalNullAccessCallbackGate)
         {
-            if (_json2GlobalInitialized || initialized[0] != 0)
+            if (_json2InitializationState is not null || initialized[0] != 0)
             {
                 return SetReturn(ctx, SceJsonErrorAlreadyInitialized);
             }
 
             Span<byte> initParameters = stackalloc byte[0x28];
             if (initParameterAddress == 0 ||
-                !ctx.Memory.TryRead(initParameterAddress, initParameters) ||
-                BinaryPrimitives.ReadUInt64LittleEndian(initParameters) == 0 ||
-                BinaryPrimitives.ReadUInt32LittleEndian(initParameters[0x18..]) >= 3)
+                !ctx.Memory.TryRead(initParameterAddress, initParameters))
+            {
+                return SetReturn(ctx, SceJsonErrorInvalidCallback);
+            }
+
+            var allocator = BinaryPrimitives.ReadUInt64LittleEndian(initParameters);
+            var mode = BinaryPrimitives.ReadUInt32LittleEndian(initParameters[0x18..]);
+            if (allocator == 0 || mode >= 3)
             {
                 return SetReturn(ctx, SceJsonErrorInvalidCallback);
             }
@@ -313,7 +335,13 @@ public static class JsonExports
                 return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
             }
 
-            _json2GlobalInitialized = true;
+            // Retain the guest allocator contract for lifecycle fidelity. Calling
+            // its guest vtable remains an explicit HLE boundary.
+            _json2InitializationState = new Json2InitializationState(
+                allocator,
+                BinaryPrimitives.ReadUInt64LittleEndian(initParameters[0x08..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(initParameters[0x10..]),
+                mode);
         }
 
         TraceJson("Initializer.initialize2", thisAddress, initParameterAddress);
@@ -832,9 +860,34 @@ public static class JsonExports
         _valueReferences.Clear();
         lock (_globalNullAccessCallbackGate)
         {
-            _json2GlobalInitialized = false;
+            _json2InitializationState = null;
             _initializerInitialize2AllocationFailureForTests = false;
         }
+    }
+
+    internal static bool TryGetJson2InitializationStateForTests(
+        out ulong allocator,
+        out ulong allocatorContext,
+        out ulong fileBufferSize,
+        out uint mode)
+    {
+        lock (_globalNullAccessCallbackGate)
+        {
+            if (_json2InitializationState is { } state)
+            {
+                allocator = state.Allocator;
+                allocatorContext = state.AllocatorContext;
+                fileBufferSize = state.FileBufferSize;
+                mode = state.Mode;
+                return true;
+            }
+        }
+
+        allocator = 0;
+        allocatorContext = 0;
+        fileBufferSize = 0;
+        mode = 0;
+        return false;
     }
 
     internal static void SetInitializerInitialize2AllocationFailureForTests(bool fail)

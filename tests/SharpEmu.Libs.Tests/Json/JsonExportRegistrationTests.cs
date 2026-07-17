@@ -160,6 +160,10 @@ public sealed class JsonExportRegistrationTests
         ctx[CpuRegister.Rsi] = initializerAddress + 0x300;
         ctx[CpuRegister.Rdx] = initializerAddress + 0x400;
         Assert.Equal(0, JsonExports.InitParameter2SetAllocator(ctx));
+        ctx[CpuRegister.Rdi] = parameterAddress;
+        ctx[CpuRegister.Rsi] = 0x5678;
+        Assert.Equal(0, JsonExports.InitParameter2SetFileBufferSize(ctx));
+        Assert.True(ctx.TryWriteUInt32(parameterAddress + 0x18, 2));
         ctx[CpuRegister.Rdi] = initializerAddress;
         ctx[CpuRegister.Rsi] = parameterAddress;
         Assert.Equal(0, JsonExports.InitializerInitialize2(ctx));
@@ -167,6 +171,15 @@ public sealed class JsonExportRegistrationTests
         Span<byte> initialized = stackalloc byte[1];
         Assert.True(memory.TryRead(initializerAddress, initialized));
         Assert.Equal(1, initialized[0]);
+        Assert.True(JsonExports.TryGetJson2InitializationStateForTests(
+            out var allocator,
+            out var allocatorContext,
+            out var fileBufferSize,
+            out var mode));
+        Assert.Equal(initializerAddress + 0x300, allocator);
+        Assert.Equal(initializerAddress + 0x400, allocatorContext);
+        Assert.Equal(0x5678UL, fileBufferSize);
+        Assert.Equal(2U, mode);
         Assert.Equal(unchecked((int)0x80848111), JsonExports.InitializerInitialize2(ctx));
 
         ctx[CpuRegister.Rdi] = initializerAddress;
@@ -209,6 +222,11 @@ public sealed class JsonExportRegistrationTests
         Span<byte> initialized = stackalloc byte[1];
         Assert.True(memory.TryRead(initializerAddress, initialized));
         Assert.Equal(0, initialized[0]);
+        Assert.False(JsonExports.TryGetJson2InitializationStateForTests(
+            out _,
+            out _,
+            out _,
+            out _));
     }
 
     [Fact]
@@ -239,5 +257,14 @@ public sealed class JsonExportRegistrationTests
         Assert.Equal(0, JsonExports.InitializerInitialize(ctx));
         Assert.True(ctx.Memory.TryRead(initializerAddress, state));
         Assert.Equal(1, state[0]);
+        Assert.True(JsonExports.TryGetJson2InitializationStateForTests(
+            out var allocator,
+            out var allocatorContext,
+            out var fileBufferSize,
+            out var mode));
+        Assert.Equal(parameterAddress + 0x100, allocator);
+        Assert.Equal(parameterAddress + 0x200, allocatorContext);
+        Assert.Equal(0UL, fileBufferSize);
+        Assert.Equal(0U, mode);
     }
 }

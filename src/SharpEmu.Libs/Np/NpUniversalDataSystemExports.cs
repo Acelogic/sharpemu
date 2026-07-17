@@ -27,6 +27,7 @@ public static class NpUniversalDataSystemExports
     private const ushort EventPropertyObjectType = 0x2003;
     private static readonly UTF8Encoding _strictUtf8 = new(false, true);
     private static readonly object _eventGate = new();
+    private static readonly object _eventPropertyArrayGate = new();
     private static readonly HashSet<int> _createdEvents = [];
     private static readonly ConcurrentDictionary<ulong, EventPropertyArrayStringShadow[]> _eventPropertyArrayStrings = new();
     private static int _nextHandle = 1;
@@ -212,18 +213,21 @@ public static class NpUniversalDataSystemExports
             return ctx.SetReturn(NpUniversalDataSystemErrorSetTargetInvalid, typeof(long));
         }
 
-        if (!IsValidEventProperty(ctx, propertyArrayAddress))
+        lock (_eventPropertyArrayGate)
         {
-            return ctx.SetReturn(NpUniversalDataSystemErrorInvalidProperty, typeof(long));
-        }
+            if (!IsValidEventProperty(ctx, propertyArrayAddress))
+            {
+                return ctx.SetReturn(NpUniversalDataSystemErrorInvalidProperty, typeof(long));
+            }
 
-        if (!TryReadStrictUtf8CString(ctx, ctx[CpuRegister.Rsi], out var value))
-        {
-            return ctx.SetReturn(NpUniversalDataSystemErrorInvalidProperty, typeof(long));
-        }
+            if (!TryReadStrictUtf8CString(ctx, ctx[CpuRegister.Rsi], out var value))
+            {
+                return ctx.SetReturn(NpUniversalDataSystemErrorInvalidProperty, typeof(long));
+            }
 
-        var setterResult = ApplyEventPropertyArrayString(ctx, propertyArrayAddress, value);
-        return ctx.SetReturn(setterResult, typeof(long));
+            var setterResult = ApplyEventPropertyArrayString(ctx, propertyArrayAddress, value);
+            return ctx.SetReturn(setterResult, typeof(long));
+        }
     }
 
     [SysAbiExport(
@@ -517,7 +521,9 @@ public static class NpUniversalDataSystemExports
             return NpUniversalDataSystemInternalErrorMissingBacking;
         }
 
-        if (!TryReadPointer(ctx, backingAddress, 0x30, out var count))
+        if (!TryReadPointer(ctx, backingAddress, 0x20, out var oldHead) ||
+            !TryReadPointer(ctx, backingAddress, 0x28, out var oldTail) ||
+            !TryReadPointer(ctx, backingAddress, 0x30, out var count))
         {
             return NpUniversalDataSystemInternalErrorMissingBacking;
         }
@@ -527,21 +533,53 @@ public static class NpUniversalDataSystemExports
             return NpUniversalDataSystemInternalErrorArrayFull;
         }
 
-        if (Volatile.Read(ref _eventPropertyArrayAllocationFailureForTests) != 0)
+        if (Volatile.Read(ref _eventPropertyArrayAllocationFailureForTests) != 0 ||
+            ctx.Memory is not IGuestMemoryAllocator allocator)
         {
             return NormalizeEventPropertyArraySetterResult(
                 NpUniversalDataSystemInternalErrorPropertyReplacement);
         }
 
-        if (!TryAddAddress(backingAddress, 0x30, out var countAddress) ||
-            !ctx.TryWriteUInt64(countAddress, count + 1))
+        var oldTailNext = 0UL;
+        if (oldTail != 0 && !TryReadPointer(ctx, oldTail, 0x08, out oldTailNext))
         {
             return NpUniversalDataSystemInternalErrorMissingBacking;
         }
 
-        // Firmware appends a newly allocated 0x28-byte node at the tail. The
-        // node allocator is not exposed to this HLE, so preserve that append
-        // behavior in a typed shadow without inventing guest node pointers.
+        if (oldTail != 0 && oldTailNext != 0)
+        {
+            return NpUniversalDataSystemErrorInvalidProperty;
+        }
+
+        if ((oldHead == 0) != (oldTail == 0))
+        {
+            return NpUniversalDataSystemErrorInvalidProperty;
+        }
+
+        if (!TryMaterializeEventPropertyStringNode(
+                ctx,
+                allocator,
+                oldTail,
+                value,
+                out var nodeAddress))
+        {
+            return NormalizeEventPropertyArraySetterResult(
+                NpUniversalDataSystemInternalErrorPropertyReplacement);
+        }
+
+        if (!TryCommitEventPropertyStringNode(
+                ctx,
+                backingAddress,
+                oldTail,
+                count,
+                nodeAddress))
+        {
+            return NormalizeEventPropertyArraySetterResult(
+                NpUniversalDataSystemInternalErrorPropertyReplacement);
+        }
+
+        // The guest list is now committed. Keep the typed diagnostic shadow in
+        // the same append order as the materialized firmware list.
         var appendedValue = new EventPropertyArrayStringShadow(
             EventPropertyStringType,
             value);
@@ -550,6 +588,82 @@ public static class NpUniversalDataSystemExports
             [appendedValue],
             (_, existing) => [.. existing, appendedValue]);
         return 0;
+    }
+
+    private static bool TryMaterializeEventPropertyStringNode(
+        CpuContext ctx,
+        IGuestMemoryAllocator allocator,
+        ulong previousNodeAddress,
+        string value,
+        out ulong nodeAddress)
+    {
+        nodeAddress = 0;
+        var stringBytes = _strictUtf8.GetBytes(value);
+        var minimumSize = 0x48 + stringBytes.Length + 1;
+        var allocationSize = (minimumSize + 0x0F) & ~0x0F;
+        if (!allocator.TryAllocateGuestMemory((ulong)allocationSize, 0x10, out nodeAddress) ||
+            !TryAddAddress(nodeAddress, 0x28, out var stringBackingAddress) ||
+            !TryAddAddress(nodeAddress, 0x48, out var stringAddress))
+        {
+            nodeAddress = 0;
+            return false;
+        }
+
+        var payload = new byte[allocationSize];
+        BinaryPrimitives.WriteUInt64LittleEndian(payload.AsSpan(0x10), previousNodeAddress);
+        BinaryPrimitives.WriteUInt16LittleEndian(payload.AsSpan(0x18), EventPropertyStringType);
+        BinaryPrimitives.WriteUInt64LittleEndian(payload.AsSpan(0x20), stringBackingAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(payload.AsSpan(0x40), stringAddress);
+        stringBytes.CopyTo(payload, 0x48);
+        if (!ctx.Memory.TryWrite(nodeAddress, payload))
+        {
+            nodeAddress = 0;
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryCommitEventPropertyStringNode(
+        CpuContext ctx,
+        ulong backingAddress,
+        ulong oldTail,
+        ulong count,
+        ulong nodeAddress)
+    {
+        if (!TryAddAddress(backingAddress, 0x20, out var headAddress) ||
+            !TryAddAddress(backingAddress, 0x28, out var tailAddress))
+        {
+            return false;
+        }
+
+        if (oldTail == 0)
+        {
+            Span<byte> emptyListState = stackalloc byte[0x18];
+            BinaryPrimitives.WriteUInt64LittleEndian(emptyListState, nodeAddress);
+            BinaryPrimitives.WriteUInt64LittleEndian(emptyListState[0x08..], nodeAddress);
+            BinaryPrimitives.WriteUInt64LittleEndian(emptyListState[0x10..], count + 1);
+            return ctx.Memory.TryWrite(headAddress, emptyListState);
+        }
+
+        Span<byte> appendedListState = stackalloc byte[0x10];
+        BinaryPrimitives.WriteUInt64LittleEndian(appendedListState, nodeAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(appendedListState[0x08..], count + 1);
+        if (!ctx.Memory.TryWrite(tailAddress, appendedListState))
+        {
+            return false;
+        }
+
+        if (ctx.TryWriteUInt64(oldTail + 0x08, nodeAddress))
+        {
+            return true;
+        }
+
+        Span<byte> originalListState = stackalloc byte[0x10];
+        BinaryPrimitives.WriteUInt64LittleEndian(originalListState, oldTail);
+        BinaryPrimitives.WriteUInt64LittleEndian(originalListState[0x08..], count);
+        _ = ctx.Memory.TryWrite(tailAddress, originalListState);
+        return false;
     }
 
     private static bool TryReadEventPropertyType(CpuContext ctx, ulong address, out ushort type)
