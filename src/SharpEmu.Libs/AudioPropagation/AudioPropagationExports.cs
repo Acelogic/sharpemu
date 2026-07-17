@@ -68,17 +68,21 @@ public static class AudioPropagationExports
             return SetReturn(ctx, ErrorInvalidStructure);
         }
 
+        Span<byte> output = stackalloc byte[0x20];
+        output.Clear();
+        if (!ctx.Memory.TryWrite(memoryInfoAddress + 0x10, output))
+        {
+            return SetReturn(ctx, ErrorInvalidPointer);
+        }
+
         var validation = TryReadAndValidateConfig(ctx, configAddress, out _, out var requirements);
         if (validation != 0)
         {
             return SetReturn(ctx, validation);
         }
 
-        Span<byte> output = stackalloc byte[0x20];
-        output.Clear();
-        BinaryPrimitives.WriteUInt64LittleEndian(output[0x08..], requirements.PrimarySize);
-        BinaryPrimitives.WriteUInt64LittleEndian(output[0x18..], requirements.SecondarySize);
-        if (!ctx.Memory.TryWrite(memoryInfoAddress + 0x10, output))
+        if (!TryWriteUInt64(ctx, memoryInfoAddress + 0x18, requirements.PrimarySize) ||
+            !TryWriteUInt64(ctx, memoryInfoAddress + 0x28, requirements.SecondarySize))
         {
             return SetReturn(ctx, ErrorInvalidPointer);
         }
@@ -347,38 +351,10 @@ public static class AudioPropagationExports
             attributes.Add(new AudioPropagationAttribute(type, dataAddress, dataSize, 0, 0.0f));
         }
 
-        // The common validator accepts attribute IDs shared with source/portal
-        // exports. The System applier itself only accepts these two IDs.
-        if (attributes.Any(static attribute =>
-                attribute.Type is not ReferencedObjectAttribute and not PropagationGainAttribute))
-        {
-            lock (system.Gate)
-            {
-                foreach (var attribute in attributes.Where(static attribute => attribute.Type == 0x10001))
-                {
-                    if (attribute.DataAddress > ulong.MaxValue - sizeof(ulong) ||
-                        !TryReadUInt64(ctx, attribute.DataAddress, out var firstHandle) ||
-                        !TryReadUInt64(ctx, attribute.DataAddress + sizeof(ulong), out var secondHandle))
-                    {
-                        return SetReturn(ctx, ErrorInvalidPointer);
-                    }
-
-                    if (!IsKnownChildHandle(system, firstHandle) ||
-                        !IsKnownChildHandle(system, secondHandle))
-                    {
-                        return SetReturn(ctx, ErrorInvalidHandle);
-                    }
-                }
-            }
-
-            return SetReturn(ctx, ErrorInvalidValue);
-        }
-
         lock (system.Gate)
         {
-            for (var index = 0; index < attributes.Count; index++)
+            foreach (var attribute in attributes)
             {
-                var attribute = attributes[index];
                 if (attribute.Type == ReferencedObjectAttribute)
                 {
                     if (!TryReadUInt64(ctx, attribute.DataAddress, out var referencedHandle))
@@ -393,9 +369,9 @@ public static class AudioPropagationExports
                         return SetReturn(ctx, ErrorInvalidHandle);
                     }
 
-                    attributes[index] = attribute with { ReferencedHandle = referencedHandle };
+                    system.ReferencedObjectHandle = referencedHandle;
                 }
-                else
+                else if (attribute.Type == PropagationGainAttribute)
                 {
                     if (!TryReadSingle(ctx, attribute.DataAddress, out var value))
                     {
@@ -408,19 +384,11 @@ public static class AudioPropagationExports
                         return SetReturn(ctx, ErrorInvalidValue);
                     }
 
-                    attributes[index] = attribute with { ScalarValue = value };
-                }
-            }
-
-            foreach (var attribute in attributes)
-            {
-                if (attribute.Type == ReferencedObjectAttribute)
-                {
-                    system.ReferencedObjectHandle = attribute.ReferencedHandle;
+                    system.PropagationGain = value;
                 }
                 else
                 {
-                    system.PropagationGain = attribute.ScalarValue;
+                    return SetReturn(ctx, ErrorInvalidValue);
                 }
             }
         }
@@ -791,10 +759,6 @@ public static class AudioPropagationExports
             0x0000_FFFF_FFFF_FFFFUL;
         return HandlePrefix | ((ulong)kind << 48) | sequence;
     }
-
-    private static bool IsKnownChildHandle(AudioPropagationSystemState system, ulong handle) =>
-        handle != 0 &&
-        (system.Materials.ContainsKey(handle) || system.Rooms.ContainsKey(handle));
 
     private static bool TryReadUInt32(CpuContext ctx, ulong address, out uint value)
     {

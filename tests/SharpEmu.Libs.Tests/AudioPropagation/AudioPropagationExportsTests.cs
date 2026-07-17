@@ -72,33 +72,42 @@ public sealed class AudioPropagationExportsTests
     }
 
     [Fact]
-    public void QueryMemoryValidatesPointersAndHeadersWithoutFailureWrites()
+    public void QueryMemoryPreservesInvalidMemoryInfoAndZeroesBeforeConfigValidation()
     {
+        Fill(MemoryInfoAddress + 0x10, 0x20, 0xA5);
         _ctx[CpuRegister.Rdi] = 0;
         _ctx[CpuRegister.Rsi] = MemoryInfoAddress;
         Assert.Equal(ErrorInvalidPointer, AudioPropagationExports.SystemQueryMemory(_ctx));
+        Assert.Equal(Enumerable.Repeat((byte)0xA5, 0x20), Read(MemoryInfoAddress + 0x10, 0x20));
 
-        WriteUInt64(MemoryInfoAddress + 0x18, 0x1111);
+        Fill(MemoryInfoAddress + 0x10, 0x20, 0xA5);
         WriteUInt32(MemoryInfoAddress, 0xDEADBEEF);
         _ctx[CpuRegister.Rdi] = ConfigAddress;
         Assert.Equal(ErrorInvalidStructure, AudioPropagationExports.SystemQueryMemory(_ctx));
-        Assert.Equal(0x1111UL, ReadUInt64(MemoryInfoAddress + 0x18));
+        Assert.Equal(Enumerable.Repeat((byte)0xA5, 0x20), Read(MemoryInfoAddress + 0x10, 0x20));
 
         WriteMemoryInfoHeader();
-        WriteUInt64(MemoryInfoAddress + 0x18, 0x2222);
+        Fill(MemoryInfoAddress + 0x10, 0x20, 0xA5);
         WriteUInt32(ConfigAddress, 0xDEADBEEF);
         Assert.Equal(ErrorInvalidStructure, AudioPropagationExports.SystemQueryMemory(_ctx));
-        Assert.Equal(0x2222UL, ReadUInt64(MemoryInfoAddress + 0x18));
+        Assert.Equal(new byte[0x20], Read(MemoryInfoAddress + 0x10, 0x20));
 
+        Fill(MemoryInfoAddress + 0x10, 0x20, 0xA5);
         WriteValidConfig();
         WriteUInt32(ConfigAddress + 0x18, 5);
         Assert.Equal(ErrorInvalidValue, AudioPropagationExports.SystemQueryMemory(_ctx));
-        Assert.Equal(0x2222UL, ReadUInt64(MemoryInfoAddress + 0x18));
+        Assert.Equal(new byte[0x20], Read(MemoryInfoAddress + 0x10, 0x20));
 
+        Fill(MemoryInfoAddress + 0x10, 0x20, 0xA5);
         WriteValidConfig();
         WriteUInt64(ConfigAddress + 0x08, 0x30);
         Assert.Equal(ErrorInvalidStructure, AudioPropagationExports.SystemQueryMemory(_ctx));
-        Assert.Equal(0x2222UL, ReadUInt64(MemoryInfoAddress + 0x18));
+        Assert.Equal(new byte[0x20], Read(MemoryInfoAddress + 0x10, 0x20));
+
+        Fill(MemoryInfoAddress + 0x10, 0x20, 0xA5);
+        _ctx[CpuRegister.Rdi] = Base + 0x50_0000;
+        Assert.Equal(ErrorInvalidPointer, AudioPropagationExports.SystemQueryMemory(_ctx));
+        Assert.Equal(new byte[0x20], Read(MemoryInfoAddress + 0x10, 0x20));
     }
 
     [Fact]
@@ -248,13 +257,6 @@ public sealed class AudioPropagationExportsTests
         Assert.True(AudioPropagationExports.TryGetDebugSnapshot(system, out var referenced));
         Assert.Equal(material, referenced.ReferencedObjectHandle);
 
-        WriteAttribute(0x10001, AttributePayloadAddress, 0x10);
-        WriteUInt64(AttributePayloadAddress, material);
-        WriteUInt64(AttributePayloadAddress + 8, 0xDEADBEEF);
-        Assert.Equal(ErrorInvalidHandle, AudioPropagationExports.SystemSetAttributes(_ctx));
-        WriteUInt64(AttributePayloadAddress + 8, material);
-        Assert.Equal(ErrorInvalidValue, AudioPropagationExports.SystemSetAttributes(_ctx));
-
         WriteAttribute(0x20001, AttributePayloadAddress, 4);
         WriteSingle(AttributePayloadAddress, 0.25f);
         Assert.Equal(0, AudioPropagationExports.SystemSetAttributes(_ctx));
@@ -263,6 +265,36 @@ public sealed class AudioPropagationExportsTests
 
         _ctx[CpuRegister.Rdx] = 0;
         Assert.Equal(ErrorInvalidValue, AudioPropagationExports.SystemSetAttributes(_ctx));
+    }
+
+    [Fact]
+    public void SetAttributesRejectsUnsupportedTypeWithoutDereferencingPayload()
+    {
+        var system = CreateSystem(flags: 4);
+        _ctx[CpuRegister.Rdi] = system;
+        _ctx[CpuRegister.Rsi] = AttributesAddress;
+        _ctx[CpuRegister.Rdx] = 1;
+
+        WriteAttribute(0x10001, Base + 0x50_0000, 0x10);
+
+        Assert.Equal(ErrorInvalidValue, AudioPropagationExports.SystemSetAttributes(_ctx));
+    }
+
+    [Fact]
+    public void SetAttributesPreservesEarlierMutationWhenLaterAttributeFails()
+    {
+        var system = CreateSystem(flags: 4);
+        _ctx[CpuRegister.Rdi] = system;
+        _ctx[CpuRegister.Rsi] = AttributesAddress;
+        _ctx[CpuRegister.Rdx] = 2;
+
+        WriteAttribute(0, 0x20001, AttributePayloadAddress, 4);
+        WriteAttribute(1, 0x10001, Base + 0x50_0000, 0x10);
+        WriteSingle(AttributePayloadAddress, 0.375f);
+
+        Assert.Equal(ErrorInvalidValue, AudioPropagationExports.SystemSetAttributes(_ctx));
+        Assert.True(AudioPropagationExports.TryGetDebugSnapshot(system, out var snapshot));
+        Assert.Equal(0.375f, snapshot.PropagationGain);
     }
 
     [Fact]
@@ -419,10 +451,16 @@ public sealed class AudioPropagationExportsTests
 
     private void WriteAttribute(uint type, ulong dataAddress, ulong size)
     {
-        Fill(AttributesAddress, 0x20, 0);
-        WriteUInt32(AttributesAddress, type);
-        WriteUInt64(AttributesAddress + 0x08, dataAddress);
-        WriteUInt64(AttributesAddress + 0x10, size);
+        WriteAttribute(0, type, dataAddress, size);
+    }
+
+    private void WriteAttribute(int index, uint type, ulong dataAddress, ulong size)
+    {
+        var address = AttributesAddress + ((ulong)index * 0x20);
+        Fill(address, 0x20, 0);
+        WriteUInt32(address, type);
+        WriteUInt64(address + 0x08, dataAddress);
+        WriteUInt64(address + 0x10, size);
     }
 
     private void InitializeRayBuffer()
