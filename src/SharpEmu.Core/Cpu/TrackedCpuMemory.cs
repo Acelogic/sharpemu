@@ -5,7 +5,7 @@ using SharpEmu.HLE;
 
 namespace SharpEmu.Core.Cpu;
 
-public sealed class TrackedCpuMemory : ICpuMemory, ITrackedCpuMemory, IGuestMemoryAllocator
+public sealed class TrackedCpuMemory : ICpuMemory, ITrackedCpuMemory, IGuestMemoryAllocator, ICpuMemoryWrapper
 {
     private readonly ICpuMemory _inner;
 
@@ -109,5 +109,10 @@ public sealed class TrackedCpuMemory : ICpuMemory, ITrackedCpuMemory, IGuestMemo
             ? info.Protect is HostMemory.PAGE_READWRITE or HostMemory.PAGE_EXECUTE_READWRITE
             : info.Protect is HostMemory.PAGE_READONLY or HostMemory.PAGE_READWRITE or
                 HostMemory.PAGE_EXECUTE_READ or HostMemory.PAGE_EXECUTE_READWRITE;
+    }
+
+    public bool TryFreeGuestMemory(ulong address)
+    {
+        return _inner is IGuestMemoryAllocator allocator && allocator.TryFreeGuestMemory(address);
     }
 }

@@ -168,8 +168,7 @@ internal sealed class EmulatorProcess : IDisposable
             var policy1 = PROCESS_CREATION_MITIGATION_POLICY_CONTROL_FLOW_GUARD_ALWAYS_OFF;
             var policy2 =
                 PROCESS_CREATION_MITIGATION_POLICY2_CET_USER_SHADOW_STACKS_ALWAYS_OFF |
-                PROCESS_CREATION_MITIGATION_POLICY2_USER_CET_SET_CONTEXT_IP_VALIDATION_ALWAYS_OFF |
-                PROCESS_CREATION_MITIGATION_POLICY2_XTENDED_CONTROL_FLOW_GUARD_ALWAYS_OFF;
+                PROCESS_CREATION_MITIGATION_POLICY2_USER_CET_SET_CONTEXT_IP_VALIDATION_ALWAYS_OFF;
 
             mitigationPolicies = Marshal.AllocHGlobal(sizeof(ulong) * 2);
             Marshal.WriteInt64(mitigationPolicies, unchecked((long)policy1));
@@ -202,27 +201,8 @@ internal sealed class EmulatorProcess : IDisposable
 
             if (!created)
             {
-                // Some mitigation policy bits (e.g. XFG) are not supported on
-                // older Windows builds. Mirror the CLI's behavior and fall back
-                // to launching without the mitigation attribute list.
-                startupInfoEx.lpAttributeList = 0;
-                created = CreateProcessW(
-                    exePath,
-                    new StringBuilder(BuildCommandLine(exePath, arguments)),
-                    0,
-                    0,
-                    true,
-                    CREATE_NO_WINDOW,
-                    0,
-                    currentDirectory,
-                    ref startupInfoEx,
-                    out processInfo);
-            }
-
-            if (!created)
-            {
                 var error = Marshal.GetLastWin32Error();
-                throw new Win32Exception(error, $"Failed to start '{exePath}' (Win32 error {error}: {new Win32Exception(error).Message}).");
+                throw new Win32Exception(error, $"Failed to start '{exePath}' with CET/CFG mitigation disabled (Win32 error {error}: {new Win32Exception(error).Message}).");
             }
 
             CloseHandle(processInfo.hThread);

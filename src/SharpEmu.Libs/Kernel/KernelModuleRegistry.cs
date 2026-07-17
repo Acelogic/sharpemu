@@ -9,6 +9,13 @@ namespace SharpEmu.Libs.Kernel;
 
 public static class KernelModuleRegistry
 {
+    public enum ModuleStartState
+    {
+        NotStarted,
+        Starting,
+        Started,
+    }
+
     private static readonly object _gate = new();
     private static readonly Dictionary<int, ModuleEntry> _modulesByHandle = new();
     private static readonly Dictionary<int, Dictionary<string, ulong>> _symbolsByHandle = new();
@@ -33,7 +40,11 @@ public static class KernelModuleRegistry
         ulong BaseAddress,
         ulong EndAddress,
         ulong EntryPoint,
+        ulong InitEntryPoint,
         ulong EhFrameHeaderAddress,
+        ulong EhFrameAddress,
+        ulong EhFrameSize,
+        ModuleStartState StartState,
         bool IsMain,
         bool IsSystemModule);
 
@@ -55,10 +66,12 @@ public static class KernelModuleRegistry
         ulong baseAddress,
         ulong size,
         ulong entryPoint,
+        ulong initEntryPoint,
+        ulong ehFrameHeaderAddress,
+        ulong ehFrameAddress,
+        ulong ehFrameSize,
         bool isMain,
-        bool isSystemModule = false,
-        ulong ehFrameHeaderAddress = 0,
-        IReadOnlyDictionary<string, ulong>? runtimeSymbols = null)
+        bool isSystemModule = false)
     {
         var normalizedPath = NormalizePath(modulePath);
         lock (_gate)
@@ -72,12 +85,14 @@ public static class KernelModuleRegistry
                     BaseAddress = baseAddress,
                     EndAddress = ComputeEnd(baseAddress, size),
                     EntryPoint = entryPoint,
+                    InitEntryPoint = initEntryPoint,
                     EhFrameHeaderAddress = ehFrameHeaderAddress,
+                    EhFrameAddress = ehFrameAddress,
+                    EhFrameSize = ehFrameSize,
                     IsMain = existing.IsMain || isMain,
                     IsSystemModule = existing.IsSystemModule || isSystemModule,
                 };
                 _modulesByHandle[existingHandle] = updated;
-                _symbolsByHandle[existingHandle] = CopyRuntimeSymbols(runtimeSymbols);
                 _handleByName[updated.Name] = existingHandle;
                 return existingHandle;
             }
@@ -91,11 +106,14 @@ public static class KernelModuleRegistry
                 BaseAddress: baseAddress,
                 EndAddress: ComputeEnd(baseAddress, size),
                 EntryPoint: entryPoint,
+                InitEntryPoint: initEntryPoint,
                 EhFrameHeaderAddress: ehFrameHeaderAddress,
+                EhFrameAddress: ehFrameAddress,
+                EhFrameSize: ehFrameSize,
+                StartState: ModuleStartState.NotStarted,
                 IsMain: isMain,
                 IsSystemModule: isSystemModule);
             _modulesByHandle[handle] = entry;
-            _symbolsByHandle[handle] = CopyRuntimeSymbols(runtimeSymbols);
             if (!string.IsNullOrWhiteSpace(normalizedPath))
             {
                 _handleByPath[normalizedPath] = handle;
@@ -128,7 +146,11 @@ public static class KernelModuleRegistry
                 BaseAddress: 0,
                 EndAddress: 0,
                 EntryPoint: 0,
+                InitEntryPoint: 0,
                 EhFrameHeaderAddress: 0,
+                EhFrameAddress: 0,
+                EhFrameSize: 0,
+                StartState: ModuleStartState.Started,
                 IsMain: false,
                 IsSystemModule: isSystemModule);
             _modulesByHandle[handle] = entry;
@@ -213,10 +235,85 @@ public static class KernelModuleRegistry
         }
     }
 
-    public static bool TryResolveSymbol(int handle, string symbolName, out ulong address)
+    /// <summary>
+    /// Atomically claims a module initializer. A module can be observed while
+    /// it is starting (for recursive loader calls), but its DT_INIT routine is
+    /// executed at most once after a successful start.
+    /// </summary>
+    public static bool TryBeginModuleStart(int handle, out ModuleEntry module)
+    {
+        lock (_gate)
+        {
+            if (!_modulesByHandle.TryGetValue(handle, out module))
+            {
+                return false;
+            }
+
+            if (module.StartState != ModuleStartState.NotStarted)
+            {
+                return false;
+            }
+
+            if (module.InitEntryPoint < 0x10000)
+            {
+                module = module with { StartState = ModuleStartState.Started };
+                _modulesByHandle[handle] = module;
+                return false;
+            }
+
+            module = module with { StartState = ModuleStartState.Starting };
+            _modulesByHandle[handle] = module;
+            return true;
+        }
+    }
+
+    public static void CompleteModuleStart(int handle, bool succeeded)
+    {
+        lock (_gate)
+        {
+            if (!_modulesByHandle.TryGetValue(handle, out var module) ||
+                module.StartState != ModuleStartState.Starting)
+            {
+                return;
+            }
+
+            _modulesByHandle[handle] = module with
+            {
+                StartState = succeeded ? ModuleStartState.Started : ModuleStartState.NotStarted,
+            };
+        }
+    }
+
+    public static void RegisterModuleSymbols(int handle, IReadOnlyDictionary<string, ulong> symbols)
+    {
+        ArgumentNullException.ThrowIfNull(symbols);
+        lock (_gate)
+        {
+            if (!_modulesByHandle.ContainsKey(handle))
+            {
+                return;
+            }
+
+            if (!_symbolsByHandle.TryGetValue(handle, out var destination))
+            {
+                destination = new Dictionary<string, ulong>(StringComparer.Ordinal);
+                _symbolsByHandle[handle] = destination;
+            }
+
+            foreach (var (name, address) in symbols)
+            {
+                if (!string.IsNullOrWhiteSpace(name) && address >= 0x10000)
+                {
+                    destination.TryAdd(name, address);
+                }
+            }
+        }
+    }
+
+    public static bool TryResolveModuleSymbol(int handle, string symbolName, out ulong address)
     {
         address = 0;
-        if (handle <= 0 || string.IsNullOrWhiteSpace(symbolName))
+        if (string.IsNullOrWhiteSpace(symbolName))
         {
             return false;
         }
@@ -227,6 +324,17 @@ public static class KernelModuleRegistry
                    symbols.TryGetValue(symbolName, out address) &&
                    address >= 0x10000;
         }
+    }
+
+    public static bool TryResolveSymbol(int handle, string symbolName, out ulong address)
+    {
+        if (handle <= 0)
+        {
+            address = 0;
+            return false;
+        }
+
+        return TryResolveModuleSymbol(handle, symbolName, out address);
     }
 
     public static bool TryFindByPathOrName(string? modulePathOrName, out ModuleEntry module)

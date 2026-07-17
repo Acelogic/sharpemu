@@ -26,7 +26,23 @@ SPDX-License-Identifier: GPL-2.0-or-later
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <Version>0.0.1</Version>
+    <!-- Server GC reserves one large heap range per logical processor. On
+         high-core-count hosts those ranges can overlap fixed PS5 image bases
+         before the guest address space is established. Workstation GC avoids
+         that collision and keeps the emulator's required mappings available. -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <TieredPGO>true</TieredPGO>
+  </PropertyGroup>
+
+  <!-- Background GC's write-watch revisit calls FlushProcessWriteBuffers,
+       which on macOS uses thread_get_register_pointer_values; under Rosetta 2
+       that Mach call can stall indefinitely on threads executing translated
+       guest code, wedging the whole runtime (every allocating thread then
+       blocks behind the never-finishing GC). Non-concurrent GC never takes
+       that path. Windows and Linux keep concurrent GC. -->
+  <PropertyGroup Condition="$([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('osx'))">
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
@@ -49,6 +65,11 @@ SPDX-License-Identifier: GPL-2.0-or-later
     <Content Include="..\..\LICENSE.txt">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
       <TargetPath>LICENSE.txt</TargetPath>
+      <Visible>False</Visible>
+    </Content>
+    <Content Include="..\SharpEmu.GUI\Languages\*.json" Condition="'$(Configuration)' != 'Release'">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <TargetPath>Languages\%(Filename)%(Extension)</TargetPath>
       <Visible>False</Visible>
     </Content>
   </ItemGroup>
