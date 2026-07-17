@@ -1,6 +1,8 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using System.Buffers.Binary;
+using System.Text;
 using SharpEmu.HLE;
 using SharpEmu.Libs.Json;
 using Xunit;
@@ -25,6 +27,19 @@ public sealed class JsonExportRegistrationTests
         ("9KUZFjI1IxA", "_ZN3sce4Json6StringC1EPKc"),
         ("cG1VE2HMl6c", "_ZN3sce4Json6StringD1Ev"),
         ("+drDFyAS6u4", "_ZN3sce4Json11Initializer27setGlobalNullAccessCallbackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_"),
+        ("fSb2oQTNrgA", "_ZN3sce4Json5ValueC1ERKS1_"),
+        ("ONT8As5R1ug", "_ZNK3sce4Json5Value8getArrayEv"),
+        ("MsMOdxWfbwQ", "_ZNK3sce4Json5Value8getValueERKNS0_6StringE"),
+        ("epJ6x2LV0kU", "_ZNK3sce4Json5Value9getStringEv"),
+        ("bI5AGFMydrA", "_ZN3sce4Json5ArrayC1ERKS1_"),
+        ("bcH5EnFE2xY", "_ZNK3sce4Json5Array5beginEv"),
+        ("WXF2ihRF+B8", "_ZNK3sce4Json5Array3endEv"),
+        ("5AZPp99ogrc", "_ZNK3sce4Json5Array8iteratorneERKS2_"),
+        ("wcgr5mte7T8", "_ZNK3sce4Json5Array8iteratordeEv"),
+        ("iAIYn4oAWvI", "_ZNK3sce4Json5Array8iteratorptEv"),
+        ("w5+VCznos5E", "_ZN3sce4Json5Array8iteratorppEv"),
+        ("9yLjn46Ypfs", "_ZN3sce4Json5Array8iteratorD1Ev"),
+        ("HJ8GpRT1aiw", "_ZN3sce4Json5ArrayD1Ev"),
     };
 
     private static ModuleManager CreateRegisteredManager()
@@ -76,5 +91,214 @@ public sealed class JsonExportRegistrationTests
         Assert.Equal(OrbisGen2Result.ORBIS_GEN2_OK, result);
         Assert.Equal(0x1_0000_0000UL, ctx[CpuRegister.Rax]);
         Assert.Equal(JsonValueKind.Null, JsonObjectHeap.Values[0x1_0000_0000].Kind);
+    }
+
+    [Fact]
+    public void ParsedArray_CanBeCopiedIteratedAndReadByJsonStringKey()
+    {
+        const ulong memoryBase = 0x1_0000_0000;
+        const ulong rootAddress = memoryBase + 0x100;
+        const ulong jsonAddress = memoryBase + 0x1000;
+        const ulong arrayKeyAddress = memoryBase + 0x2000;
+        const ulong idKeyAddress = memoryBase + 0x2100;
+        const ulong nameKeyAddress = memoryBase + 0x2200;
+        const ulong idStringAddress = memoryBase + 0x2300;
+        const ulong nameStringAddress = memoryBase + 0x2310;
+        const ulong arrayCopyAddress = memoryBase + 0x2400;
+        const ulong beginAddress = memoryBase + 0x2410;
+        const ulong endAddress = memoryBase + 0x2420;
+
+        JsonExports.ResetForTests();
+        JsonObjectHeap.ResetForTests();
+        var memory = new AllocatingTestMemory(memoryBase, 0x20000, allocationOffset: 0x10000);
+        var ctx = new CpuContext(memory, Generation.Gen5);
+        var json = Encoding.UTF8.GetBytes(
+            "{\"clientComponents\":[{\"id\":42,\"name\":\"alpha\"},{\"id\":43,\"name\":\"beta\"}]}");
+        Assert.True(memory.TryWrite(jsonAddress, json));
+        memory.WriteCString(arrayKeyAddress, "clientComponents");
+        memory.WriteCString(idKeyAddress, "id");
+        memory.WriteCString(nameKeyAddress, "name");
+
+        ctx[CpuRegister.Rdi] = rootAddress;
+        ctx[CpuRegister.Rsi] = jsonAddress;
+        ctx[CpuRegister.Rdx] = (ulong)json.Length;
+        Assert.Equal(0, JsonExports.ParserParseBuffer(ctx));
+
+        ctx[CpuRegister.Rdi] = rootAddress;
+        ctx[CpuRegister.Rsi] = arrayKeyAddress;
+        Assert.Equal(0, JsonExports.ValueIndexCString(ctx));
+        var arrayValueAddress = ctx[CpuRegister.Rax];
+        Assert.NotEqual(0UL, arrayValueAddress);
+
+        ctx[CpuRegister.Rdi] = arrayValueAddress;
+        Assert.Equal(0, JsonExports.ValueGetArray(ctx));
+        ctx[CpuRegister.Rsi] = ctx[CpuRegister.Rax];
+        ctx[CpuRegister.Rdi] = arrayCopyAddress;
+        Assert.Equal(0, JsonExports.ArrayCopyConstructor(ctx));
+
+        ctx[CpuRegister.Rdi] = beginAddress;
+        ctx[CpuRegister.Rsi] = arrayCopyAddress;
+        Assert.Equal(0, JsonExports.ArrayBegin(ctx));
+        ctx[CpuRegister.Rdi] = endAddress;
+        ctx[CpuRegister.Rsi] = arrayCopyAddress;
+        Assert.Equal(0, JsonExports.ArrayEnd(ctx));
+
+        ctx[CpuRegister.Rdi] = idStringAddress;
+        ctx[CpuRegister.Rsi] = idKeyAddress;
+        Assert.Equal(0, JsonValueExports.StringCStringConstructor(ctx));
+        ctx[CpuRegister.Rdi] = nameStringAddress;
+        ctx[CpuRegister.Rsi] = nameKeyAddress;
+        Assert.Equal(0, JsonValueExports.StringCStringConstructor(ctx));
+
+        Assert.True(IteratorsDiffer(ctx, beginAddress, endAddress));
+        Assert.Equal(42L, ReadCurrentId(ctx, memory, beginAddress, idStringAddress));
+        Assert.Equal("alpha", ReadCurrentName(ctx, beginAddress, nameStringAddress));
+
+        ctx[CpuRegister.Rdi] = beginAddress;
+        Assert.Equal(0, JsonExports.ArrayIteratorIncrement(ctx));
+        Assert.True(IteratorsDiffer(ctx, beginAddress, endAddress));
+        Assert.Equal(43L, ReadCurrentId(ctx, memory, beginAddress, idStringAddress));
+        Assert.Equal("beta", ReadCurrentName(ctx, beginAddress, nameStringAddress));
+
+        ctx[CpuRegister.Rdi] = beginAddress;
+        Assert.Equal(0, JsonExports.ArrayIteratorIncrement(ctx));
+        Assert.False(IteratorsDiffer(ctx, beginAddress, endAddress));
+
+        ctx[CpuRegister.Rdi] = endAddress;
+        Assert.Equal(0, JsonExports.ArrayIteratorDestructor(ctx));
+        ctx[CpuRegister.Rdi] = beginAddress;
+        Assert.Equal(0, JsonExports.ArrayIteratorDestructor(ctx));
+        ctx[CpuRegister.Rdi] = arrayCopyAddress;
+        Assert.Equal(0, JsonExports.ArrayDestructor(ctx));
+    }
+
+    private static bool IteratorsDiffer(CpuContext ctx, ulong left, ulong right)
+    {
+        ctx[CpuRegister.Rdi] = left;
+        ctx[CpuRegister.Rsi] = right;
+        Assert.Equal(0, JsonExports.ArrayIteratorNotEqual(ctx));
+        return ctx[CpuRegister.Rax] != 0;
+    }
+
+    private static long ReadCurrentId(
+        CpuContext ctx,
+        AllocatingTestMemory memory,
+        ulong iteratorAddress,
+        ulong idStringAddress)
+    {
+        ctx[CpuRegister.Rdi] = iteratorAddress;
+        Assert.Equal(0, JsonExports.ArrayIteratorDereference(ctx));
+        var valueAddress = ctx[CpuRegister.Rax];
+        Assert.NotEqual(0UL, valueAddress);
+
+        ctx[CpuRegister.Rdi] = valueAddress;
+        ctx[CpuRegister.Rsi] = idStringAddress;
+        Assert.Equal(0, JsonExports.ValueGetStringKey(ctx));
+        ctx[CpuRegister.Rdi] = ctx[CpuRegister.Rax];
+        Assert.Equal(0, JsonExports.ValueGetInteger(ctx));
+
+        Span<byte> integer = stackalloc byte[sizeof(long)];
+        Assert.True(memory.TryRead(ctx[CpuRegister.Rax], integer));
+        return BinaryPrimitives.ReadInt64LittleEndian(integer);
+    }
+
+    private static string ReadCurrentName(
+        CpuContext ctx,
+        ulong iteratorAddress,
+        ulong nameStringAddress)
+    {
+        ctx[CpuRegister.Rdi] = iteratorAddress;
+        Assert.Equal(0, JsonExports.ArrayIteratorDereference(ctx));
+        ctx[CpuRegister.Rdi] = ctx[CpuRegister.Rax];
+        ctx[CpuRegister.Rsi] = nameStringAddress;
+        Assert.Equal(0, JsonExports.ValueGetStringKey(ctx));
+        ctx[CpuRegister.Rdi] = ctx[CpuRegister.Rax];
+        Assert.Equal(0, JsonExports.ValueGetString(ctx));
+        ctx[CpuRegister.Rdi] = ctx[CpuRegister.Rax];
+        Assert.Equal(0, JsonExports.StringCStr(ctx));
+        Assert.True(ctx.TryReadNullTerminatedUtf8(ctx[CpuRegister.Rax], 256, out var text));
+        return text;
+    }
+
+    private sealed class AllocatingTestMemory : ICpuMemory, IGuestMemoryAllocator
+    {
+        private readonly ulong _baseAddress;
+        private readonly byte[] _storage;
+        private ulong _nextAllocation;
+
+        public AllocatingTestMemory(ulong baseAddress, int size, ulong allocationOffset)
+        {
+            _baseAddress = baseAddress;
+            _storage = new byte[size];
+            _nextAllocation = baseAddress + allocationOffset;
+        }
+
+        public bool TryRead(ulong virtualAddress, Span<byte> destination)
+        {
+            if (!TryResolve(virtualAddress, destination.Length, out var offset))
+            {
+                return false;
+            }
+
+            _storage.AsSpan(offset, destination.Length).CopyTo(destination);
+            return true;
+        }
+
+        public bool TryWrite(ulong virtualAddress, ReadOnlySpan<byte> source)
+        {
+            if (!TryResolve(virtualAddress, source.Length, out var offset))
+            {
+                return false;
+            }
+
+            source.CopyTo(_storage.AsSpan(offset, source.Length));
+            return true;
+        }
+
+        public void WriteCString(ulong virtualAddress, string text)
+        {
+            var bytes = Encoding.UTF8.GetBytes(text);
+            Assert.True(TryWrite(virtualAddress, bytes));
+            Assert.True(TryWrite(virtualAddress + (ulong)bytes.Length, stackalloc byte[] { 0 }));
+        }
+
+        public bool TryAllocateGuestMemory(ulong size, ulong alignment, out ulong address)
+        {
+            address = 0;
+            if (size == 0 || alignment == 0 || (alignment & (alignment - 1)) != 0)
+            {
+                return false;
+            }
+
+            var aligned = (_nextAllocation + alignment - 1) & ~(alignment - 1);
+            if (!TryResolve(aligned, checked((int)size), out _))
+            {
+                return false;
+            }
+
+            address = aligned;
+            _nextAllocation = aligned + size;
+            return true;
+        }
+
+        public bool TryFreeGuestMemory(ulong address) => true;
+
+        private bool TryResolve(ulong virtualAddress, int length, out int offset)
+        {
+            offset = 0;
+            if (virtualAddress < _baseAddress || length < 0)
+            {
+                return false;
+            }
+
+            var relative = virtualAddress - _baseAddress;
+            if (relative + (ulong)length > (ulong)_storage.Length)
+            {
+                return false;
+            }
+
+            offset = (int)relative;
+            return true;
+        }
     }
 }

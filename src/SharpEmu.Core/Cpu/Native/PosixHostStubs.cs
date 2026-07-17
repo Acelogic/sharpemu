@@ -6,6 +6,26 @@ using SharpEmu.HLE;
 
 namespace SharpEmu.Core.Cpu.Native;
 
+internal readonly record struct MacThreadState64(
+    ulong Rax,
+    ulong Rbx,
+    ulong Rcx,
+    ulong Rdx,
+    ulong Rdi,
+    ulong Rsi,
+    ulong Rbp,
+    ulong Rsp,
+    ulong R8,
+    ulong R9,
+    ulong R10,
+    ulong R11,
+    ulong R12,
+    ulong R13,
+    ulong R14,
+    ulong R15,
+    ulong Rip,
+    ulong Rflags);
+
 /// <summary>
 /// POSIX replacements for the kernel32 helpers the native backend embeds in
 /// emitted x86-64 code. Every stub exposed here follows the Win64 calling
@@ -167,6 +187,83 @@ internal static unsafe class PosixHostStubs
         }
 
         return unchecked((uint)gettid());
+    }
+
+    public static nint GetCurrentPthreadHandle() =>
+        OperatingSystem.IsMacOS() ? pthread_self() : 0;
+
+    /// <summary>
+    /// Immediately suspends a macOS pthread and returns its x86-64 integer
+    /// register state. The caller owns the matching resume on success.
+    /// </summary>
+    public static bool TrySuspendMacThread(nint pthread, out MacThreadState64 state)
+    {
+        state = default;
+        if (!OperatingSystem.IsMacOS() || pthread == 0)
+        {
+            return false;
+        }
+
+        var machThread = pthread_mach_thread_np(pthread);
+        if (machThread == 0 || thread_suspend(machThread) != 0)
+        {
+            return false;
+        }
+
+        var leaveSuspended = false;
+        try
+        {
+            // x86_thread_state64_t contains 21 uint64 fields and the Mach API
+            // expresses its size as a count of 32-bit natural_t values.
+            const int x86ThreadState64 = 4;
+            uint count = 42;
+            ulong* registers = stackalloc ulong[21];
+            if (thread_get_state(machThread, x86ThreadState64, (uint*)registers, ref count) != 0 ||
+                count < 42)
+            {
+                return false;
+            }
+
+            state = new MacThreadState64(
+                Rax: registers[0],
+                Rbx: registers[1],
+                Rcx: registers[2],
+                Rdx: registers[3],
+                Rdi: registers[4],
+                Rsi: registers[5],
+                Rbp: registers[6],
+                Rsp: registers[7],
+                R8: registers[8],
+                R9: registers[9],
+                R10: registers[10],
+                R11: registers[11],
+                R12: registers[12],
+                R13: registers[13],
+                R14: registers[14],
+                R15: registers[15],
+                Rip: registers[16],
+                Rflags: registers[17]);
+            leaveSuspended = true;
+            return true;
+        }
+        finally
+        {
+            if (!leaveSuspended)
+            {
+                _ = thread_resume(machThread);
+            }
+        }
+    }
+
+    public static bool TryResumeMacThread(nint pthread)
+    {
+        if (!OperatingSystem.IsMacOS() || pthread == 0)
+        {
+            return false;
+        }
+
+        var machThread = pthread_mach_thread_np(pthread);
+        return machThread != 0 && thread_resume(machThread) == 0;
     }
 
     /// <summary>
@@ -389,6 +486,25 @@ internal static unsafe class PosixHostStubs
 
     [DllImport("libc")]
     private static extern int pthread_threadid_np(nint thread, ulong* threadId);
+
+    [DllImport("libc")]
+    private static extern nint pthread_self();
+
+    [DllImport("libc")]
+    private static extern uint pthread_mach_thread_np(nint thread);
+
+    [DllImport("libc")]
+    private static extern int thread_suspend(uint thread);
+
+    [DllImport("libc")]
+    private static extern int thread_resume(uint thread);
+
+    [DllImport("libc")]
+    private static extern int thread_get_state(
+        uint thread,
+        int flavor,
+        uint* state,
+        ref uint stateCount);
 
     [DllImport("libc")]
     private static extern int gettid();

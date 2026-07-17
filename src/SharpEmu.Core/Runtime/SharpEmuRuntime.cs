@@ -33,6 +33,17 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         "libkernel_sys.prx",
     };
 
+    private static readonly string[] PsmShellManagedSystemModules =
+    [
+        "System.Xml.dll.sprx",
+        "Sce.PlayStation.Ime.dll.sprx",
+        "ReactNative.Vsh.Common.dll.sprx",
+        "ReactNative.Modules.Vsh.Telemetry.Nq.dll.sprx",
+        "ReactNative.PUI.dll.sprx",
+        "ReactNative.Modules.Vsh.WebAppLauncher.dll.sprx",
+        "ReactNative.Modules.Vsh.Media.dll.sprx",
+    ];
+
     private readonly ISelfLoader _selfLoader;
     private readonly IVirtualMemory _virtualMemory;
     private readonly ICpuDispatcher _cpuDispatcher;
@@ -962,7 +973,8 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         .Where(entry => Directory.Exists(entry.Path))
         .ToArray();
 
-        if (moduleDirectories.Length == 0)
+        var systemManagedModulePaths = EnumeratePsmShellManagedSystemModules(ebootPath).ToArray();
+        if (moduleDirectories.Length == 0 && systemManagedModulePaths.Length == 0)
         {
             return loadedImages;
         }
@@ -980,6 +992,12 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
                     StringComparison.OrdinalIgnoreCase) ? 1 : 0)
                 .ThenBy(path => path, StringComparer.OrdinalIgnoreCase)
                 .Select(path => (Path: path, directory.StartAtBoot)))
+            // These PSM AOT assemblies live in the firmware's common_ex library
+            // rather than beside NPXS40001. Map them without running DT_INIT so
+            // sceKernelLoadStartModule can return a real module handle later.
+            // Their generic dll_start/dll_size exports must be resolved from that
+            // module, otherwise Mono's global fallback can select another AOT image.
+            .Concat(systemManagedModulePaths.Select(path => (Path: path, StartAtBoot: false)))
             .Where(entry =>
             {
                 var extension = Path.GetExtension(entry.Path);
@@ -1008,7 +1026,14 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             return loadedImages;
         }
 
-        Console.Error.WriteLine($"[RUNTIME] Module search directories: {string.Join(", ", moduleDirectories.Select(entry => entry.Path))}");
+        var moduleSearchDirectories = moduleDirectories
+            .Select(entry => entry.Path)
+            .Concat(systemManagedModulePaths
+                .Select(Path.GetDirectoryName)
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Select(path => path!))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        Console.Error.WriteLine($"[RUNTIME] Module search directories: {string.Join(", ", moduleSearchDirectories)}");
         Console.Error.WriteLine($"[RUNTIME] Loading {modulePaths.Length} module(s)...");
         var loadedModules = 0;
         var failedModules = 0;
@@ -1452,6 +1477,41 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         }
 
         return !PreloadSkipModules.Contains(fileName);
+    }
+
+    private IEnumerable<string> EnumeratePsmShellManagedSystemModules(string ebootPath)
+    {
+        var candidateDirectories = new List<string>();
+        var ebootDirectory = Path.GetDirectoryName(ebootPath);
+        if (!string.IsNullOrWhiteSpace(ebootDirectory))
+        {
+            // dev.rar keeps decrypted NPXS40001 files under
+            // ssd0.system_ex_b_out/app/<title>, with common assemblies two levels up.
+            candidateDirectories.Add(Path.GetFullPath(Path.Combine(
+                ebootDirectory,
+                "..",
+                "..",
+                "common_ex",
+                "lib")));
+        }
+
+        if (!string.IsNullOrWhiteSpace(_systemRoot))
+        {
+            candidateDirectories.Add(Path.Combine(_systemRoot, "system_ex", "common_ex", "lib"));
+        }
+
+        foreach (var moduleName in PsmShellManagedSystemModules)
+        {
+            foreach (var candidateDirectory in candidateDirectories.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                var modulePath = Path.Combine(candidateDirectory, moduleName);
+                if (File.Exists(modulePath))
+                {
+                    yield return modulePath;
+                    break;
+                }
+            }
+        }
     }
 
     private int RegisterLoadedModule(string modulePath, SelfImage image, bool isMain, bool isSystemModule)

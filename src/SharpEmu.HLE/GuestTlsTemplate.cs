@@ -33,7 +33,7 @@ public static class GuestTlsTemplate
     private sealed class ModuleTemplate
     {
         public required ulong ModuleId { get; init; }
-        public required byte[] InitImage { get; init; }
+        public required byte[] InitImage { get; set; }
         public required ulong MemorySize { get; init; }
         public required ulong Alignment { get; init; }
         public required ulong AlignmentBias { get; init; }
@@ -190,6 +190,34 @@ public static class GuestTlsTemplate
             _maximumAlignment = Math.Max(_maximumAlignment, normalizedAlignment);
             _generation++;
             return staticOffset;
+        }
+    }
+
+    /// <summary>
+    /// Replaces a registered module's initialized PT_TLS bytes after the ELF
+    /// loader has applied relocations. Existing thread blocks are deliberately
+    /// left untouched; the refreshed image is used when future thread blocks or
+    /// lazy DTV entries are created.
+    /// </summary>
+    public static void UpdateModuleInitImage(ulong moduleId, ReadOnlySpan<byte> initImage)
+    {
+        if (moduleId == 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(moduleId));
+        }
+
+        lock (_gate)
+        {
+            if (!_modules.TryGetValue(moduleId, out var module))
+            {
+                throw new InvalidOperationException($"TLS module {moduleId} is not registered.");
+            }
+            if ((ulong)initImage.Length > module.MemorySize)
+            {
+                throw new InvalidDataException("PT_TLS template size exceeds the registered module memory size.");
+            }
+
+            module.InitImage = initImage.ToArray();
         }
     }
 

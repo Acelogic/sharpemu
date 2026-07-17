@@ -19,6 +19,22 @@ public static class LibcInternalExports
     private static nint _heapTraceStorage;
 
     [SysAbiExport(
+        Nid = "gNQ1V2vfXDE",
+        ExportName = "setjmp",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceLibcInternal")]
+    public static int SetJmpInitialReturnCompat(CpuContext ctx)
+    {
+        // The 12.70 PSM PNG path installs libpng's long-jump callback and then
+        // calls setjmp before reading a valid firmware resource.  Preserve the
+        // required initial-call contract here.  A future longjmp implementation
+        // can populate and restore the full guest register context when corrupt
+        // image recovery needs that error path.
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
         Nid = "iPBqs+YUUFw",
         ExportName = "__atomic_fetch_add_4_compat1270",
         Target = Generation.Gen5,

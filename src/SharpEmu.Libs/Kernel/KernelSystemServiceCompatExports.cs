@@ -108,4 +108,31 @@ public static class KernelSystemServiceCompatExports
         LibraryName = "libSceSystemTtsWrapper")]
     public static int SystemTtsIsAccessibilityAvailableA(CpuContext ctx) =>
         SystemTtsIsAccessibilityAvailable(ctx);
+
+    // The managed PUI speech wrapper resolves this entry point dynamically.
+    // Firmware 12.70 forwards (callback, userData) to the SystemTts singleton's
+    // virtual register method. Until the speech service is emulated, accepting
+    // registration is sufficient because accessibility is reported unavailable.
+    [SysAbiExport(
+        Nid = "up9Z19akYXM",
+        ExportName = "sceSystemTtsRegisterCallback",
+        Target = Generation.Gen5,
+        LibraryName = "libSceSystemTtsWrapper")]
+    public static int SystemTtsRegisterCallback(CpuContext ctx)
+    {
+        _ = ctx[CpuRegister.Rdi];
+        _ = ctx[CpuRegister.Rsi];
+        return 0;
+    }
+
+    [SysAbiExport(
+        Nid = "a05rlp573ow",
+        ExportName = "sceSystemTtsUnregisterCallback",
+        Target = Generation.Gen5,
+        LibraryName = "libSceSystemTtsWrapper")]
+    public static int SystemTtsUnregisterCallback(CpuContext ctx)
+    {
+        _ = ctx[CpuRegister.Rdi];
+        return 0;
+    }
 }

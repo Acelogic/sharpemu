@@ -48,6 +48,20 @@ public static class KernelPthreadExtendedCompatExports
         LibraryName = "libKernel")]
     public static int PosixPthreadSuspendUserContext(CpuContext ctx)
     {
+        var thread = ctx[CpuRegister.Rdi];
+        if (thread == 0)
+        {
+            ctx[CpuRegister.Rax] = 22;
+            return 22;
+        }
+
+        if (GuestThreadExecution.Scheduler is { } scheduler &&
+            !scheduler.TrySuspendGuestThread(thread, out _))
+        {
+            ctx[CpuRegister.Rax] = 3;
+            return 3;
+        }
+
         ctx[CpuRegister.Rax] = 0;
         return 0;
     }
@@ -59,6 +73,20 @@ public static class KernelPthreadExtendedCompatExports
         LibraryName = "libKernel")]
     public static int PosixPthreadResumeUserContext(CpuContext ctx)
     {
+        var thread = ctx[CpuRegister.Rdi];
+        if (thread == 0)
+        {
+            ctx[CpuRegister.Rax] = 22;
+            return 22;
+        }
+
+        if (GuestThreadExecution.Scheduler is { } scheduler &&
+            !scheduler.TryResumeGuestThread(thread, out _))
+        {
+            ctx[CpuRegister.Rax] = 3;
+            return 3;
+        }
+
         ctx[CpuRegister.Rax] = 0;
         return 0;
     }
@@ -70,14 +98,76 @@ public static class KernelPthreadExtendedCompatExports
         LibraryName = "libKernel")]
     public static int PosixPthreadGetUserContext(CpuContext ctx)
     {
+        var thread = ctx[CpuRegister.Rdi];
         var contextAddress = ctx[CpuRegister.Rsi];
-        if (contextAddress == 0 || !ctx.Memory.TryWrite(contextAddress, new byte[0x500]))
+        if (thread == 0 || contextAddress == 0)
         {
+            ctx[CpuRegister.Rax] = 22;
             return 22;
+        }
+
+        if (GuestThreadExecution.Scheduler is { } scheduler)
+        {
+            if (!scheduler.TryGetSuspendedGuestThreadContext(thread, out var continuation, out _) ||
+                !TryWritePthreadUserContext(ctx, contextAddress, continuation))
+            {
+                ctx[CpuRegister.Rax] = 3;
+                return 3;
+            }
+        }
+        else
+        {
+            Span<byte> emptyContext = stackalloc byte[0x500];
+            emptyContext.Clear();
+            if (!ctx.Memory.TryWrite(contextAddress, emptyContext))
+            {
+                ctx[CpuRegister.Rax] = 22;
+                return 22;
+            }
         }
 
         ctx[CpuRegister.Rax] = 0;
         return 0;
+    }
+
+    internal static bool TryWritePthreadUserContext(
+        CpuContext ctx,
+        ulong contextAddress,
+        GuestCpuContinuation continuation)
+    {
+        Span<byte> bytes = stackalloc byte[0x500];
+        bytes.Clear();
+        static void Write64(Span<byte> destination, int offset, ulong value) =>
+            BinaryPrimitives.WriteUInt64LittleEndian(
+                destination.Slice(offset, sizeof(ulong)),
+                value);
+
+        // KawaiiDra's 12.70 libmonosgen-2.0 analysis confirms that
+        // pthread_get_user_context_np returns an Orbis ucontext_t: a 0x40-byte
+        // header followed by FreeBSD's amd64 mcontext. Mono consumes these
+        // exact absolute offsets while scanning stopped thread roots.
+        Write64(bytes, 0x48, continuation.Rdi);
+        Write64(bytes, 0x50, continuation.Rsi);
+        Write64(bytes, 0x58, continuation.Rdx);
+        Write64(bytes, 0x60, continuation.Rcx);
+        Write64(bytes, 0x68, continuation.R8);
+        Write64(bytes, 0x70, continuation.R9);
+        Write64(bytes, 0x78, continuation.Rax);
+        Write64(bytes, 0x80, continuation.Rbx);
+        Write64(bytes, 0x88, continuation.Rbp);
+        Write64(bytes, 0x90, continuation.R10);
+        Write64(bytes, 0x98, continuation.R11);
+        Write64(bytes, 0xA0, continuation.R12);
+        Write64(bytes, 0xA8, continuation.R13);
+        Write64(bytes, 0xB0, continuation.R14);
+        Write64(bytes, 0xB8, continuation.R15);
+        Write64(bytes, 0xE0, continuation.Rip);
+        Write64(bytes, 0xF0, continuation.Rflags);
+        Write64(bytes, 0xF8, continuation.Rsp);
+        Write64(bytes, 0x108, 0x480);
+        Write64(bytes, 0x480, continuation.FsBase);
+        Write64(bytes, 0x488, continuation.GsBase);
+        return ctx.Memory.TryWrite(contextAddress, bytes);
     }
 
     [SysAbiExport(

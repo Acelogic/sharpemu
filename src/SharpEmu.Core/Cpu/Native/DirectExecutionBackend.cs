@@ -334,6 +334,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private bool _logGuestContext;
 
+	private bool _logUserContext;
+
 	private bool _ignoreGuestInt41;
 
 	private int _ignoredGuestInt41Count;
@@ -503,6 +505,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 		public int HostThreadId;
 
+		public nint HostPthreadHandle { get; set; }
+
 		// State may become Ready as soon as another guest thread satisfies this
 		// thread's wait, while the host executor that yielded it is still
 		// unwinding. Keep executor ownership separate from State so a Ready
@@ -516,6 +520,23 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		public GuestContinuationRunner? ContinuationRunner { get; set; }
 
 		public GuestExecutionRunner? ExecutionRunner { get; set; }
+
+		// pthread_suspend_user_context_np is used by Sony's Mono stop-the-world
+		// collector. Running guest code cannot be interrupted safely from managed
+		// code, so it acknowledges the request at the next HLE import boundary.
+		public int UserSuspendCount { get; set; }
+
+		public bool UserSuspendRequested { get; set; }
+
+		public bool UserSuspendAcknowledged { get; set; }
+
+		public bool UserSuspendYieldedAtImport { get; set; }
+
+		public bool UserSuspendUsesHostThread { get; set; }
+
+		public GuestCpuContinuation UserSuspendContinuation { get; set; }
+
+		public ManualResetEventSlim UserSuspendAcknowledgedEvent { get; } = new(false);
 	}
 
 	private sealed class ExternalGuestThreadState
@@ -1098,6 +1119,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		_logStrlenBursts = _logStrlenImports ||
 			string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_STRLEN_BURSTS"), "1", StringComparison.Ordinal);
 		_logGuestContext = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_CONTEXT"), "1", StringComparison.Ordinal);
+		_logUserContext = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_USER_CONTEXT"), "1", StringComparison.Ordinal);
 		_ignoreGuestInt41 = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_IGNORE_INT41"), "1", StringComparison.Ordinal);
 		_ignoredGuestInt41Count = 0;
 		_logGuestThreads = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_GUEST_THREADS"), "1", StringComparison.Ordinal);
@@ -4386,6 +4408,14 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 	}
 
+	private void TraceUserContext(string message)
+	{
+		if (_logUserContext)
+		{
+			Console.Error.WriteLine($"[LOADER][TRACE] guest_context.{message}");
+		}
+	}
+
 	private static void RunContinuationOnTemporaryThread(ulong guestThreadHandle, Action continuation)
 	{
 		var continuationThread = new Thread(() =>
@@ -4749,6 +4779,276 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 	}
 
+	public bool TrySuspendGuestThread(ulong guestThreadHandle, out string? error)
+	{
+		error = null;
+		if (guestThreadHandle == 0)
+		{
+			error = "thread handle is zero";
+			return false;
+		}
+		if (guestThreadHandle == GuestThreadExecution.CurrentGuestThreadHandle)
+		{
+			error = "thread cannot suspend itself";
+			return false;
+		}
+
+		ManualResetEventSlim acknowledgement;
+		GuestThreadState target;
+		nint hostPthread;
+		Thread? targetHostThread;
+		int targetHostThreadId;
+		using (LockGate("TrySuspendGuestThread"))
+		{
+			if (!_guestThreads.TryGetValue(guestThreadHandle, out var thread))
+			{
+				error = $"unknown guest thread 0x{guestThreadHandle:X16}";
+				return false;
+			}
+			if (thread.State is GuestThreadRunState.Exited or GuestThreadRunState.Faulted)
+			{
+				error = $"guest thread 0x{guestThreadHandle:X16} is {thread.State}";
+				return false;
+			}
+
+			thread.UserSuspendCount++;
+			if (thread.UserSuspendCount > 1)
+			{
+				return thread.UserSuspendAcknowledged;
+			}
+
+			thread.UserSuspendRequested = true;
+			thread.UserSuspendAcknowledged = false;
+			thread.UserSuspendYieldedAtImport = false;
+			thread.UserSuspendUsesHostThread = false;
+			thread.UserSuspendAcknowledgedEvent.Reset();
+			acknowledgement = thread.UserSuspendAcknowledgedEvent;
+			target = thread;
+			targetHostThread = thread.HostThread;
+			targetHostThreadId = Volatile.Read(ref thread.HostThreadId);
+			hostPthread = targetHostThread is not null &&
+				targetHostThreadId != 0 &&
+				!ReferenceEquals(targetHostThread, Thread.CurrentThread)
+					? thread.HostPthreadHandle
+					: 0;
+
+			// A blocked thread has already returned to its host executor. A ready
+			// thread is kept off the dispatcher by TryClaimReadyGuestThreadLocked.
+			if (thread.State is GuestThreadRunState.Blocked or GuestThreadRunState.Ready)
+			{
+				thread.UserSuspendContinuation = thread.HasBlockedContinuation
+					? thread.BlockedContinuation
+					: CaptureGuestThreadContext(thread.Context);
+				thread.UserSuspendAcknowledged = true;
+				acknowledgement.Set();
+				TraceUserContext(
+					$"user_suspend handle=0x{guestThreadHandle:X16} state={thread.State} immediate=true");
+				return true;
+			}
+		}
+
+		// On macOS (including Rosetta), stop native guest code immediately so a
+		// mutator cannot run into Mono's in-progress stop-the-world transition.
+		// If the sampled RIP is inside host/HLE code, resume at once and fall back
+		// to the import-boundary path below; this avoids freezing CLR locks.
+		if (hostPthread != 0 &&
+			PosixHostStubs.TrySuspendMacThread(hostPthread, out var hostState))
+		{
+			Span<byte> guestInstruction = stackalloc byte[1];
+			var suspendedInGuestCode = hostState.Rip >= 65536 &&
+				target.Context.Memory.TryRead(hostState.Rip, guestInstruction);
+			if (suspendedInGuestCode)
+			{
+				using (LockGate("TrySuspendGuestThread.host_ack"))
+				{
+					if (target.UserSuspendRequested &&
+						target.State == GuestThreadRunState.Running &&
+						!target.UserSuspendAcknowledged)
+					{
+						target.UserSuspendContinuation = CaptureMacThreadContext(target.Context, hostState);
+						target.UserSuspendUsesHostThread = true;
+						target.UserSuspendAcknowledged = true;
+						target.UserSuspendAcknowledgedEvent.Set();
+						TraceUserContext(
+							$"user_suspend handle=0x{guestThreadHandle:X16} state=Running host=true rip=0x{hostState.Rip:X16}");
+						return true;
+					}
+				}
+			}
+
+			_ = PosixHostStubs.TryResumeMacThread(hostPthread);
+		}
+
+		// The target observes UserSuspendRequested at its next HLE import,
+		// captures the completed call frame, and returns to its host executor.
+		if (acknowledgement.Wait(TimeSpan.FromSeconds(5)))
+		{
+			TraceUserContext(
+				$"user_suspend handle=0x{guestThreadHandle:X16} state=Running immediate=false");
+			return true;
+		}
+
+		using (LockGate("TrySuspendGuestThread.timeout"))
+		{
+			if (_guestThreads.TryGetValue(guestThreadHandle, out var thread) &&
+				thread.UserSuspendCount == 1 &&
+				!thread.UserSuspendAcknowledged)
+			{
+				thread.UserSuspendCount = 0;
+				thread.UserSuspendRequested = false;
+				thread.UserSuspendYieldedAtImport = false;
+			}
+		}
+		error = $"timed out suspending guest thread 0x{guestThreadHandle:X16}";
+		return false;
+	}
+
+	public bool TryResumeGuestThread(ulong guestThreadHandle, out string? error)
+	{
+		error = null;
+		var dispatchReadyThreads = false;
+		nint suspendedPthread = 0;
+		using (LockGate("TryResumeGuestThread"))
+		{
+			if (!_guestThreads.TryGetValue(guestThreadHandle, out var thread))
+			{
+				error = $"unknown guest thread 0x{guestThreadHandle:X16}";
+				return false;
+			}
+			if (thread.UserSuspendCount <= 0)
+			{
+				error = $"guest thread 0x{guestThreadHandle:X16} is not suspended";
+				return false;
+			}
+
+			thread.UserSuspendCount--;
+			if (thread.UserSuspendCount != 0)
+			{
+				return true;
+			}
+
+			thread.UserSuspendRequested = false;
+			thread.UserSuspendAcknowledged = false;
+			thread.UserSuspendAcknowledgedEvent.Reset();
+			if (thread.UserSuspendUsesHostThread)
+			{
+				suspendedPthread = thread.HostPthreadHandle;
+			}
+			else if (thread.UserSuspendYieldedAtImport &&
+				thread.State == GuestThreadRunState.Blocked &&
+				thread.HasBlockedContinuation)
+			{
+				thread.State = GuestThreadRunState.Ready;
+				thread.BlockReason = null;
+				thread.BlockDeadlineTimestamp = 0;
+				_readyGuestThreads.Enqueue(thread);
+				Interlocked.Increment(ref _readyGuestThreadCount);
+				dispatchReadyThreads = true;
+			}
+			else if (thread.State == GuestThreadRunState.Ready)
+			{
+				dispatchReadyThreads = true;
+			}
+			thread.UserSuspendYieldedAtImport = false;
+			thread.UserSuspendUsesHostThread = false;
+			thread.UserSuspendContinuation = default;
+		}
+
+		if (suspendedPthread != 0 && !PosixHostStubs.TryResumeMacThread(suspendedPthread))
+		{
+			error = $"failed to resume host thread for guest 0x{guestThreadHandle:X16}";
+			return false;
+		}
+		TraceUserContext($"user_resume handle=0x{guestThreadHandle:X16}");
+		if (dispatchReadyThreads)
+		{
+			DispatchReadyGuestThreads();
+		}
+		return true;
+	}
+
+	public bool TryGetSuspendedGuestThreadContext(
+		ulong guestThreadHandle,
+		out GuestCpuContinuation continuation,
+		out string? error)
+	{
+		using (LockGate("TryGetSuspendedGuestThreadContext"))
+		{
+			if (!_guestThreads.TryGetValue(guestThreadHandle, out var thread))
+			{
+				continuation = default;
+				error = $"unknown guest thread 0x{guestThreadHandle:X16}";
+				return false;
+			}
+			if (thread.UserSuspendCount <= 0 || !thread.UserSuspendAcknowledged)
+			{
+				continuation = default;
+				error = $"guest thread 0x{guestThreadHandle:X16} is not suspended";
+				return false;
+			}
+
+			continuation = thread.UserSuspendContinuation;
+			error = null;
+			return true;
+		}
+	}
+
+	private static GuestCpuContinuation CaptureGuestThreadContext(CpuContext context) =>
+		new(
+			Rip: context.Rip,
+			Rsp: context[CpuRegister.Rsp],
+			ReturnSlotAddress: 0,
+			Rflags: context.Rflags,
+			FsBase: context.FsBase,
+			GsBase: context.GsBase,
+			Rax: context[CpuRegister.Rax],
+			Rcx: context[CpuRegister.Rcx],
+			Rdx: context[CpuRegister.Rdx],
+			Rbx: context[CpuRegister.Rbx],
+			Rbp: context[CpuRegister.Rbp],
+			Rsi: context[CpuRegister.Rsi],
+			Rdi: context[CpuRegister.Rdi],
+			R8: context[CpuRegister.R8],
+			R9: context[CpuRegister.R9],
+			R10: context[CpuRegister.R10],
+			R11: context[CpuRegister.R11],
+			R12: context[CpuRegister.R12],
+			R13: context[CpuRegister.R13],
+			R14: context[CpuRegister.R14],
+			R15: context[CpuRegister.R15],
+			FpuControlWord: context.FpuControlWord,
+			Mxcsr: context.Mxcsr,
+			RestoreFullFpuState: false);
+
+	private static GuestCpuContinuation CaptureMacThreadContext(
+		CpuContext context,
+		MacThreadState64 state) =>
+		new(
+			Rip: state.Rip,
+			Rsp: state.Rsp,
+			ReturnSlotAddress: 0,
+			Rflags: state.Rflags,
+			FsBase: context.FsBase,
+			GsBase: context.GsBase,
+			Rax: state.Rax,
+			Rcx: state.Rcx,
+			Rdx: state.Rdx,
+			Rbx: state.Rbx,
+			Rbp: state.Rbp,
+			Rsi: state.Rsi,
+			Rdi: state.Rdi,
+			R8: state.R8,
+			R9: state.R9,
+			R10: state.R10,
+			R11: state.R11,
+			R12: state.R12,
+			R13: state.R13,
+			R14: state.R14,
+			R15: state.R15,
+			FpuControlWord: context.FpuControlWord,
+			Mxcsr: context.Mxcsr,
+			RestoreFullFpuState: false);
+
 	private void RunGuestThread(GuestThreadState thread, string reason)
 	{
 		lock (_guestThreadGate)
@@ -4760,6 +5060,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			}
 
 			thread.HostThread = Thread.CurrentThread;
+			thread.HostPthreadHandle = PosixHostStubs.GetCurrentPthreadHandle();
 		}
 		var previousLastError = LastError;
 		var previousGuestThreadHandle = GuestThreadExecution.EnterGuestThread(thread.ThreadHandle);
@@ -4820,6 +5121,14 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 					case GuestNativeCallExitReason.Blocked:
 						thread.State = GuestThreadRunState.Blocked;
 						thread.BlockReason = blockReason;
+						if (thread.UserSuspendRequested && !thread.UserSuspendAcknowledged)
+						{
+							thread.UserSuspendContinuation = thread.HasBlockedContinuation
+								? thread.BlockedContinuation
+								: CaptureGuestThreadContext(thread.Context);
+							thread.UserSuspendAcknowledged = true;
+							thread.UserSuspendAcknowledgedEvent.Set();
+						}
 						if (thread.HasBlockedContinuation &&
 							thread.BlockWaiter is not null &&
 							thread.BlockWaiter.TryWake())
@@ -4854,6 +5163,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				if (ReferenceEquals(thread.HostThread, Thread.CurrentThread))
 				{
 					thread.HostThread = null;
+					thread.HostPthreadHandle = 0;
 				}
 				thread.ExecutorActive = false;
 			}
@@ -5994,6 +6304,12 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			Interlocked.Decrement(ref _readyGuestThreadCount);
 			if (candidate.State != GuestThreadRunState.Ready)
 			{
+				continue;
+			}
+			if (candidate.UserSuspendRequested)
+			{
+				_readyGuestThreads.Enqueue(candidate);
+				Interlocked.Increment(ref _readyGuestThreadCount);
 				continue;
 			}
 

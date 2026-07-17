@@ -466,6 +466,20 @@ public static class KernelPthreadCompatExports
     }
 
     [SysAbiExport(
+        Nid = "K953PF5u6Pc",
+        ExportName = "pthread_cond_reltimedwait_np",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadCondRelativeTimedwait(CpuContext ctx) =>
+        PthreadCondWaitCore(
+            ctx,
+            ctx[CpuRegister.Rdi],
+            ctx[CpuRegister.Rsi],
+            timed: true,
+            timeoutUsec: unchecked((uint)ctx[CpuRegister.Rdx]),
+            posixErrors: true);
+
+    [SysAbiExport(
         Nid = "mkx2fVhNMsg",
         ExportName = "pthread_cond_broadcast",
         Target = Generation.Gen4 | Generation.Gen5,
