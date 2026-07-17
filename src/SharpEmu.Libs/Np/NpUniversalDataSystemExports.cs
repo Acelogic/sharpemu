@@ -561,7 +561,9 @@ public static class NpUniversalDataSystemExports
                 allocator,
                 oldTail,
                 value,
-                out var nodeAddress))
+                out var nodeAddress,
+                out var stringBackingAddress,
+                out var stringAddress))
         {
             return NormalizeEventPropertyArraySetterResult(
                 NpUniversalDataSystemInternalErrorPropertyReplacement);
@@ -572,8 +574,18 @@ public static class NpUniversalDataSystemExports
                 backingAddress,
                 oldTail,
                 count,
-                nodeAddress))
+                nodeAddress,
+                out var canReleaseUnlinkedNode))
         {
+            if (canReleaseUnlinkedNode)
+            {
+                ReleaseUnlinkedEventPropertyStringNode(
+                    allocator,
+                    nodeAddress,
+                    stringBackingAddress,
+                    stringAddress);
+            }
+
             return NormalizeEventPropertyArraySetterResult(
                 NpUniversalDataSystemInternalErrorPropertyReplacement);
         }
@@ -595,29 +607,49 @@ public static class NpUniversalDataSystemExports
         IGuestMemoryAllocator allocator,
         ulong previousNodeAddress,
         string value,
-        out ulong nodeAddress)
+        out ulong nodeAddress,
+        out ulong stringBackingAddress,
+        out ulong stringAddress)
     {
         nodeAddress = 0;
+        stringBackingAddress = 0;
+        stringAddress = 0;
         var stringBytes = _strictUtf8.GetBytes(value);
-        var minimumSize = 0x48 + stringBytes.Length + 1;
-        var allocationSize = (minimumSize + 0x0F) & ~0x0F;
-        if (!allocator.TryAllocateGuestMemory((ulong)allocationSize, 0x10, out nodeAddress) ||
-            !TryAddAddress(nodeAddress, 0x28, out var stringBackingAddress) ||
-            !TryAddAddress(nodeAddress, 0x48, out var stringAddress))
+        var terminatedString = new byte[stringBytes.Length + 1];
+        stringBytes.CopyTo(terminatedString, 0);
+        if (!allocator.TryAllocateGuestMemory(0x28, 0x10, out nodeAddress) ||
+            !allocator.TryAllocateGuestMemory(0x20, 0x10, out stringBackingAddress) ||
+            !allocator.TryAllocateGuestMemory((ulong)terminatedString.Length, 0x10, out stringAddress))
         {
+            ReleaseUnlinkedEventPropertyStringNode(
+                allocator,
+                nodeAddress,
+                stringBackingAddress,
+                stringAddress);
             nodeAddress = 0;
+            stringBackingAddress = 0;
+            stringAddress = 0;
             return false;
         }
 
-        var payload = new byte[allocationSize];
-        BinaryPrimitives.WriteUInt64LittleEndian(payload.AsSpan(0x10), previousNodeAddress);
-        BinaryPrimitives.WriteUInt16LittleEndian(payload.AsSpan(0x18), EventPropertyStringType);
-        BinaryPrimitives.WriteUInt64LittleEndian(payload.AsSpan(0x20), stringBackingAddress);
-        BinaryPrimitives.WriteUInt64LittleEndian(payload.AsSpan(0x40), stringAddress);
-        stringBytes.CopyTo(payload, 0x48);
-        if (!ctx.Memory.TryWrite(nodeAddress, payload))
+        var nodePayload = new byte[0x28];
+        BinaryPrimitives.WriteUInt64LittleEndian(nodePayload.AsSpan(0x10), previousNodeAddress);
+        BinaryPrimitives.WriteUInt16LittleEndian(nodePayload.AsSpan(0x18), EventPropertyStringType);
+        BinaryPrimitives.WriteUInt64LittleEndian(nodePayload.AsSpan(0x20), stringBackingAddress);
+        var backingPayload = new byte[0x20];
+        BinaryPrimitives.WriteUInt64LittleEndian(backingPayload.AsSpan(0x18), stringAddress);
+        if (!ctx.Memory.TryWrite(stringAddress, terminatedString) ||
+            !ctx.Memory.TryWrite(stringBackingAddress, backingPayload) ||
+            !ctx.Memory.TryWrite(nodeAddress, nodePayload))
         {
+            ReleaseUnlinkedEventPropertyStringNode(
+                allocator,
+                nodeAddress,
+                stringBackingAddress,
+                stringAddress);
             nodeAddress = 0;
+            stringBackingAddress = 0;
+            stringAddress = 0;
             return false;
         }
 
@@ -629,8 +661,10 @@ public static class NpUniversalDataSystemExports
         ulong backingAddress,
         ulong oldTail,
         ulong count,
-        ulong nodeAddress)
+        ulong nodeAddress,
+        out bool canReleaseUnlinkedNode)
     {
+        canReleaseUnlinkedNode = true;
         if (!TryAddAddress(backingAddress, 0x20, out var headAddress) ||
             !TryAddAddress(backingAddress, 0x28, out var tailAddress))
         {
@@ -662,8 +696,30 @@ public static class NpUniversalDataSystemExports
         Span<byte> originalListState = stackalloc byte[0x10];
         BinaryPrimitives.WriteUInt64LittleEndian(originalListState, oldTail);
         BinaryPrimitives.WriteUInt64LittleEndian(originalListState[0x08..], count);
-        _ = ctx.Memory.TryWrite(tailAddress, originalListState);
+        canReleaseUnlinkedNode = ctx.Memory.TryWrite(tailAddress, originalListState);
         return false;
+    }
+
+    private static void ReleaseUnlinkedEventPropertyStringNode(
+        IGuestMemoryAllocator allocator,
+        ulong nodeAddress,
+        ulong stringBackingAddress,
+        ulong stringAddress)
+    {
+        if (stringAddress != 0)
+        {
+            _ = allocator.TryFreeGuestMemory(stringAddress);
+        }
+
+        if (stringBackingAddress != 0)
+        {
+            _ = allocator.TryFreeGuestMemory(stringBackingAddress);
+        }
+
+        if (nodeAddress != 0)
+        {
+            _ = allocator.TryFreeGuestMemory(nodeAddress);
+        }
     }
 
     private static bool TryReadEventPropertyType(CpuContext ctx, ulong address, out ushort type)

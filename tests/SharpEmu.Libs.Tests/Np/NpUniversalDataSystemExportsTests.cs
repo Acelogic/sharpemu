@@ -91,8 +91,11 @@ public sealed class NpUniversalDataSystemExportsTests
         Assert.Equal(0x2001, ReadPropertyType(firstNode + 0x18));
         Assert.True(_ctx.TryReadUInt64(firstNode + 0x20, out var firstStringBacking));
         Assert.True(_ctx.TryReadUInt64(firstStringBacking + 0x18, out var firstString));
-        Assert.Equal(firstNode + 0x28, firstStringBacking);
-        Assert.Equal(firstNode + 0x48, firstString);
+        Assert.Equal(0x28UL, _memory.GetAllocationSize(firstNode));
+        Assert.Equal(0x20UL, _memory.GetAllocationSize(firstStringBacking));
+        Assert.Equal(
+            (ulong)System.Text.Encoding.UTF8.GetByteCount("astro-🌟") + 1,
+            _memory.GetAllocationSize(firstString));
         Assert.Equal("astro-🌟", ReadMaterializedString(firstNode + 0x18));
         Assert.True(_ctx.TryReadUInt64(ArrayBackingAddress + 0x30, out var firstCount));
         Assert.Equal(1UL, firstCount);
@@ -115,8 +118,9 @@ public sealed class NpUniversalDataSystemExportsTests
         Assert.Equal(0x2001, ReadPropertyType(secondNode + 0x18));
         Assert.True(_ctx.TryReadUInt64(secondNode + 0x20, out var secondStringBacking));
         Assert.True(_ctx.TryReadUInt64(secondStringBacking + 0x18, out var secondString));
-        Assert.Equal(secondNode + 0x28, secondStringBacking);
-        Assert.Equal(secondNode + 0x48, secondString);
+        Assert.Equal(0x28UL, _memory.GetAllocationSize(secondNode));
+        Assert.Equal(0x20UL, _memory.GetAllocationSize(secondStringBacking));
+        Assert.Equal(7UL, _memory.GetAllocationSize(secondString));
         Assert.Equal("second", ReadMaterializedString(secondNode + 0x18));
         Assert.True(NpUniversalDataSystemExports.TryGetEventPropertyArrayStringStateForTests(
             ArrayAddress,
@@ -209,13 +213,40 @@ public sealed class NpUniversalDataSystemExportsTests
         Assert.Equal(originalAllocationCount, _memory.AllocationCount);
     }
 
-    [Fact]
-    public void EventPropertyArraySetString_AllocationFailureLeavesGuestAndShadowUnmodified()
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void EventPropertyArraySetString_AllocationFailureLeavesGuestAndShadowUnmodified(
+        int successfulAllocationsBeforeFailure)
     {
         Initialize();
         WriteEmptyArray();
         _memory.WriteCString(StringAddress, "not-stored");
-        _memory.SuccessfulAllocationsBeforeFailure = 0;
+        _memory.SuccessfulAllocationsBeforeFailure = successfulAllocationsBeforeFailure;
+        _ctx[CpuRegister.Rdi] = ArrayAddress;
+        _ctx[CpuRegister.Rsi] = StringAddress;
+
+        Assert.Equal(
+            unchecked((int)0x80553101),
+            NpUniversalDataSystemExports.NpUniversalDataSystemEventPropertyArraySetString(_ctx));
+        Assert.True(_ctx.TryReadUInt64(ArrayBackingAddress + 0x20, out var head));
+        Assert.True(_ctx.TryReadUInt64(ArrayBackingAddress + 0x28, out var tail));
+        Assert.True(_ctx.TryReadUInt64(ArrayBackingAddress + 0x30, out var count));
+        Assert.Equal(0UL, head);
+        Assert.Equal(0UL, tail);
+        Assert.Equal(0UL, count);
+        Assert.Equal(0, _memory.AllocationCount);
+        Assert.False(NpUniversalDataSystemExports.TryGetEventPropertyArrayStringForTests(ArrayAddress, out _));
+    }
+
+    [Fact]
+    public void EventPropertyArraySetString_PayloadWriteFailureFreesAllUnpublishedAllocations()
+    {
+        Initialize();
+        WriteEmptyArray();
+        _memory.WriteCString(StringAddress, "not-stored");
+        _memory.SuccessfulAllocationPayloadWritesBeforeFailure = 1;
         _ctx[CpuRegister.Rdi] = ArrayAddress;
         _ctx[CpuRegister.Rsi] = StringAddress;
 
@@ -260,7 +291,7 @@ public sealed class NpUniversalDataSystemExportsTests
         Assert.Equal(originalTail, tail);
         Assert.Equal(originalCount, count);
         Assert.Equal(0UL, next);
-        Assert.Equal(originalAllocationCount + 1, _memory.AllocationCount);
+        Assert.Equal(originalAllocationCount, _memory.AllocationCount);
         Assert.True(NpUniversalDataSystemExports.TryGetEventPropertyArrayStringsForTests(
             ArrayAddress,
             out var values));
@@ -406,6 +437,7 @@ public sealed class NpUniversalDataSystemExportsTests
     {
         private readonly FakeCpuMemory _memory;
         private readonly HashSet<ulong> _allocations = [];
+        private readonly Dictionary<ulong, ulong> _allocationSizes = [];
         private readonly ulong _endAddress;
         private ulong _nextAddress;
 
@@ -418,6 +450,8 @@ public sealed class NpUniversalDataSystemExportsTests
 
         public int SuccessfulAllocationsBeforeFailure { get; set; } = -1;
 
+        public int SuccessfulAllocationPayloadWritesBeforeFailure { get; set; } = -1;
+
         public ulong? FailNextWriteAddress { get; set; }
 
         public int AllocationCount => _allocations.Count;
@@ -427,6 +461,19 @@ public sealed class NpUniversalDataSystemExportsTests
 
         public bool TryWrite(ulong virtualAddress, ReadOnlySpan<byte> source)
         {
+            if (_allocations.Contains(virtualAddress) &&
+                SuccessfulAllocationPayloadWritesBeforeFailure == 0)
+            {
+                SuccessfulAllocationPayloadWritesBeforeFailure = -1;
+                return false;
+            }
+
+            if (_allocations.Contains(virtualAddress) &&
+                SuccessfulAllocationPayloadWritesBeforeFailure > 0)
+            {
+                SuccessfulAllocationPayloadWritesBeforeFailure--;
+            }
+
             if (FailNextWriteAddress == virtualAddress)
             {
                 FailNextWriteAddress = null;
@@ -485,9 +532,16 @@ public sealed class NpUniversalDataSystemExportsTests
             address = aligned;
             _nextAddress = aligned + size;
             _allocations.Add(address);
+            _allocationSizes[address] = size;
             return true;
         }
 
-        public bool TryFreeGuestMemory(ulong address) => _allocations.Remove(address);
+        public bool TryFreeGuestMemory(ulong address)
+        {
+            _allocationSizes.Remove(address);
+            return _allocations.Remove(address);
+        }
+
+        public ulong GetAllocationSize(ulong address) => _allocationSizes[address];
     }
 }
