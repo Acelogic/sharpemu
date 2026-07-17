@@ -10,6 +10,7 @@ namespace SharpEmu.Libs.Pad;
 
 public static class PadExports
 {
+    private const int OrbisPadErrorInvalidArgument = unchecked((int)0x80920001);
     private const int OrbisPadErrorInvalidHandle = unchecked((int)0x80920003);
     private const int OrbisPadErrorNotInitialized = unchecked((int)0x80920005);
     private const int OrbisPadErrorDeviceNotConnected = unchecked((int)0x80920007);
@@ -37,7 +38,9 @@ public static class PadExports
     private static PadState _cachedInputState;
 
     private static bool _initialized;
+    private static int _primaryPadDeviceState;
     private static int _controlsAnnouncementLogged;
+    private static readonly object PadStateGate = new();
 
     [SysAbiExport(
         Nid = "hv1luiJrqQM",
@@ -46,9 +49,66 @@ public static class PadExports
         LibraryName = "libScePad")]
     public static int PadInit(CpuContext ctx)
     {
-        _initialized = true;
+        lock (PadStateGate)
+        {
+            _initialized = true;
+        }
+
         HostPlatform.Current.Input.EnsureStarted();
         return ctx.SetReturn(0);
+    }
+
+    [SysAbiExport(
+        Nid = "znaWI0gpuo8",
+        ExportName = "scePadGetTriggerEffectState",
+        Target = Generation.Gen5,
+        LibraryName = "libScePad")]
+    public static int PadGetTriggerEffectState(CpuContext ctx)
+    {
+        var handle = unchecked((int)ctx[CpuRegister.Rdi]);
+        var stateAddress = ctx[CpuRegister.Rsi];
+        if (!_initialized)
+        {
+            return ctx.SetReturn(OrbisPadErrorNotInitialized);
+        }
+
+        if (stateAddress == 0)
+        {
+            return ctx.SetReturn(OrbisPadErrorInvalidArgument);
+        }
+
+        lock (PadStateGate)
+        {
+            if (!IsPrimaryPadHandle(handle))
+            {
+                return ctx.SetReturn(OrbisPadErrorInvalidHandle);
+            }
+
+            if (_primaryPadDeviceState is 3 or 4)
+            {
+                return ctx.SetReturn(OrbisPadErrorInvalidArgument);
+            }
+
+            // The current host backends do not expose independent adaptive-trigger
+            // mode state. Firmware normalizes that unsupported-backend result to a
+            // successful all-zero state, written as exactly two uint32 values.
+            Span<byte> state = stackalloc byte[2 * sizeof(uint)];
+            state.Clear();
+            return ctx.Memory.TryWrite(stateAddress, state)
+                ? ctx.SetReturn(0)
+                : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+    }
+
+    internal static void ResetTriggerEffectStateForTests(
+        bool initialized = false,
+        int deviceState = 0)
+    {
+        lock (PadStateGate)
+        {
+            _initialized = initialized;
+            _primaryPadDeviceState = deviceState;
+        }
     }
 
     [SysAbiExport(

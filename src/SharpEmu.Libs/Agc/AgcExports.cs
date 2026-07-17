@@ -186,6 +186,12 @@ public static partial class AgcExports
     private const ulong ShaderNumOutputSemanticsOffset = 0x56;
     private const ulong ShaderTypeOffset = 0x5A;
     private const ulong ShaderNumShRegistersOffset = 0x5C;
+    private const int AgcErrorIncompatibleShaderPair = unchecked((int)0x8A6C0008);
+    private const int ShaderDescriptorSize = 0x60;
+    private const uint InternalGsRegister = 0x080;
+    private const uint InternalHsRegister = 0x100;
+    private const uint SpiShaderPgmRsrc1Hs = 0x10A;
+    private const uint SpiShaderPgmRsrc2Hs = 0x10B;
     private const ulong CommandBufferCursorUpOffset = 0x10;
     private const ulong CommandBufferCursorDownOffset = 0x18;
     private const ulong CommandBufferCallbackOffset = 0x20;
@@ -801,6 +807,452 @@ public static partial class AgcExports
         TraceCreateShader(destinationAddress, headerAddress, codeAddress, "ok");
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "BfBDZGbti7A",
+        ExportName = "sceAgcGetIsTrinityMode",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int GetIsTrinityMode(CpuContext ctx)
+    {
+        // This is a void firmware ABI. SharpEmu currently models base Prospero,
+        // so write one false byte and deliberately leave RAX untouched.
+        Span<byte> mode = stackalloc byte[1];
+        mode[0] = 0;
+        _ = ctx.Memory.TryWrite(ctx[CpuRegister.Rdi], mode);
+        return 0;
+    }
+
+    // Human-readable names for these exports have not been recovered. Keep
+    // explicit placeholders and dispatch solely by the verified NIDs.
+#pragma warning disable SHEM004, SHEM006
+    [SysAbiExport(
+        Nid = "dolOmWH+huQ",
+        ExportName = "unknown_dolOmWH_huQ",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int UnknownGetCombinedShaderRegisterStorageSize(CpuContext ctx)
+    {
+        var outputAddress = ctx[CpuRegister.Rdi];
+        var firstShaderAddress = ctx[CpuRegister.Rsi];
+        var secondShaderAddress = ctx[CpuRegister.Rdx];
+
+        if (!TryReadByte(ctx, firstShaderAddress + ShaderTypeOffset, out var firstType))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        var requiredSecondType = firstType switch
+        {
+            5 => (byte)7,
+            4 => (byte)6,
+            _ => byte.MaxValue,
+        };
+        if (requiredSecondType == byte.MaxValue ||
+            !TryReadByte(ctx, secondShaderAddress + ShaderTypeOffset, out var secondType))
+        {
+            return requiredSecondType == byte.MaxValue
+                ? ctx.SetReturn(AgcErrorIncompatibleShaderPair)
+                : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        if (secondType != requiredSecondType)
+        {
+            return ctx.SetReturn(AgcErrorIncompatibleShaderPair);
+        }
+
+        if (!TryReadByte(
+                ctx,
+                secondShaderAddress + ShaderNumShRegistersOffset,
+                out var registerCount) ||
+            !ctx.TryWriteUInt64(outputAddress, (ulong)registerCount * 8) ||
+            !ctx.TryWriteUInt64(outputAddress + sizeof(ulong), 4))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        return ctx.SetReturn(0);
+    }
+
+    [SysAbiExport(
+        Nid = "fd5Bp5tGTgo",
+        ExportName = "unknown_fd5Bp5tGTgo",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int UnknownCreateCombinedShader(CpuContext ctx)
+    {
+        var outputAddress = ctx[CpuRegister.Rdi];
+        var firstShaderAddress = ctx[CpuRegister.Rsi];
+        var secondShaderAddress = ctx[CpuRegister.Rdx];
+        var registerBufferAddress = ctx[CpuRegister.Rcx];
+
+        if (!TryReadByte(ctx, firstShaderAddress + ShaderTypeOffset, out var firstType))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        var requiredSecondType = firstType switch
+        {
+            5 => (byte)7,
+            4 => (byte)6,
+            _ => byte.MaxValue,
+        };
+        var combinedType = firstType == 5 ? (byte)3 : (byte)2;
+        if (requiredSecondType == byte.MaxValue ||
+            !TryReadByte(ctx, secondShaderAddress + ShaderTypeOffset, out var secondType))
+        {
+            return requiredSecondType == byte.MaxValue
+                ? ctx.SetReturn(AgcErrorIncompatibleShaderPair)
+                : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        if (secondType != requiredSecondType)
+        {
+            return ctx.SetReturn(AgcErrorIncompatibleShaderPair);
+        }
+
+        Span<byte> descriptor = stackalloc byte[ShaderDescriptorSize];
+        if (!ctx.Memory.TryRead(secondShaderAddress, descriptor) ||
+            !ctx.Memory.TryWrite(outputAddress, descriptor))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        Span<byte> type = stackalloc byte[1];
+        type[0] = combinedType;
+        if (!ctx.Memory.TryWrite(outputAddress + ShaderTypeOffset, type) ||
+            !TryShaderPairCompatibility(
+                ctx,
+                firstShaderAddress,
+                descriptor,
+                firstType == 5,
+                out var compatible))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        // Firmware has already copied the descriptor and changed its type when
+        // this check fails. Preserve that deliberately non-atomic behavior.
+        if (!compatible)
+        {
+            return ctx.SetReturn(AgcErrorIncompatibleShaderPair);
+        }
+
+        if (registerBufferAddress != 0 &&
+            !CopyCombinedShaderRegisters(
+                ctx,
+                outputAddress,
+                descriptor,
+                registerBufferAddress))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        if (!TryReconcileCombinedShaderRegisters(
+                ctx,
+                outputAddress,
+                firstShaderAddress,
+                firstType == 5) ||
+            !ctx.TryWriteUInt64(outputAddress + sizeof(ulong), 0))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        return ctx.SetReturn(0);
+    }
+#pragma warning restore SHEM004, SHEM006
+
+    private static bool TryShaderPairCompatibility(
+        CpuContext ctx,
+        ulong firstShaderAddress,
+        ReadOnlySpan<byte> secondDescriptor,
+        bool hullLocalPair,
+        out bool compatible)
+    {
+        compatible = false;
+        if (!TryReadUInt64(
+                ctx,
+                firstShaderAddress + ShaderSpecialsOffset,
+                out var firstSpecialsAddress))
+        {
+            return false;
+        }
+
+        var secondSpecialsAddress = BinaryPrimitives.ReadUInt64LittleEndian(
+            secondDescriptor[(int)ShaderSpecialsOffset..]);
+        if (!TryReadUInt64(ctx, firstSpecialsAddress + 8, out var firstFlags) ||
+            !TryReadUInt64(ctx, secondSpecialsAddress + 8, out var secondFlags))
+        {
+            return false;
+        }
+
+        var compatibilityBit = hullLocalPair ? 53 : 54;
+        compatible = (((firstFlags ^ secondFlags) >> compatibilityBit) & 1) == 0;
+        return true;
+    }
+
+    private static bool CopyCombinedShaderRegisters(
+        CpuContext ctx,
+        ulong outputAddress,
+        ReadOnlySpan<byte> secondDescriptor,
+        ulong registerBufferAddress)
+    {
+        var sourceAddress = BinaryPrimitives.ReadUInt64LittleEndian(
+            secondDescriptor[(int)ShaderShRegistersOffset..]);
+        var byteCount = secondDescriptor[(int)ShaderNumShRegistersOffset] * 8;
+        if (byteCount != 0)
+        {
+            var registers = new byte[byteCount];
+            if (!ctx.Memory.TryRead(sourceAddress, registers) ||
+                !ctx.Memory.TryWrite(registerBufferAddress, registers))
+            {
+                return false;
+            }
+        }
+
+        return ctx.TryWriteUInt64(
+            outputAddress + ShaderShRegistersOffset,
+            registerBufferAddress);
+    }
+
+    private static bool TryReconcileCombinedShaderRegisters(
+        CpuContext ctx,
+        ulong outputAddress,
+        ulong firstShaderAddress,
+        bool hullLocalPair)
+    {
+        if (!TryReadUInt64(
+                ctx,
+                firstShaderAddress + ShaderShRegistersOffset,
+                out var firstRegistersAddress) ||
+            !TryReadByte(
+                ctx,
+                firstShaderAddress + ShaderNumShRegistersOffset,
+                out var firstRegisterCount) ||
+            !TryReadUInt64(
+                ctx,
+                outputAddress + ShaderShRegistersOffset,
+                out var outputRegistersAddress) ||
+            !TryReadByte(
+                ctx,
+                outputAddress + ShaderNumShRegistersOffset,
+                out var outputRegisterCount))
+        {
+            return false;
+        }
+
+        var internalRegister = hullLocalPair
+            ? InternalHsRegister
+            : InternalGsRegister;
+        var resource1Register = hullLocalPair
+            ? SpiShaderPgmRsrc1Hs
+            : SpiShaderPgmRsrc1Gs;
+        var resource2Register = hullLocalPair
+            ? SpiShaderPgmRsrc2Hs
+            : SpiShaderPgmRsrc2Gs;
+        var programLoRegister = hullLocalPair
+            ? SpiShaderPgmLoLs
+            : SpiShaderPgmLoEs;
+
+        if (!TryFindShaderRegister(
+                ctx,
+                firstRegistersAddress,
+                firstRegisterCount,
+                internalRegister,
+                0,
+                out var firstInternal0) ||
+            !TryFindShaderRegister(
+                ctx,
+                firstRegistersAddress,
+                firstRegisterCount,
+                internalRegister,
+                1,
+                out var firstInternal1) ||
+            !TryFindShaderRegister(
+                ctx,
+                outputRegistersAddress,
+                outputRegisterCount,
+                internalRegister,
+                0,
+                out var outputInternal0) ||
+            !TryFindShaderRegister(
+                ctx,
+                outputRegistersAddress,
+                outputRegisterCount,
+                internalRegister,
+                1,
+                out var outputInternal1) ||
+            !TryReadUInt32(ctx, firstInternal0 + sizeof(uint), out var firstInternalValue0) ||
+            !TryReadUInt32(ctx, firstInternal1 + sizeof(uint), out var firstInternalValue1) ||
+            !TryWriteUInt32(ctx, outputInternal0 + sizeof(uint), firstInternalValue0) ||
+            !TryWriteUInt32(ctx, outputInternal1 + sizeof(uint), firstInternalValue1) ||
+            !TryFindShaderRegister(
+                ctx,
+                firstRegistersAddress,
+                firstRegisterCount,
+                resource1Register,
+                0,
+                out var firstResource1) ||
+            !TryFindShaderRegister(
+                ctx,
+                firstRegistersAddress,
+                firstRegisterCount,
+                resource2Register,
+                0,
+                out var firstResource2) ||
+            !TryFindShaderRegister(
+                ctx,
+                outputRegistersAddress,
+                outputRegisterCount,
+                resource1Register,
+                0,
+                out var outputResource1) ||
+            !TryFindShaderRegister(
+                ctx,
+                outputRegistersAddress,
+                outputRegisterCount,
+                resource2Register,
+                0,
+                out var outputResource2) ||
+            !TryReadUInt32(ctx, firstResource1 + sizeof(uint), out var firstResourceValue1) ||
+            !TryReadUInt32(ctx, firstResource2 + sizeof(uint), out var firstResourceValue2) ||
+            !TryReadUInt32(ctx, outputResource1 + sizeof(uint), out var outputResourceValue1) ||
+            !TryReadUInt32(ctx, outputResource2 + sizeof(uint), out var outputResourceValue2))
+        {
+            return false;
+        }
+
+        ReconcileShaderResourceRegisters(
+            hullLocalPair,
+            firstResourceValue1,
+            firstResourceValue2,
+            ref outputResourceValue1,
+            ref outputResourceValue2);
+        if (!TryWriteUInt32(
+                ctx,
+                outputResource1 + sizeof(uint),
+                outputResourceValue1) ||
+            !TryWriteUInt32(
+                ctx,
+                outputResource2 + sizeof(uint),
+                outputResourceValue2) ||
+            !TryFindShaderRegister(
+                ctx,
+                outputRegistersAddress,
+                outputRegisterCount,
+                programLoRegister,
+                0,
+                out var programLoAddress) ||
+            !TryReadUInt64(
+                ctx,
+                firstShaderAddress + ShaderCodeOffset,
+                out var codeAddress))
+        {
+            return false;
+        }
+
+        Span<byte> programHi = stackalloc byte[1];
+        programHi[0] = (byte)(codeAddress >> 40);
+        return ctx.Memory.TryWrite(programLoAddress + 12, programHi) &&
+               TryWriteUInt32(
+                   ctx,
+                   programLoAddress + sizeof(uint),
+                   (uint)(codeAddress >> 8));
+    }
+
+    private static bool TryFindShaderRegister(
+        CpuContext ctx,
+        ulong registersAddress,
+        byte registerCount,
+        uint register,
+        int occurrence,
+        out ulong registerAddress)
+    {
+        for (var index = 0; index < registerCount; index++)
+        {
+            var candidateAddress = registersAddress + ((ulong)index * 8);
+            if (!TryReadUInt32(ctx, candidateAddress, out var candidate))
+            {
+                registerAddress = 0;
+                return false;
+            }
+
+            if (candidate != register)
+            {
+                continue;
+            }
+
+            if (occurrence-- == 0)
+            {
+                registerAddress = candidateAddress;
+                return true;
+            }
+        }
+
+        registerAddress = 0;
+        return false;
+    }
+
+    private static void ReconcileShaderResourceRegisters(
+        bool hullLocalPair,
+        uint firstResource1,
+        uint firstResource2,
+        ref uint outputResource1,
+        ref uint outputResource2)
+    {
+        var firstWidth = (firstResource1 & 0x3F) * 8 + 8;
+        var outputWidth = (outputResource1 & 0x3F) * 8 + 8;
+        var mergedWidth = Math.Max(firstWidth, outputWidth);
+        var firstRequirement =
+            (firstWidth >> 1) + ((firstResource2 >> 28) * 8);
+        var outputRequirement =
+            (outputWidth >> 1) + ((outputResource2 >> 28) * 8);
+        var mergedRequirement = Math.Max(firstRequirement, outputRequirement);
+        uint mergedRingSize = 0;
+        if ((mergedWidth >> 1) < mergedRequirement)
+        {
+            var minimumRequirement = Math.Min(
+                firstRequirement,
+                outputRequirement);
+            mergedRingSize =
+                ((mergedRequirement - minimumRequirement) * 0x0040_0000u +
+                 0x01C0_0000u) &
+                0xF000_0000u;
+        }
+
+        outputResource1 =
+            (((mergedWidth >> 3) - 1) & 0x3F) |
+            (outputResource1 & 0xFFFF_FFC0u);
+        outputResource2 =
+            (outputResource2 & 0x0FFF_FFFFu) | mergedRingSize;
+
+        if (hullLocalPair)
+        {
+            var mergedMode = Math.Max(
+                (firstResource1 >> 28) & 3,
+                (outputResource1 >> 28) & 3);
+            outputResource1 =
+                (mergedMode << 28) | (outputResource1 & 0xCFFF_FFFFu);
+            outputResource2 =
+                (firstResource2 & 0x0800_003Eu) |
+                (outputResource2 & 0xF7FF_FFC1u);
+            return;
+        }
+
+        var mergedGsMode = Math.Max(
+            (firstResource1 >> 29) & 3,
+            (outputResource1 >> 29) & 3);
+        outputResource1 =
+            (mergedGsMode << 29) | (outputResource1 & 0x9FFF_FFFFu);
+        var mergedComponentCount = Math.Max(
+            (firstResource2 >> 16) & 3,
+            (outputResource2 >> 16) & 3) << 16;
+        outputResource2 =
+            (firstResource2 & 0x0800_003Eu) |
+            mergedComponentCount |
+            (outputResource2 & 0xF7F8_FFC1u) |
+            (firstResource2 & 0x0004_0000u);
     }
 
     [SysAbiExport(
