@@ -1501,6 +1501,9 @@ internal static unsafe class VulkanVideoPresenter
             ? 0x8000_0000u | ((format & 0x1FFu) << 8) | (numberType & 0xFFu)
             : 0;
 
+    internal static SamplerCreateInfo DecodeSamplerCreateInfo(GuestSampler sampler) =>
+        Presenter.DecodeSamplerCreateInfo(sampler);
+
     internal static bool TryDecodeRenderTargetFormat(
         uint dataFormat,
         uint numberType,
@@ -2463,6 +2466,13 @@ internal static unsafe class VulkanVideoPresenter
         // time the guest switches size or format at the same address.
         private readonly Dictionary<GuestImageVariantKey, GuestImageResource>
             _guestImageVariants = new();
+        private long _guestImageContentGeneration;
+        private readonly Dictionary<
+            (ulong Address, uint Width, uint Height, Format Format, uint GuestFormat),
+            ulong> _tracedGuestImageAliasSelections = new();
+        private readonly HashSet<
+            (ulong Address, string Source, ulong Image, ulong ShaderAddress)>
+            _tracedGuestImageGenerationSources = [];
         private readonly Dictionary<long, GuestImageResource> _guestImageVersions = new();
         private readonly HashSet<long> _capturedGuestFlipVersions = [];
         private readonly record struct GuestDepthKey(
@@ -2492,6 +2502,9 @@ internal static unsafe class VulkanVideoPresenter
         private int _tracedSmallGlobalWritebackEvents;
         private int _tracedLargeGlobalWritebackEvents;
         private readonly HashSet<ulong> _tracedGuestImageContents = new();
+        private readonly HashSet<(ulong Address, uint Width, uint Height, ulong Shader)>
+            _tracedGuestImageShaderContents = new();
+        private bool _traceGuestImageShaderGateReached;
         private readonly Dictionary<ulong, int> _tracedGuestWriteCounts = new();
         private readonly Dictionary<ulong, int> _tracedGuestImageUploadPayloadCounts = new();
         private readonly HashSet<ulong> _tracedInlineRefreshComputeReadbacks = new();
@@ -2613,6 +2626,7 @@ internal static unsafe class VulkanVideoPresenter
             public bool NeedsUpload;
             public bool OwnsStorage;
             public bool IsStorage;
+            public bool WritesImage;
             public bool Cached;
             public ulong CpuContentFingerprint;
             public bool UpdatesCpuContent;
@@ -2718,7 +2732,10 @@ internal static unsafe class VulkanVideoPresenter
             public Framebuffer Framebuffer;
             public Dictionary<GuestDepthKey, DepthFramebufferResource> DepthFramebuffers { get; } = new();
             public bool Initialized;
+            public long ContentGeneration;
             public bool InitialUploadPending;
+            public GuestImageResource? AliasSyncSource;
+            public long AliasSyncGeneration;
             public bool IsCpuBacked;
             public ulong CpuContentFingerprint;
         }
@@ -5159,6 +5176,19 @@ internal static unsafe class VulkanVideoPresenter
                 return Array.Empty<GuestImageResource>();
             }
 
+            if (_traceGuestImageShaderGateEnabled &&
+                !_traceGuestImageShaderGateReached)
+            {
+                if (!AddressListContains(
+                        "SHARPEMU_TRACE_GUEST_IMAGE_AFTER_SHADER_ADDRS",
+                        shaderAddress))
+                {
+                    return Array.Empty<GuestImageResource>();
+                }
+
+                _traceGuestImageShaderGateReached = true;
+            }
+
             var candidates = new HashSet<GuestImageResource>();
             foreach (var renderTarget in renderTargets ?? [])
             {
@@ -6686,6 +6716,8 @@ internal static unsafe class VulkanVideoPresenter
             GuestImageResource? best = null;
             var bestScore = int.MinValue;
             var guestFormat = GetGuestTextureFormat(texture.Format, texture.NumberType);
+            var traceVariants = ShouldTraceGuestImageVariantForDiagnostics(texture.Address);
+            List<string>? traceCandidates = traceVariants ? [] : null;
 
             void Consider(GuestImageResource candidate, bool isActive)
             {
@@ -6724,7 +6756,21 @@ internal static unsafe class VulkanVideoPresenter
                     score += 1;
                 }
 
-                if (score > bestScore)
+                traceCandidates?.Add(
+                    $"{candidate.Width}x{candidate.Height}/{candidate.Format}" +
+                    $"/g{candidate.ContentGeneration}/s{score}" +
+                    $"/active={(isActive ? 1 : 0)}" +
+                    $"/image=0x{candidate.Image.Handle:X}");
+
+                // Switching the active target happens before that draw resolves
+                // its sampled textures.  Rank the variants by the last completed
+                // content write first, otherwise a newly activated (or exact-size
+                // but stale) image can hide the surface produced by the preceding
+                // pass at the same guest address.
+                if (best is null ||
+                    candidate.ContentGeneration > best.ContentGeneration ||
+                    candidate.ContentGeneration == best.ContentGeneration &&
+                    score > bestScore)
                 {
                     best = candidate;
                     bestScore = score;
@@ -6747,6 +6793,27 @@ internal static unsafe class VulkanVideoPresenter
             if (best is not null)
             {
                 guestImage = best;
+                var traceKey = (
+                    texture.Address,
+                    texture.Width,
+                    texture.Height,
+                    viewFormat,
+                    guestFormat);
+                if (traceVariants &&
+                    (!_tracedGuestImageAliasSelections.TryGetValue(
+                         traceKey,
+                         out var previousImage) ||
+                     previousImage != best.Image.Handle))
+                {
+                    _tracedGuestImageAliasSelections[traceKey] = best.Image.Handle;
+                    Console.Error.WriteLine(
+                        $"[GVAR] select addr=0x{texture.Address:X} " +
+                        $"descriptor={texture.Width}x{texture.Height}/{viewFormat}" +
+                        $"/guest={guestFormat} selected={best.Width}x{best.Height}" +
+                        $"/{best.Format}/g{best.ContentGeneration}" +
+                        $"/image=0x{best.Image.Handle:X} " +
+                        $"candidates=[{string.Join(';', traceCandidates!)}]");
+                }
                 if (ShouldTraceVulkanResources())
                 {
                     Console.Error.WriteLine(
@@ -6754,7 +6821,8 @@ internal static unsafe class VulkanVideoPresenter
                         $"addr=0x{texture.Address:X16} " +
                         $"tex={texture.Width}x{texture.Height}/{viewFormat} " +
                         $"image={best.Width}x{best.Height}/{best.Format} " +
-                        $"initialized={best.Initialized}");
+                        $"initialized={best.Initialized} " +
+                        $"generation={best.ContentGeneration}");
                 }
                 return true;
             }
@@ -7007,8 +7075,12 @@ internal static unsafe class VulkanVideoPresenter
                 return false;
             }
 
-            return texture.Width <= guestImage.Width &&
-                texture.Height <= guestImage.Height;
+            // Tiled render targets are routinely rebound through descriptors
+            // whose logical extent differs from the current dynamic-resolution
+            // surface.  Vulkan samples normalized coordinates from the selected
+            // image, so either direction is usable; recency decides which cached
+            // variant contains the guest allocation's current contents.
+            return true;
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]
@@ -7037,6 +7109,7 @@ internal static unsafe class VulkanVideoPresenter
                 RowLength = guestImage.Width,
                 DstSelect = texture.DstSelect,
                 IsStorage = true,
+                WritesImage = texture.WritesImage,
                 SamplerState = texture.Sampler,
                 GuestImage = guestImage,
             };
@@ -7181,6 +7254,7 @@ internal static unsafe class VulkanVideoPresenter
                 DstSelect = texture.DstSelect,
                 OwnsStorage = true,
                 IsStorage = true,
+                WritesImage = texture.WritesImage,
                 SamplerState = texture.Sampler,
                 GuestImage = guestImage,
             };
@@ -7830,13 +7904,24 @@ internal static unsafe class VulkanVideoPresenter
                 return cachedSampler;
             }
 
+            var samplerInfo = DecodeSamplerCreateInfo(sampler);
+            Sampler vkSampler;
+            Check(
+                _vk.CreateSampler(_device, &samplerInfo, null, out vkSampler),
+                "vkCreateSampler(texture)");
+            _samplers.Add(sampler, vkSampler);
+            return vkSampler;
+        }
+
+        internal static SamplerCreateInfo DecodeSamplerCreateInfo(GuestSampler sampler)
+        {
             var minLod = DecodeSamplerMipFilter(sampler) == 0
                 ? 0f
                 : DecodeSamplerMinLod(sampler);
             var maxLod = DecodeSamplerMipFilter(sampler) == 0
                 ? 0f
                 : DecodeSamplerMaxLod(sampler);
-            var samplerInfo = new SamplerCreateInfo
+            return new SamplerCreateInfo
             {
                 SType = StructureType.SamplerCreateInfo,
                 MagFilter = ToVkFilter(DecodeSamplerMagFilter(sampler)),
@@ -7846,18 +7931,19 @@ internal static unsafe class VulkanVideoPresenter
                 AddressModeV = ToVkSamplerAddressMode(DecodeSamplerClampY(sampler)),
                 AddressModeW = ToVkSamplerAddressMode(DecodeSamplerClampZ(sampler)),
                 MipLodBias = DecodeSamplerLodBias(sampler),
-                CompareEnable = DecodeSamplerDepthCompare(sampler) != 0,
+                // DEPTH_COMPARE_FUNC is sampler state, but the MIMG opcode
+                // decides whether that state participates in the operation.
+                // The SPIR-V translator lowers SAMPLE_C/GATHER4_C manually,
+                // so every Vulkan sampler bound here must remain a regular
+                // color sampler. Enabling comparison merely because the raw
+                // descriptor contains ALWAYS (the common 0x7 default) makes
+                // ordinary IMAGE_SAMPLE_LZ results undefined on Vulkan.
+                CompareEnable = false,
                 CompareOp = ToVkCompareOp(DecodeSamplerDepthCompare(sampler)),
                 MinLod = minLod,
                 MaxLod = Math.Max(minLod, maxLod),
                 BorderColor = ToVkBorderColor(DecodeSamplerBorderColor(sampler)),
             };
-            Sampler vkSampler;
-            Check(
-                _vk.CreateSampler(_device, &samplerInfo, null, out vkSampler),
-                "vkCreateSampler(texture)");
-            _samplers.Add(sampler, vkSampler);
-            return vkSampler;
         }
 
         private static ComponentMapping ToVkComponentMapping(uint dstSelect)
@@ -9215,7 +9301,10 @@ internal static unsafe class VulkanVideoPresenter
                 }
 
                 MarkSampledImagesInitialized(resources);
-                MarkStorageImagesInitialized(resources, traceContents: false);
+                MarkStorageImagesInitialized(
+                    resources,
+                    traceContents: false,
+                    shaderAddress: work.ShaderAddress);
                 if (work.WritesGlobalMemory)
                 {
                     // The CPU submit thread may immediately consume an indirect
@@ -9995,7 +10084,7 @@ internal static unsafe class VulkanVideoPresenter
                 targets[index] = GetOrCreateGuestImage(targetDescriptor, formats[index]);
                 if (work.Targets[index].Address != 0 &&
                     TakeGuestImageInitialData(work.Targets[index].Address) is { } initialData &&
-                    !targets[index].Initialized &&
+                    !HasGuestImageContents(targets[index]) &&
                     (ulong)initialData.Length ==
                         (ulong)targets[index].Width * targets[index].Height * 4)
                 {
@@ -10107,10 +10196,10 @@ internal static unsafe class VulkanVideoPresenter
                 }
 
                 var renderPass = depthFramebuffer is null
-                    ? firstTarget.Initialized
+                    ? HasGuestImageContents(firstTarget)
                         ? firstTarget.RenderPass
                         : firstTarget.InitialRenderPass
-                    : firstTarget.Initialized
+                    : HasGuestImageContents(firstTarget)
                         ? depth!.Initialized && !clearDepthForDraw
                             ? depthFramebuffer.LoadRenderPass
                             : depthFramebuffer.DepthClearRenderPass
@@ -10128,7 +10217,7 @@ internal static unsafe class VulkanVideoPresenter
                         firstTarget.Width,
                         firstTarget.Height,
                         targets.Select(target =>
-                            target.Initialized || target.InitialUploadPending).ToArray(),
+                            HasGuestImageContents(target)).ToArray(),
                         depth,
                         depth?.Initialized == true && !clearDepthForDraw);
                     transientRenderPass = renderPass;
@@ -10175,6 +10264,12 @@ internal static unsafe class VulkanVideoPresenter
                 }
 
                 CloseOpenTranslatedRenderPass();
+                foreach (var target in targets)
+                {
+                    RecordGuestImageAliasSync(
+                        target,
+                        PipelineStageFlags.FragmentShaderBit);
+                }
                 RecordGlobalBufferVisibilityBarrier(
                     _commandBuffer,
                     resources,
@@ -10194,7 +10289,7 @@ internal static unsafe class VulkanVideoPresenter
                 for (var index = 0; index < targets.Length; index++)
                 {
                     var hasPriorContents =
-                        targets[index].Initialized || targets[index].InitialUploadPending;
+                        HasGuestImageContents(targets[index]);
                     anyPriorContents |= hasPriorContents;
                     toColorAttachments[index] = new ImageMemoryBarrier
                     {
@@ -10314,7 +10409,15 @@ internal static unsafe class VulkanVideoPresenter
                 foreach (var target in targets)
                 {
                     target.Initialized = true;
+                    target.ContentGeneration = Interlocked.Increment(
+                        ref _guestImageContentGeneration);
+                    target.AliasSyncSource = null;
+                    target.AliasSyncGeneration = 0;
                     target.InitialUploadPending = false;
+                    TraceGuestImageGeneration(
+                        target,
+                        "render-target",
+                        work.ShaderAddress);
                 }
                 if (depth is not null)
                 {
@@ -10330,7 +10433,10 @@ internal static unsafe class VulkanVideoPresenter
                     }
                 }
                 MarkSampledImagesInitialized(resources);
-                MarkStorageImagesInitialized(resources, traceContents: false);
+                MarkStorageImagesInitialized(
+                    resources,
+                    traceContents: false,
+                    shaderAddress: work.ShaderAddress);
 
                 if (HasAddressFilteredWritableGlobalBuffer(resources))
                 {
@@ -10584,6 +10690,11 @@ internal static unsafe class VulkanVideoPresenter
                 1,
                 &toShaderRead);
             target.Initialized = true;
+            target.ContentGeneration = Interlocked.Increment(
+                ref _guestImageContentGeneration);
+            target.AliasSyncSource = null;
+            target.AliasSyncGeneration = 0;
+            TraceGuestImageGeneration(target, "clear");
         }
 
         private void TraceGuestImageUploadPayload(
@@ -10715,6 +10826,11 @@ internal static unsafe class VulkanVideoPresenter
                     &toShaderRead);
 
                 target.Initialized = true;
+                target.ContentGeneration = Interlocked.Increment(
+                    ref _guestImageContentGeneration);
+                target.AliasSyncSource = null;
+                target.AliasSyncGeneration = 0;
+                TraceGuestImageGeneration(target, "seed-upload");
                 _batchRetireBuffers.Add((staging, stagingMemory));
                 staging = default;
                 stagingMemory = default;
@@ -10736,6 +10852,241 @@ internal static unsafe class VulkanVideoPresenter
                 {
                     _vk.FreeMemory(_device, stagingMemory, null);
                 }
+            }
+        }
+
+        private static bool HasGuestImageContents(GuestImageResource image) =>
+            image.Initialized ||
+            image.InitialUploadPending ||
+            image.AliasSyncSource is not null;
+
+        private GuestImageResource? FindNewestCompatibleGuestImageAlias(
+            GuestImageResource target)
+        {
+            GuestImageResource? best = null;
+
+            void Consider(GuestImageResource candidate)
+            {
+                if (ReferenceEquals(candidate, target) ||
+                    !candidate.Initialized ||
+                    candidate.Format != target.Format ||
+                    candidate.GuestFormat != target.GuestFormat ||
+                    candidate.Width > target.Width ||
+                    candidate.Height > target.Height ||
+                    candidate.ContentGeneration <= target.ContentGeneration ||
+                    best is not null &&
+                    candidate.ContentGeneration <= best.ContentGeneration)
+                {
+                    return;
+                }
+
+                // Same-address surfaces form a producer chain in increasing
+                // extent (scene -> upscale -> post-process).  Copying a newer
+                // large post-process image back into a smaller retained scene
+                // target destroys temporal/history content before the next
+                // frame redraws it.  Forward copies keep each producer alive
+                // while still materializing the larger consumer variants.
+                best = candidate;
+            }
+
+            if (_guestImages.TryGetValue(target.Address, out var active))
+            {
+                Consider(active);
+            }
+
+            foreach (var (key, candidate) in _guestImageVariants)
+            {
+                if (key.Address == target.Address)
+                {
+                    Consider(candidate);
+                }
+            }
+
+            return best;
+        }
+
+        private void ScheduleGuestImageAliasSync(GuestImageResource target)
+        {
+            var source = FindNewestCompatibleGuestImageAlias(target);
+            if (source is null)
+            {
+                if (target.AliasSyncGeneration <= target.ContentGeneration)
+                {
+                    target.AliasSyncSource = null;
+                    target.AliasSyncGeneration = 0;
+                }
+                return;
+            }
+
+            target.AliasSyncSource = source;
+            target.AliasSyncGeneration = source.ContentGeneration;
+        }
+
+        private void RecordGuestImageAliasSync(
+            GuestImageResource target,
+            PipelineStageFlags consumerStage)
+        {
+            ScheduleGuestImageAliasSync(target);
+            var source = target.AliasSyncSource;
+            if (source is null ||
+                ReferenceEquals(source, target) ||
+                !source.Initialized ||
+                source.ContentGeneration <= target.ContentGeneration)
+            {
+                target.AliasSyncSource = null;
+                target.AliasSyncGeneration = 0;
+                return;
+            }
+
+            var barriers = stackalloc ImageMemoryBarrier[2];
+            barriers[0] = new ImageMemoryBarrier
+            {
+                SType = StructureType.ImageMemoryBarrier,
+                SrcAccessMask =
+                    AccessFlags.ShaderReadBit |
+                    AccessFlags.ShaderWriteBit |
+                    AccessFlags.ColorAttachmentWriteBit |
+                    AccessFlags.TransferWriteBit,
+                DstAccessMask = AccessFlags.TransferReadBit,
+                OldLayout = ImageLayout.ShaderReadOnlyOptimal,
+                NewLayout = ImageLayout.TransferSrcOptimal,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Image = source.Image,
+                SubresourceRange = ColorSubresourceRange(),
+            };
+            barriers[1] = new ImageMemoryBarrier
+            {
+                SType = StructureType.ImageMemoryBarrier,
+                SrcAccessMask = HasGuestImageContents(target)
+                    ? AccessFlags.ShaderReadBit
+                    : 0,
+                DstAccessMask = AccessFlags.TransferWriteBit,
+                OldLayout = ImageLayout.ShaderReadOnlyOptimal,
+                NewLayout = ImageLayout.TransferDstOptimal,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Image = target.Image,
+                SubresourceRange = ColorSubresourceRange(),
+            };
+            _vk.CmdPipelineBarrier(
+                _commandBuffer,
+                PipelineStageFlags.AllCommandsBit,
+                PipelineStageFlags.TransferBit,
+                0,
+                0,
+                null,
+                0,
+                null,
+                2,
+                barriers);
+
+            if (source.Width == target.Width && source.Height == target.Height)
+            {
+                var copy = new ImageCopy
+                {
+                    SrcSubresource = new ImageSubresourceLayers(
+                        ImageAspectFlags.ColorBit, 0, 0, 1),
+                    DstSubresource = new ImageSubresourceLayers(
+                        ImageAspectFlags.ColorBit, 0, 0, 1),
+                    Extent = new Extent3D(source.Width, source.Height, 1),
+                };
+                _vk.CmdCopyImage(
+                    _commandBuffer,
+                    source.Image,
+                    ImageLayout.TransferSrcOptimal,
+                    target.Image,
+                    ImageLayout.TransferDstOptimal,
+                    1,
+                    &copy);
+            }
+            else
+            {
+                var sourceOffsets = new ImageBlit.SrcOffsetsBuffer
+                {
+                    Element0 = new Offset3D(0, 0, 0),
+                    Element1 = new Offset3D(
+                        checked((int)source.Width),
+                        checked((int)source.Height),
+                        1),
+                };
+                var destinationOffsets = new ImageBlit.DstOffsetsBuffer
+                {
+                    Element0 = new Offset3D(0, 0, 0),
+                    Element1 = new Offset3D(
+                        checked((int)target.Width),
+                        checked((int)target.Height),
+                        1),
+                };
+                var blit = new ImageBlit
+                {
+                    SrcSubresource = new ImageSubresourceLayers(
+                        ImageAspectFlags.ColorBit, 0, 0, 1),
+                    SrcOffsets = sourceOffsets,
+                    DstSubresource = new ImageSubresourceLayers(
+                        ImageAspectFlags.ColorBit, 0, 0, 1),
+                    DstOffsets = destinationOffsets,
+                };
+                _vk.CmdBlitImage(
+                    _commandBuffer,
+                    source.Image,
+                    ImageLayout.TransferSrcOptimal,
+                    target.Image,
+                    ImageLayout.TransferDstOptimal,
+                    1,
+                    &blit,
+                    Filter.Linear);
+            }
+
+            barriers[0] = new ImageMemoryBarrier
+            {
+                SType = StructureType.ImageMemoryBarrier,
+                SrcAccessMask = AccessFlags.TransferReadBit,
+                DstAccessMask = AccessFlags.ShaderReadBit,
+                OldLayout = ImageLayout.TransferSrcOptimal,
+                NewLayout = ImageLayout.ShaderReadOnlyOptimal,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Image = source.Image,
+                SubresourceRange = ColorSubresourceRange(),
+            };
+            barriers[1] = new ImageMemoryBarrier
+            {
+                SType = StructureType.ImageMemoryBarrier,
+                SrcAccessMask = AccessFlags.TransferWriteBit,
+                DstAccessMask = AccessFlags.ShaderReadBit,
+                OldLayout = ImageLayout.TransferDstOptimal,
+                NewLayout = ImageLayout.ShaderReadOnlyOptimal,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Image = target.Image,
+                SubresourceRange = ColorSubresourceRange(),
+            };
+            _vk.CmdPipelineBarrier(
+                _commandBuffer,
+                PipelineStageFlags.TransferBit,
+                consumerStage,
+                0,
+                0,
+                null,
+                0,
+                null,
+                2,
+                barriers);
+
+            target.Initialized = true;
+            target.InitialUploadPending = false;
+            target.ContentGeneration = source.ContentGeneration;
+            target.AliasSyncSource = null;
+            target.AliasSyncGeneration = 0;
+            if (ShouldTraceGuestImageVariantForDiagnostics(target.Address))
+            {
+                Console.Error.WriteLine(
+                    $"[GVAR] sync addr=0x{target.Address:X} " +
+                    $"source={source.Width}x{source.Height}/{source.Format}" +
+                    $"/g{source.ContentGeneration}/image=0x{source.Image.Handle:X} " +
+                    $"target={target.Width}x{target.Height}/{target.Format}" +
+                    $"/image=0x{target.Image.Handle:X}");
             }
         }
 
@@ -10784,16 +11135,20 @@ internal static unsafe class VulkanVideoPresenter
                         SetDebugName(ObjectType.Framebuffer, promotedFramebuffer.Handle, $"{promotedName} framebuffer");
                     }
 
+                    ScheduleGuestImageAliasSync(existing);
                     return existing;
                 }
 
-                if (_traceGuestImageEvents)
+                if (_traceGuestImageEvents ||
+                    ShouldTraceGuestImageVariantForDiagnostics(target.Address))
                 {
                     Console.Error.WriteLine(
                         $"[GIMG] recreate addr=0x{target.Address:X} " +
                         $"old={existing.Width}x{existing.Height}/{existing.Format}/m{existing.MipLevels} " +
                         $"new={target.Width}x{target.Height}/{format}/m{mipLevels} " +
-                        $"initialized={existing.Initialized}");
+                        $"initialized={existing.Initialized} " +
+                        $"generation={existing.ContentGeneration} " +
+                        $"image=0x{existing.Image.Handle:X}");
                 }
 
                 _guestImageVariants.Add(
@@ -10842,14 +11197,18 @@ internal static unsafe class VulkanVideoPresenter
                         "vulkan.render-target");
                 }
 
-                if (_traceGuestImageEvents)
+                if (_traceGuestImageEvents ||
+                    ShouldTraceGuestImageVariantForDiagnostics(target.Address))
                 {
                     Console.Error.WriteLine(
                         $"[GIMG] retained addr=0x{target.Address:X} " +
                         $"{target.Width}x{target.Height} fmt={format} " +
-                        $"initialized={retained.Initialized}");
+                        $"initialized={retained.Initialized} " +
+                        $"generation={retained.ContentGeneration} " +
+                        $"image=0x{retained.Image.Handle:X}");
                 }
 
+                ScheduleGuestImageAliasSync(retained);
                 return retained;
             }
 
@@ -10979,13 +11338,16 @@ internal static unsafe class VulkanVideoPresenter
                     "vulkan.render-target");
             }
 
-            if (_traceGuestImageEvents)
+            if (_traceGuestImageEvents ||
+                ShouldTraceGuestImageVariantForDiagnostics(target.Address))
             {
                 Console.Error.WriteLine(
                     $"[GIMG] created-as-rt addr=0x{target.Address:X} " +
-                    $"{target.Width}x{target.Height} fmt={format}");
+                    $"{target.Width}x{target.Height} fmt={format} " +
+                    $"image=0x{resource.Image.Handle:X}");
             }
 
+            ScheduleGuestImageAliasSync(resource);
             return resource;
         }
 
@@ -12676,11 +13038,26 @@ internal static unsafe class VulkanVideoPresenter
             TranslatedDrawResources resources,
             PipelineStageFlags shaderStage)
         {
+            var synchronizedAliases = new HashSet<GuestImageResource>();
             foreach (var texture in resources.Textures)
             {
                 if (texture.GuestDepth is { } depth)
                 {
                     RecordGuestDepthForSampling(depth, shaderStage);
+                }
+
+                // Dynamic-resolution render targets can share one guest address
+                // while using distinct Vulkan images. Alias selection schedules
+                // the newest compatible variant, but a plain sampled texture has
+                // no later render-target or storage transition that would execute
+                // that copy. Materialize it here before the descriptor is read.
+                // A pending CPU upload is authoritative and supersedes any alias.
+                if (!texture.IsStorage &&
+                    !texture.NeedsUpload &&
+                    texture.GuestImage is { } guestImage &&
+                    synchronizedAliases.Add(guestImage))
+                {
+                    RecordGuestImageAliasSync(guestImage, shaderStage);
                 }
 
                 if (!texture.NeedsUpload)
@@ -13198,6 +13575,7 @@ internal static unsafe class VulkanVideoPresenter
                     continue;
                 }
 
+                RecordGuestImageAliasSync(guestImage, shaderStage);
                 var barrier = new ImageMemoryBarrier
                 {
                     SType = StructureType.ImageMemoryBarrier,
@@ -13278,7 +13656,8 @@ internal static unsafe class VulkanVideoPresenter
 
         private void MarkStorageImagesInitialized(
             TranslatedDrawResources resources,
-            bool traceContents = true)
+            bool traceContents = true,
+            ulong shaderAddress = 0)
         {
             List<GuestImageResource>? traceImages = null;
             lock (_gate)
@@ -13293,6 +13672,17 @@ internal static unsafe class VulkanVideoPresenter
                     }
 
                     guestImage.Initialized = true;
+                    if (texture.WritesImage)
+                    {
+                        guestImage.ContentGeneration = Interlocked.Increment(
+                            ref _guestImageContentGeneration);
+                        guestImage.AliasSyncSource = null;
+                        guestImage.AliasSyncGeneration = 0;
+                        TraceGuestImageGeneration(
+                            guestImage,
+                            "storage-write",
+                            shaderAddress);
+                    }
                     guestImage.InitialUploadPending = false;
                     if (guestImage.GuestFormat != 0)
                     {
@@ -13319,7 +13709,7 @@ internal static unsafe class VulkanVideoPresenter
             }
         }
 
-        private static void MarkSampledImagesInitialized(
+        private void MarkSampledImagesInitialized(
             TranslatedDrawResources resources)
         {
             lock (_gate)
@@ -13335,6 +13725,11 @@ internal static unsafe class VulkanVideoPresenter
                     }
 
                     guestImage.Initialized = true;
+                    guestImage.ContentGeneration = Interlocked.Increment(
+                        ref _guestImageContentGeneration);
+                    guestImage.AliasSyncSource = null;
+                    guestImage.AliasSyncGeneration = 0;
+                    TraceGuestImageGeneration(guestImage, "sampled-upload");
                     guestImage.InitialUploadPending = false;
                     if (texture.UpdatesCpuContent)
                     {
@@ -13419,6 +13814,16 @@ internal static unsafe class VulkanVideoPresenter
                     : 1;
                 _guestImageTraceCounts[image.Address] = count;
                 return count % interval == 0;
+            }
+
+            if (_traceGuestImageShaderFilterEnabled)
+            {
+                return (addressMatched || broadTrace) &&
+                       _tracedGuestImageShaderContents.Add((
+                           image.Address,
+                           image.Width,
+                           image.Height,
+                           shaderAddress));
             }
 
             return (addressMatched || broadTrace) &&
@@ -13544,6 +13949,16 @@ internal static unsafe class VulkanVideoPresenter
             !string.IsNullOrWhiteSpace(
                 Environment.GetEnvironmentVariable(
                     "SHARPEMU_TRACE_GUEST_IMAGE_SHADER_ADDRS"));
+        private static readonly bool _traceGuestImageShaderGateEnabled =
+            !string.IsNullOrWhiteSpace(
+                Environment.GetEnvironmentVariable(
+                    "SHARPEMU_TRACE_GUEST_IMAGE_AFTER_SHADER_ADDRS"));
+        private static readonly bool _traceAllGuestImageGenerations =
+            string.Equals(
+                Environment.GetEnvironmentVariable(
+                    "SHARPEMU_TRACE_GUEST_IMAGE_GENERATIONS_ALL"),
+                "1",
+                StringComparison.Ordinal);
         private static readonly bool _traceGuestImageAddressFilterEnabled =
             !string.IsNullOrWhiteSpace(
                 Environment.GetEnvironmentVariable(
@@ -13630,6 +14045,43 @@ internal static unsafe class VulkanVideoPresenter
             return AddressListContains(
                 "SHARPEMU_TRACE_GUEST_IMAGE_ADDRS",
                 address);
+        }
+
+        private static bool ShouldTraceGuestImageVariantForDiagnostics(ulong address)
+        {
+            return AddressListContains(
+                "SHARPEMU_TRACE_GUEST_IMAGE_VARIANTS",
+                address);
+        }
+
+        private void TraceGuestImageGeneration(
+            GuestImageResource image,
+            string source,
+            ulong shaderAddress = 0)
+        {
+            if (!ShouldTraceGuestImageVariantForDiagnostics(image.Address) ||
+                _traceAllGuestImageGenerations &&
+                _traceGuestImageShaderGateEnabled &&
+                !_traceGuestImageShaderGateReached)
+            {
+                return;
+            }
+
+            if (!_traceAllGuestImageGenerations &&
+                !_tracedGuestImageGenerationSources.Add((
+                    image.Address,
+                    source,
+                    image.Image.Handle,
+                    shaderAddress)))
+            {
+                return;
+            }
+
+            Console.Error.WriteLine(
+                $"[GVAR] write addr=0x{image.Address:X} " +
+                $"source={source} shader=0x{shaderAddress:X} " +
+                $"image={image.Width}x{image.Height}/{image.Format}" +
+                $"/g{image.ContentGeneration}/image=0x{image.Image.Handle:X}");
         }
 
         private static bool ShouldTraceGuestImageWriteForDiagnostics(ulong address)

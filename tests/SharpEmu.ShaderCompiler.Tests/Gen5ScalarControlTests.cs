@@ -4,6 +4,7 @@
 using System.Buffers.Binary;
 using SharpEmu.HLE;
 using SharpEmu.ShaderCompiler;
+using SharpEmu.ShaderCompiler.Vulkan;
 using Xunit;
 
 namespace SharpEmu.ShaderCompiler.Tests;
@@ -41,6 +42,135 @@ public sealed class Gen5ScalarControlTests
             item => item.Opcode == "STrap");
         Assert.Equal(Gen5ShaderEncoding.Sopp, instruction.Encoding);
         Assert.Equal(trapId, instruction.Words[0] & 0xFFFFu);
+    }
+
+    [Fact]
+    public void SCbranchCdbgsysCompilesAsDebuggerDetachedFallthrough()
+    {
+        var memory = new TestCpuMemory(ShaderAddress, 0x100);
+        Span<byte> shader = stackalloc byte[3 * sizeof(uint)];
+        BinaryPrimitives.WriteUInt32LittleEndian(
+            shader,
+            0xBF970001u);
+        BinaryPrimitives.WriteUInt32LittleEndian(
+            shader[sizeof(uint)..],
+            0xBF800000u);
+        BinaryPrimitives.WriteUInt32LittleEndian(
+            shader[(2 * sizeof(uint))..],
+            SEndpgm);
+        Assert.True(memory.TryWrite(ShaderAddress, shader));
+
+        var ctx = new CpuContext(memory, Generation.Gen5);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                ShaderAddress,
+                out var program,
+                out var error),
+            error);
+        Assert.Equal("SCbranchCdbgsys", program.Instructions[0].Opcode);
+
+        var state = new Gen5ShaderState(program, [], null);
+        var scalarRegisters = new uint[256];
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            [],
+            []);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                1,
+                1,
+                1,
+                out _,
+                out error),
+            error);
+    }
+
+    [Fact]
+    public void DeclaredShaderUsesConsistentBulkSnapshot()
+    {
+        const ulong headerAddress = ShaderAddress + 0x100;
+        const uint computePgmRsrc2 = 0x213;
+        const uint computeUserData = 0x240;
+        const uint sNop = 0xBF800000;
+        var backing = new TestCpuMemory(ShaderAddress, 0x200);
+        Span<byte> shader = stackalloc byte[2 * sizeof(uint)];
+        BinaryPrimitives.WriteUInt32LittleEndian(shader, sNop);
+        BinaryPrimitives.WriteUInt32LittleEndian(shader[sizeof(uint)..], SEndpgm);
+        Assert.True(backing.TryWrite(ShaderAddress, shader));
+
+        Span<byte> size = stackalloc byte[sizeof(uint)];
+        BinaryPrimitives.WriteUInt32LittleEndian(size, (uint)shader.Length);
+        Assert.True(backing.TryWrite(headerAddress + 0x44, size));
+
+        var memory = new StaleSingleWordCpuMemory(
+            backing,
+            ShaderAddress + sizeof(uint),
+            0x00000048);
+        var ctx = new CpuContext(memory, Generation.Gen5);
+        var registers = new Dictionary<uint, uint>
+        {
+            [computePgmRsrc2] = 0,
+        };
+        Assert.True(
+            Gen5ShaderTranslator.TryCreateState(
+                ctx,
+                ShaderAddress,
+                headerAddress,
+                registers,
+                computeUserData,
+                out var state,
+                out var error),
+            error);
+        Assert.Equal(["SNop", "SEndpgm"], state.Program.Instructions.Select(
+            static instruction => instruction.Opcode));
+    }
+
+    [Fact]
+    public void DeclaredShaderRetriesTransientPartialSnapshot()
+    {
+        const ulong headerAddress = ShaderAddress + 0x100;
+        const uint computePgmRsrc2 = 0x213;
+        const uint computeUserData = 0x240;
+        const uint sNop = 0xBF800000;
+        var backing = new TestCpuMemory(ShaderAddress, 0x200);
+        Span<byte> shader = stackalloc byte[2 * sizeof(uint)];
+        BinaryPrimitives.WriteUInt32LittleEndian(shader, sNop);
+        BinaryPrimitives.WriteUInt32LittleEndian(shader[sizeof(uint)..], SEndpgm);
+        Assert.True(backing.TryWrite(ShaderAddress, shader));
+
+        Span<byte> size = stackalloc byte[sizeof(uint)];
+        BinaryPrimitives.WriteUInt32LittleEndian(size, (uint)shader.Length);
+        Assert.True(backing.TryWrite(headerAddress + 0x44, size));
+
+        var memory = new TransientPartialSnapshotCpuMemory(
+            backing,
+            ShaderAddress,
+            shader.Length,
+            sizeof(uint),
+            0x00000048,
+            transientReadCount: 4);
+        var ctx = new CpuContext(memory, Generation.Gen5);
+        var registers = new Dictionary<uint, uint>
+        {
+            [computePgmRsrc2] = 0,
+        };
+        Assert.True(
+            Gen5ShaderTranslator.TryCreateState(
+                ctx,
+                ShaderAddress,
+                headerAddress,
+                registers,
+                computeUserData,
+                out var state,
+                out var error),
+            error);
+        Assert.Equal(5, memory.ProgramReadCount);
+        Assert.Equal(["SNop", "SEndpgm"], state.Program.Instructions.Select(
+            static instruction => instruction.Opcode));
     }
 
     [Fact]
@@ -153,5 +283,60 @@ public sealed class Gen5ScalarControlTests
                 _storage.AsSpan((int)(address - baseAddress), source.Length));
             return true;
         }
+    }
+
+    private sealed class StaleSingleWordCpuMemory(
+        ICpuMemory inner,
+        ulong staleAddress,
+        uint staleWord) : ICpuMemory
+    {
+        public bool TryRead(ulong address, Span<byte> destination)
+        {
+            if (address == staleAddress && destination.Length == sizeof(uint))
+            {
+                BinaryPrimitives.WriteUInt32LittleEndian(destination, staleWord);
+                return true;
+            }
+
+            return inner.TryRead(address, destination);
+        }
+
+        public bool TryWrite(ulong address, ReadOnlySpan<byte> source) =>
+            inner.TryWrite(address, source);
+    }
+
+    private sealed class TransientPartialSnapshotCpuMemory(
+        ICpuMemory inner,
+        ulong programAddress,
+        int programLength,
+        int staleOffset,
+        uint staleWord,
+        int transientReadCount) : ICpuMemory
+    {
+        public int ProgramReadCount { get; private set; }
+
+        public bool TryRead(ulong address, Span<byte> destination)
+        {
+            if (!inner.TryRead(address, destination))
+            {
+                return false;
+            }
+
+            if (address == programAddress && destination.Length == programLength)
+            {
+                ProgramReadCount++;
+                if (ProgramReadCount <= transientReadCount)
+                {
+                    BinaryPrimitives.WriteUInt32LittleEndian(
+                        destination[staleOffset..],
+                        staleWord);
+                }
+            }
+
+            return true;
+        }
+
+        public bool TryWrite(ulong address, ReadOnlySpan<byte> source) =>
+            inner.TryWrite(address, source);
     }
 }

@@ -6,6 +6,7 @@ using SharpEmu.HLE;
 using SharpEmu.Libs.AvPlayer;
 using SharpEmu.Libs.Gpu;
 using SharpEmu.ShaderCompiler;
+using SharpEmu.ShaderCompiler.Vulkan;
 using SharpEmu.Libs.Kernel;
 using SharpEmu.Libs.VideoOut;
 using System.Buffers.Binary;
@@ -170,6 +171,12 @@ public static partial class AgcExports
     private const uint RegisterDefaultsVersion13 = 13;
     private const int RegisterDefaultsSize = 0x40;
     private const int RegisterDefaultBlockSize = 16 * 8;
+    // GDS is device-global storage, not address-zero per-draw scratch.  Give it
+    // a stable synthetic identity so the Vulkan guest-buffer cache preserves
+    // its contents across translated draws without exposing it as guest RAM.
+    private const ulong SyntheticGdsBaseAddress = 0xFFFF_FFFE_0000_0000;
+    private static readonly byte[] _persistentGds =
+        new byte[Gen5SpirvTranslator.GdsByteSize];
 
     private const ulong ShaderUserDataOffset = 0x08;
     private const ulong ShaderCodeOffset = 0x10;
@@ -237,6 +244,8 @@ public static partial class AgcExports
         _rejectedDispatchArguments = new();
     private static readonly ulong[] _dumpShaderProgramAddresses = ParseHexAddresses(
         Environment.GetEnvironmentVariable("SHARPEMU_DUMP_SHADER_PROGRAM_ADDRS"));
+    private static readonly ulong[] _dumpSpirvAddresses = ParseHexAddresses(
+        Environment.GetEnvironmentVariable("SHARPEMU_DUMP_SPIRV_ADDRS"));
     private static readonly string? _dumpShaderProgramDirectory =
         Environment.GetEnvironmentVariable("SHARPEMU_DUMP_SHADER_PROGRAM_DIR");
     private static readonly ConcurrentDictionary<(string Stage, ulong Address), byte>
@@ -247,7 +256,8 @@ public static partial class AgcExports
     private static readonly ConcurrentDictionary<
         (ulong Es, ulong EsState, uint EsRsrc1, ulong Ps, ulong PsState,
          uint PsRsrc1, ulong OutputLayout, uint OutputMasks, uint OutputCount, uint Attributes,
-         uint PsInputEna, uint PsInputAddr, ulong InputControls, ulong AliasAlignment),
+         uint PsInputEna, uint PsInputAddr, ulong InputControls, bool UsesGds,
+         ulong AliasAlignment),
         (IGuestCompiledShader Vertex, IGuestCompiledShader Pixel)> _graphicsShaderCache = new();
     private static readonly ConcurrentDictionary<
         (ulong Cs, ulong State, uint Rsrc1, uint LocalX, uint LocalY, uint LocalZ,
@@ -529,11 +539,13 @@ public static partial class AgcExports
         uint RawBlendControl,
         uint RawColorInfo,
         IReadOnlyList<uint> PixelInitialScalars,
-        IReadOnlyList<uint> VertexInitialScalars);
+        IReadOnlyList<uint> VertexInitialScalars,
+        bool UsesGds = false);
 
     private sealed record TranslatedImageBinding(
         TextureDescriptor Descriptor,
         bool IsStorage,
+        bool WritesImage,
         uint MipLevel,
         IReadOnlyList<uint> SamplerDescriptor);
 
@@ -6666,6 +6678,7 @@ public static partial class AgcExports
             textures.Add(new TranslatedImageBinding(
                 texture,
                 Gen5ShaderTranslator.IsStorageImageOperation(binding.Opcode),
+                Gen5ShaderTranslator.IsImageWriteOperation(binding.Opcode),
                 binding.MipLevel ?? 0,
                 binding.SamplerDescriptor));
         }
@@ -6765,6 +6778,19 @@ public static partial class AgcExports
             _shaderHeadersByCode.TryGetValue(exportShaderAddress, out exportShaderHeader);
             _shaderHeadersByCode.TryGetValue(pixelShaderAddress, out pixelShaderHeader);
         }
+
+        DumpShaderProgramIfRequested(
+            ctx,
+            "es",
+            exportShaderAddress,
+            exportShaderHeader,
+            "requested-capture");
+        DumpShaderProgramIfRequested(
+            ctx,
+            "ps",
+            pixelShaderAddress,
+            pixelShaderHeader,
+            "requested-capture");
 
         // Sequential (not short-circuited into one condition) so a failure
         // after an evaluation succeeded can return that evaluation's pooled
@@ -6961,6 +6987,9 @@ public static partial class AgcExports
         var pixelStateFingerprint = _bakeScalars
             ? ComputeShaderStateFingerprint(pixelEvaluation)
             : ComputeShaderStructuralFingerprint(pixelEvaluation);
+        var usesGds = pixelState.Program.Instructions.Any(static instruction =>
+            instruction.Opcode == "DsAppend" &&
+            instruction.Control is Gen5DataShareControl { Gds: true });
         var shaderKey = (
             exportShaderAddress,
             exportStateFingerprint,
@@ -6975,16 +7004,21 @@ public static partial class AgcExports
             psInputEna,
             psInputAddr,
             inputControlsFingerprint,
+            usesGds,
             VulkanVideoPresenter.GuestStorageBufferOffsetAlignment);
 
         var guestGlobalBuffers =
             pixelEvaluation.GlobalMemoryBindings.Count +
             exportEvaluation.GlobalMemoryBindings.Count;
-        // Two per-draw initial-scalar buffers ride after the guest buffers:
-        // [pixel guest][vertex guest][pixel sgprs][vertex sgprs].
-        var totalGlobalBuffers = _bakeScalars
+        // Runtime scalar blocks and the optional GDS allocation ride after the
+        // guest buffers: [pixel guest][vertex guest][pixel sgprs][vertex sgprs][gds].
+        var scalarBufferCount = _bakeScalars ? 0 : 2;
+        var gdsBufferIndex = usesGds
+            ? guestGlobalBuffers + scalarBufferCount
+            : -1;
+        var totalGlobalBuffers = (_bakeScalars
             ? guestGlobalBuffers
-            : guestGlobalBuffers + 2;
+            : guestGlobalBuffers + 2) + (usesGds ? 1 : 0);
         _graphicsShaderCache.TryGetValue(shaderKey, out var compiled);
 
         if (compiled.Vertex is null || compiled.Pixel is null)
@@ -7013,7 +7047,8 @@ public static partial class AgcExports
                     pixelInputAddress: psInputAddr,
                     storageBufferOffsetAlignment:
                         VulkanVideoPresenter.GuestStorageBufferOffsetAlignment,
-                    pixelInputControls: pixelInputControls) ||
+                    pixelInputControls: pixelInputControls,
+                    gdsBufferIndex: gdsBufferIndex) ||
                 !GuestGpu.Current.TryCompileVertexShader(
                     exportState,
                     exportEvaluation,
@@ -7169,7 +7204,8 @@ public static partial class AgcExports
                 ? rawInfo
                 : 0,
             pixelEvaluation.InitialScalarRegisters,
-            exportEvaluation.InitialScalarRegisters);
+            exportEvaluation.InitialScalarRegisters,
+            UsesGds: usesGds);
         return true;
     }
 
@@ -7199,6 +7235,12 @@ public static partial class AgcExports
                 .Skip(16)
                 .Take(20)
                 .Select((value, index) => $"s{index + 16}={value:X8}"));
+        var evaluatedVertexInputs = string.Join(
+            ',',
+            evaluation.ScalarRegisters
+                .Skip(68)
+                .Take(4)
+                .Select((value, index) => $"s{index + 68}={value:X8}"));
         var bindings = string.Join(
             ';',
             evaluation.GlobalMemoryBindings.Select((binding, index) =>
@@ -7249,7 +7291,10 @@ public static partial class AgcExports
         Console.Error.WriteLine(
             $"[AGC][VERTEX-BUFFER-STATE] " +
             $"es=0x{exportShaderAddress:X16} ps=0x{pixelShaderAddress:X16} " +
+            $"draw_count={drawCount} instances={state.InstanceCount} " +
+            $"indexed={(indexed ? 1 : 0)} " +
             $"initial=[{initialScalars}] evaluated=[{evaluatedScalars}] " +
+            $"vertex_inputs=[{evaluatedVertexInputs}] " +
             $"bindings=[{bindings}]");
 
         state.CxRegisters.TryGetValue(VgtShaderStagesEn, out var shaderStages);
@@ -7610,6 +7655,9 @@ public static partial class AgcExports
             var descriptorStride = descriptorWords.Length == 4
                 ? (descriptorWords[1] >> 16) & 0x3FFFu
                 : 0;
+            var initialDescriptorStride = initialDescriptorWords.Length == 4
+                ? (initialDescriptorWords[1] >> 16) & 0x3FFFu
+                : 0;
             var descriptorRecords = descriptorWords.Length == 4
                 ? descriptorWords[2]
                 : 0;
@@ -7617,10 +7665,71 @@ public static partial class AgcExports
                 ? descriptorRecords
                 : (ulong)descriptorStride * descriptorRecords;
 
+            var recordSample = "none";
+            if (stage == "vertex" &&
+                initialDescriptorStride != 0 &&
+                uint.TryParse(
+                    Environment.GetEnvironmentVariable(
+                        "SHARPEMU_TRACE_VERTEX_BUFFER_RECORD"),
+                    out var record))
+            {
+                var recordOffset = (ulong)record * initialDescriptorStride;
+                if (recordOffset < (ulong)binding.DataLength)
+                {
+                    var sampleLength = Math.Min(
+                        checked((int)initialDescriptorStride),
+                        Math.Min(64, binding.DataLength - checked((int)recordOffset)));
+                    recordSample =
+                        $"record={record}:offset={recordOffset}:" +
+                        Convert.ToHexString(binding.Data.AsSpan(
+                            checked((int)recordOffset),
+                            sampleLength));
+                }
+            }
+
+            var recordSummary = "none";
+            if (stage == "vertex" &&
+                _traceVertexShaderAddress == shaderAddress &&
+                Environment.GetEnvironmentVariable(
+                    "SHARPEMU_TRACE_VERTEX_BUFFER_RECORD_SUMMARY") == "1" &&
+                initialDescriptorStride is >= 32 and <= 256)
+            {
+                var stride = checked((int)initialDescriptorStride);
+                var recordCount = binding.DataLength / stride;
+                var first16Count = 0;
+                var first32Count = 0;
+                var upper32Count = 0;
+                var firstActive = new List<string>(8);
+                for (var recordIndex = 0; recordIndex < recordCount; recordIndex++)
+                {
+                    var recordBytes = binding.Data.AsSpan(
+                        recordIndex * stride,
+                        Math.Min(stride, 64));
+                    var first16 = ContainsNonzero(recordBytes[..Math.Min(16, recordBytes.Length)]);
+                    var first32 = ContainsNonzero(recordBytes[..Math.Min(32, recordBytes.Length)]);
+                    var upper32 = recordBytes.Length > 32 &&
+                        ContainsNonzero(recordBytes[32..]);
+                    first16Count += first16 ? 1 : 0;
+                    first32Count += first32 ? 1 : 0;
+                    upper32Count += upper32 ? 1 : 0;
+                    if (first32 && firstActive.Count < 8)
+                    {
+                        firstActive.Add(
+                            $"{recordIndex}:" + Convert.ToHexString(recordBytes));
+                    }
+                }
+
+                recordSummary =
+                    $"records={recordCount}:first16={first16Count}:" +
+                    $"first32={first32Count}:upper32={upper32Count}:" +
+                    $"active=[{string.Join(';', firstActive)}]";
+            }
+
             var key =
                 $"{stage}|{shaderAddress:X16}|{binding.BaseAddress:X16}|" +
                 $"{binding.ScalarAddress}|{binding.Writable}|" +
-                $"{descriptorText}|" + string.Join(',', binding.InstructionPcs);
+                $"{descriptorText}|{initialDescriptorText}|" +
+                string.Join(',', binding.InstructionPcs);
             lock (_submitTraceGate)
             {
                 if (_tracedGlobalBufferLengthStates.Count >= 512 ||
@@ -7642,7 +7751,8 @@ public static partial class AgcExports
                 $"writable={(binding.Writable ? 1 : 0)} " +
                 $"writeback={(binding.WriteBackToGuest ? 1 : 0)} " +
                 $"descriptor=[{descriptorText}] initial=[{initialDescriptorText}] " +
-                $"stride={descriptorStride} records={descriptorRecords} " +
+                $"stride={descriptorStride} initial_stride={initialDescriptorStride} " +
+                $"records={descriptorRecords} " +
                 $"descriptor_bytes={descriptorBytes} " +
                 $"nonzero_bytes={content.NonzeroBytes}/{binding.DataLength} " +
                 $"first_nonzero={content.FirstNonzeroOffset} " +
@@ -7651,7 +7761,8 @@ public static partial class AgcExports
                 $"match={(lengthMatch ? "length" : "address")}:" +
                 $"{string.Join(',', addressMatches.Select(address => $"0x{address:X16}"))} " +
                 $"pcs={string.Join(',', binding.InstructionPcs.Select(pc => $"0x{pc:X}"))} " +
-                $"head={head}");
+                $"head={head} record_sample={recordSample} " +
+                $"record_summary={recordSummary}");
         }
     }
 
@@ -8115,6 +8226,7 @@ public static partial class AgcExports
                 new TranslatedImageBinding(
                     texture,
                     isStorage,
+                    Gen5ShaderTranslator.IsImageWriteOperation(binding.Opcode),
                     binding.MipLevel ?? 0,
                     binding.SamplerDescriptor));
         }
@@ -9215,6 +9327,7 @@ public static partial class AgcExports
                     ctx,
                     binding.Descriptor,
                     binding.IsStorage,
+                    binding.WritesImage,
                     binding.MipLevel,
                     binding.SamplerDescriptor,
                     out var texture))
@@ -9239,29 +9352,44 @@ public static partial class AgcExports
         TranslatedGuestDraw translatedDraw)
     {
         var buffers = CreateGuestMemoryBuffers(translatedDraw.GlobalMemoryBindings);
-        if (_bakeScalars)
+        if (_bakeScalars && !translatedDraw.UsesGds)
         {
             return buffers;
         }
 
-        var combined = new List<GuestMemoryBuffer>(buffers.Count + 2);
+        var combined = new List<GuestMemoryBuffer>(
+            buffers.Count + (_bakeScalars ? 0 : 2) + (translatedDraw.UsesGds ? 1 : 0));
         combined.AddRange(buffers);
-        var runtimeStateLength = GetRuntimeScalarBufferLength(
-            translatedDraw.GlobalMemoryBindings.Count);
-        combined.Add(new GuestMemoryBuffer(
-            0,
-            PackRuntimeScalarState(
-                translatedDraw.PixelInitialScalars,
-                translatedDraw.GlobalMemoryBindings),
-            runtimeStateLength,
-            Pooled: true));
-        combined.Add(new GuestMemoryBuffer(
-            0,
-            PackRuntimeScalarState(
-                translatedDraw.VertexInitialScalars,
-                translatedDraw.GlobalMemoryBindings),
-            runtimeStateLength,
-            Pooled: true));
+        if (!_bakeScalars)
+        {
+            var runtimeStateLength = GetRuntimeScalarBufferLength(
+                translatedDraw.GlobalMemoryBindings.Count);
+            combined.Add(new GuestMemoryBuffer(
+                0,
+                PackRuntimeScalarState(
+                    translatedDraw.PixelInitialScalars,
+                    translatedDraw.GlobalMemoryBindings),
+                runtimeStateLength,
+                Pooled: true));
+            combined.Add(new GuestMemoryBuffer(
+                0,
+                PackRuntimeScalarState(
+                    translatedDraw.VertexInitialScalars,
+                    translatedDraw.GlobalMemoryBindings),
+                runtimeStateLength,
+                Pooled: true));
+        }
+
+        if (translatedDraw.UsesGds)
+        {
+            combined.Add(new GuestMemoryBuffer(
+                SyntheticGdsBaseAddress,
+                _persistentGds,
+                Gen5SpirvTranslator.GdsByteSize,
+                Pooled: false,
+                Writable: true,
+                WriteBackToGuest: false));
+        }
         return combined;
     }
 
@@ -9294,7 +9422,8 @@ public static partial class AgcExports
         TranslatedGuestDraw translatedDraw)
     {
         var bindings = translatedDraw.GlobalMemoryBindings;
-        var combined = new List<GuestMemoryBuffer>(bindings.Count + 2);
+        var combined = new List<GuestMemoryBuffer>(
+            bindings.Count + (_bakeScalars ? 0 : 2) + (translatedDraw.UsesGds ? 1 : 0));
         foreach (var binding in bindings)
         {
             var data = new byte[Math.Max(binding.DataLength, sizeof(uint))];
@@ -9332,6 +9461,17 @@ public static partial class AgcExports
                     bindings),
                 runtimeStateLength,
                 Pooled: false));
+        }
+
+        if (translatedDraw.UsesGds)
+        {
+            combined.Add(new GuestMemoryBuffer(
+                SyntheticGdsBaseAddress,
+                _persistentGds,
+                Gen5SpirvTranslator.GdsByteSize,
+                Pooled: false,
+                Writable: true,
+                WriteBackToGuest: false));
         }
 
         return combined;
@@ -9674,6 +9814,7 @@ public static partial class AgcExports
         CpuContext ctx,
         TextureDescriptor descriptor,
         bool isStorage,
+        bool writesImage,
         uint mipLevel,
         IReadOnlyList<uint> samplerDescriptor,
         out GuestDrawTexture texture)
@@ -9687,7 +9828,11 @@ public static partial class AgcExports
             descriptor.Height > 8192)
         {
             TraceTextureFallback(descriptor, "invalid-descriptor");
-            texture = CreateFallbackGuestDrawTexture(isStorage, descriptor.Format, descriptor.NumberType);
+            texture = CreateFallbackGuestDrawTexture(
+                isStorage,
+                writesImage,
+                descriptor.Format,
+                descriptor.NumberType);
             return true;
         }
 
@@ -9708,7 +9853,11 @@ public static partial class AgcExports
             TraceTextureFallback(
                 descriptor,
                 $"invalid-byte-count:{sourceByteCount}");
-            texture = CreateFallbackGuestDrawTexture(isStorage, descriptor.Format, descriptor.NumberType);
+            texture = CreateFallbackGuestDrawTexture(
+                isStorage,
+                writesImage,
+                descriptor.Format,
+                descriptor.NumberType);
             return true;
         }
 
@@ -9733,7 +9882,11 @@ public static partial class AgcExports
         if (physicalSourceByteCount > MaxPresentedTextureBytes ||
             physicalSourceByteCount > int.MaxValue)
         {
-            texture = CreateFallbackGuestDrawTexture(isStorage, descriptor.Format, descriptor.NumberType);
+            texture = CreateFallbackGuestDrawTexture(
+                isStorage,
+                writesImage,
+                descriptor.Format,
+                descriptor.NumberType);
             return true;
         }
 
@@ -9765,7 +9918,8 @@ public static partial class AgcExports
                 Pitch: sourceWidth,
                 TileMode: descriptor.TileMode,
                 DstSelect: descriptor.DstSelect,
-                Sampler: ToGuestSampler(samplerDescriptor));
+                Sampler: ToGuestSampler(samplerDescriptor),
+                WritesImage: writesImage);
             return true;
         }
 
@@ -9841,7 +9995,8 @@ public static partial class AgcExports
                     Pitch: sourceWidth,
                     TileMode: descriptor.TileMode,
                     DstSelect: descriptor.DstSelect,
-                    Sampler: ToGuestSampler(samplerDescriptor));
+                    Sampler: ToGuestSampler(samplerDescriptor),
+                    WritesImage: writesImage);
                 return true;
             }
 
@@ -9886,7 +10041,8 @@ public static partial class AgcExports
                     Pitch: sourceWidth,
                     TileMode: descriptor.TileMode,
                     DstSelect: descriptor.DstSelect,
-                    Sampler: sampler);
+                    Sampler: sampler,
+                    WritesImage: writesImage);
                 return true;
             }
 
@@ -9896,7 +10052,11 @@ public static partial class AgcExports
                 TraceTextureFallback(
                     descriptor,
                     $"guest-read-failed:{sourceByteCount}");
-                texture = CreateFallbackGuestDrawTexture(isStorage, descriptor.Format, descriptor.NumberType);
+                texture = CreateFallbackGuestDrawTexture(
+                    isStorage,
+                    writesImage,
+                    descriptor.Format,
+                    descriptor.NumberType);
                 return true;
             }
 
@@ -9946,7 +10106,8 @@ public static partial class AgcExports
                 Pitch: sourceWidth,
                 TileMode: descriptor.TileMode,
                 DstSelect: descriptor.DstSelect,
-                Sampler: ToGuestSampler(samplerDescriptor));
+                Sampler: ToGuestSampler(samplerDescriptor),
+                WritesImage: writesImage);
             dirtyGuestImageSnapshotSucceeded = true;
             return true;
         }
@@ -10255,6 +10416,7 @@ public static partial class AgcExports
 
     private static GuestDrawTexture CreateFallbackGuestDrawTexture(
         bool isStorage,
+        bool writesImage,
         uint format,
         uint numberType)
     {
@@ -10270,7 +10432,8 @@ public static partial class AgcExports
             IsFallback: true,
             IsStorage: isStorage,
             MipLevels: 1,
-            MipLevel: 0);
+            MipLevel: 0,
+            WritesImage: writesImage);
     }
 
     private static GuestSampler ToGuestSampler(IReadOnlyList<uint> descriptor) =>
@@ -10611,6 +10774,13 @@ public static partial class AgcExports
             _shaderHeadersByCode.TryGetValue(shaderAddress, out shaderHeader);
         }
 
+        DumpShaderProgramIfRequested(
+            ctx,
+            "cs",
+            shaderAddress,
+            shaderHeader,
+            "requested-capture");
+
         var computeSystemRegisters = DecodeComputeSystemRegisters(state.ShRegisters);
         if (!Gen5ShaderTranslator.TryCreateState(
                 ctx,
@@ -10711,6 +10881,7 @@ public static partial class AgcExports
         foreach (var binding in bindings)
         {
             var isStorage = Gen5ShaderTranslator.IsStorageImageOperation(binding.Opcode);
+            var writesImage = Gen5ShaderTranslator.IsImageWriteOperation(binding.Opcode);
             var descriptorValid = TryDecodeTextureDescriptor(binding.ResourceDescriptor, out var texture);
             if (!descriptorValid)
             {
@@ -10722,8 +10893,9 @@ public static partial class AgcExports
                 AvPlayerExports.ShouldTraceVideoBufferAddress(texture.Address);
             var matchesExplicitAddress =
                 Array.IndexOf(_traceGuestImageAddresses, texture.Address) >= 0;
+            var matchesTracedShader = _traceComputeShaderAddress == shaderAddress;
             if (texture.Address != 0 &&
-                (matchesAvPlayerBuffer || matchesExplicitAddress))
+                (matchesAvPlayerBuffer || matchesExplicitAddress || matchesTracedShader))
             {
                 lock (_submitTraceGate)
                 {
@@ -10758,7 +10930,9 @@ public static partial class AgcExports
                     $"storage={(isStorage ? 1 : 0)} descriptor_valid={(descriptorValid ? 1 : 0)} " +
                     $"matched={(matchesAvPlayerBuffer ? "avplayer" : string.Empty)}" +
                     $"{(matchesAvPlayerBuffer && matchesExplicitAddress ? "+" : string.Empty)}" +
-                    $"{(matchesExplicitAddress ? "explicit" : string.Empty)} " +
+                    $"{(matchesExplicitAddress ? "explicit" : string.Empty)}" +
+                    $"{((matchesAvPlayerBuffer || matchesExplicitAddress) && matchesTracedShader ? "+" : string.Empty)}" +
+                    $"{(matchesTracedShader ? "shader" : string.Empty)} " +
                     $"decoded={FormatTextureDescriptor(texture)} " +
                     $"raw={FormatShaderDwords(binding.ResourceDescriptor)} " +
                     $"sampler={FormatShaderDwords(binding.SamplerDescriptor)} " +
@@ -10771,6 +10945,7 @@ public static partial class AgcExports
                 new TranslatedImageBinding(
                     texture,
                     isStorage,
+                    writesImage,
                     binding.MipLevel ?? 0,
                     binding.SamplerDescriptor));
             hasStorageBinding |= isStorage;
@@ -11712,6 +11887,27 @@ public static partial class AgcExports
         // unsupported translation reason needed to fix the game.
         if (firstFailure)
         {
+            ulong exportShaderHeader;
+            ulong pixelShaderHeader;
+            lock (_submitTraceGate)
+            {
+                _shaderHeadersByCode.TryGetValue(exportShaderAddress, out exportShaderHeader);
+                _shaderHeadersByCode.TryGetValue(pixelShaderAddress, out pixelShaderHeader);
+            }
+
+            DumpShaderProgramIfRequested(
+                ctx,
+                "es",
+                exportShaderAddress,
+                exportShaderHeader,
+                translationError!);
+            DumpShaderProgramIfRequested(
+                ctx,
+                "ps",
+                pixelShaderAddress,
+                pixelShaderHeader,
+                translationError!);
+
             Console.Error.WriteLine(
                 $"[COMPAT][SHADER] ps=0x{pixelShaderAddress:X16} " +
                 $"es=0x{exportShaderAddress:X16} error={translationError}");
@@ -13196,7 +13392,14 @@ public static partial class AgcExports
 
         var addressFilter = Environment.GetEnvironmentVariable(
             "SHARPEMU_DUMP_SPIRV_ADDRESS");
-        if (!string.IsNullOrWhiteSpace(addressFilter))
+        if (_dumpSpirvAddresses.Length > 0)
+        {
+            if (!_dumpSpirvAddresses.Contains(shaderAddress))
+            {
+                return;
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(addressFilter))
         {
             var span = addressFilter.AsSpan();
             if (span.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
@@ -13242,9 +13445,10 @@ public static partial class AgcExports
     }
 
     /// <summary>
-    /// Captures a bounded raw guest shader window when translation fails. Both
-    /// the output directory and an exact address allow-list are required so a
-    /// broad shader trace cannot accidentally dump every program in a title.
+    /// Captures a bounded raw guest shader window for an explicitly requested
+    /// program. Both the output directory and an exact address allow-list are
+    /// required so a broad shader trace cannot accidentally dump every program
+    /// in a title.
     /// </summary>
     private static void DumpShaderProgramIfRequested(
         CpuContext ctx,

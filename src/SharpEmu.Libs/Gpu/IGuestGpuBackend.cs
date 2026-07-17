@@ -51,7 +51,8 @@ internal interface IGuestGpuBackend
         uint pixelInputEnable = 0,
         uint pixelInputAddress = 0,
         ulong storageBufferOffsetAlignment = 1,
-        IReadOnlyList<uint>? pixelInputControls = null);
+        IReadOnlyList<uint>? pixelInputControls = null,
+        int gdsBufferIndex = -1);
 
     bool TryCompileComputeShader(
         Gen5ShaderState state,

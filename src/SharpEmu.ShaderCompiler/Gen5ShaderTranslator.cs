@@ -231,14 +231,30 @@ public static class Gen5ShaderTranslator
 
         if (program is null)
         {
-            if (!TryDecodeProgram(
-                    ctx,
-                    shaderAddress,
-                    shaderSizeBytes,
-                    out program,
-                    out error))
+            const int maximumDeclaredShaderDecodeAttempts = 5;
+            var decodeAttempt = 0;
+            while (!TryDecodeProgram(
+                       ctx,
+                       shaderAddress,
+                       shaderSizeBytes,
+                       out program,
+                       out error))
             {
-                return false;
+                decodeAttempt++;
+                if (shaderSizeBytes == 0 ||
+                    decodeAttempt >= maximumDeclaredShaderDecodeAttempts)
+                {
+                    return false;
+                }
+
+                // AGC shader programs can be uploaded by another guest thread
+                // immediately before the draw reaches the submission worker.
+                // A yield alone can re-read the same partial upload several
+                // times before that writer runs. Use a small bounded backoff so
+                // the next attempt receives a genuinely newer snapshot instead
+                // of permanently dropping that one-shot draw.
+                var backoffMilliseconds = 1 << Math.Min(decodeAttempt - 1, 2);
+                Thread.Sleep(backoffMilliseconds);
             }
 
             lock (cache.Gate)
@@ -461,6 +477,17 @@ public static class Gen5ShaderTranslator
         var programLimitBytes = shaderSizeBytes == 0
             ? MaximumHeaderlessShaderBytes
             : shaderSizeBytes;
+        byte[]? declaredProgramBytes = null;
+        if (shaderSizeBytes != 0)
+        {
+            declaredProgramBytes = new byte[checked((int)shaderSizeBytes)];
+            if (!ctx.Memory.TryRead(address, declaredProgramBytes))
+            {
+                error = $"read-failed pc=0x0 size=0x{shaderSizeBytes:X}";
+                return false;
+            }
+        }
+
         var maximumInstructions = checked((int)(programLimitBytes / sizeof(uint)));
         uint pc = 0;
         for (; instructionCount < maximumInstructions && pc < programLimitBytes;)
@@ -471,7 +498,13 @@ public static class Gen5ShaderTranslator
                 return false;
             }
 
-            if (!TryReadUInt32(ctx, address + pc, out var word))
+            uint word;
+            if (declaredProgramBytes is not null)
+            {
+                word = BinaryPrimitives.ReadUInt32LittleEndian(
+                    declaredProgramBytes.AsSpan((int)pc, sizeof(uint)));
+            }
+            else if (!TryReadUInt32(ctx, address + pc, out word))
             {
                 error = $"read-failed pc=0x{pc:X}";
                 return false;
@@ -488,6 +521,7 @@ public static class Gen5ShaderTranslator
                     out var sizeDwords,
                     out error))
             {
+                error = $"{error} pc=0x{pc:X} word=0x{word:X8}";
                 return false;
             }
 
@@ -503,9 +537,15 @@ public static class Gen5ShaderTranslator
             words[0] = word;
             for (uint wordIndex = 1; wordIndex < sizeDwords; wordIndex++)
             {
-                if (!TryReadUInt32(ctx, address + pc + wordIndex * sizeof(uint), out words[wordIndex]))
+                var wordPc = pc + wordIndex * sizeof(uint);
+                if (declaredProgramBytes is not null)
                 {
-                    error = $"read-failed pc=0x{pc + wordIndex * sizeof(uint):X}";
+                    words[wordIndex] = BinaryPrimitives.ReadUInt32LittleEndian(
+                        declaredProgramBytes.AsSpan((int)wordPc, sizeof(uint)));
+                }
+                else if (!TryReadUInt32(ctx, address + wordPc, out words[wordIndex]))
+                {
+                    error = $"read-failed pc=0x{wordPc:X}";
                     return false;
                 }
             }
@@ -895,6 +935,7 @@ public static class Gen5ShaderTranslator
             0x10 => "SSendmsg",
             0x12 => "STrap",
             0x16 => "STtraceData",
+            0x17 => "SCbranchCdbgsys",
             0x20 => "SInstPrefetch",
             0x21 => "SClause",
             0x23 => "SWaitcntDepctr",
@@ -1273,8 +1314,9 @@ public static class Gen5ShaderTranslator
             0x36 => "DsReadB32",
             0x37 => "DsRead2B32",
             0x38 => "DsRead2St64B32",
-            0x3E => "DsPermuteB32",
+            0x3E => "DsAppend",
             0x4D => "DsWriteB64",
+            0xB2 => "DsPermuteB32",
             0xDE => "DsWriteB96",
             0xDF => "DsWriteB128",
             0xFE => "DsReadB96",
@@ -1606,6 +1648,10 @@ public static class Gen5ShaderTranslator
 
     public static bool IsStorageImageOperation(string name) =>
         name.StartsWith("ImageLoad", StringComparison.Ordinal) ||
+        name.StartsWith("ImageStore", StringComparison.Ordinal) ||
+        name.StartsWith("ImageAtomic", StringComparison.Ordinal);
+
+    public static bool IsImageWriteOperation(string name) =>
         name.StartsWith("ImageStore", StringComparison.Ordinal) ||
         name.StartsWith("ImageAtomic", StringComparison.Ordinal);
 
@@ -1955,6 +2001,7 @@ public static class Gen5ShaderTranslator
                         Gen5Operand.Vector(vectorData1),
                     ],
                     "DsSwizzleB32" => [Gen5Operand.Vector(vectorData0)],
+                    "DsAppend" => [],
                     "DsPermuteB32" => [
                         Gen5Operand.Vector(vectorAddress),
                         Gen5Operand.Vector(vectorData0),
@@ -1975,6 +2022,9 @@ public static class Gen5ShaderTranslator
                 destinations = opcode switch
                 {
                     "DsAddRtnU32" => [
+                        Gen5Operand.Vector(vectorDestination),
+                    ],
+                    "DsAppend" => [
                         Gen5Operand.Vector(vectorDestination),
                     ],
                     "DsReadB32" or "DsSwizzleB32" or "DsPermuteB32" => [

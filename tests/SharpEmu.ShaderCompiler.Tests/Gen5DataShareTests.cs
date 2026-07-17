@@ -16,6 +16,8 @@ public sealed class Gen5DataShareTests
     private const ushort OpStore = 62;
     private const ushort OpAtomicIAdd = 234;
     private const ushort OpSelectionMerge = 247;
+    private const ushort OpGroupNonUniformBroadcast = 337;
+    private const ushort OpGroupNonUniformBallot = 339;
 
     [Fact]
     public void DsAddRtnU32DecodesOpcode20WithDestination()
@@ -48,6 +50,64 @@ public sealed class Gen5DataShareTests
     }
 
     [Fact]
+    public void DsAppendDecodesOpcode3EWithGdsDestination()
+    {
+        var program = DecodeProgram(0x3E, offset: 0x14, gds: true);
+
+        var instruction = Assert.Single(
+            program.Instructions,
+            item => item.Opcode == "DsAppend");
+        Assert.Empty(instruction.Sources);
+        Assert.Equal(Gen5Operand.Vector(7), Assert.Single(instruction.Destinations));
+        var control = Assert.IsType<Gen5DataShareControl>(instruction.Control);
+        Assert.Equal(0x14U, control.Offset0);
+        Assert.True(control.Gds);
+    }
+
+    [Fact]
+    public void DsPermuteB32DecodesOpcodeB2()
+    {
+        var program = DecodeProgram(0xB2);
+
+        var instruction = Assert.Single(
+            program.Instructions,
+            item => item.Opcode == "DsPermuteB32");
+        Assert.Equal(
+            [Gen5Operand.Vector(2), Gen5Operand.Vector(3)],
+            instruction.Sources);
+        Assert.Equal(Gen5Operand.Vector(7), Assert.Single(instruction.Destinations));
+    }
+
+    [Fact]
+    public void GdsAppendLowersToOneDeviceAtomicAndWaveBroadcast()
+    {
+        var program = DecodeProgram(0x3E, offset: 0x14, gds: true);
+        var state = new Gen5ShaderState(program, [], null);
+        var scalarRegisters = new uint[256];
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            [],
+            []);
+
+        Assert.True(
+            Gen5SpirvTranslator.TryCompilePixelShader(
+                state,
+                evaluation,
+                Gen5PixelOutputKind.Float,
+                out var shader,
+                out var error,
+                totalGlobalBufferCount: 1,
+                gdsBufferIndex: 0),
+            error);
+
+        var opcodes = ReadSpirvOpcodes(shader.Spirv);
+        Assert.Equal(1, opcodes.Count(opcode => opcode == OpAtomicIAdd));
+        Assert.Contains(OpGroupNonUniformBallot, opcodes);
+        Assert.Contains(OpGroupNonUniformBroadcast, opcodes);
+    }
+
+    [Fact]
     public void DsAddRtnU32LowersToAtomicAddAndReturnedValueStore()
     {
         var noReturnOpcodes = CompileAndReadSpirvOpcodes(0x00);
@@ -65,13 +125,16 @@ public sealed class Gen5DataShareTests
             returnOpcodeList.IndexOf(OpAtomicIAdd));
     }
 
-    private static Gen5ShaderProgram DecodeProgram(uint opcode, uint offset = 0)
+    private static Gen5ShaderProgram DecodeProgram(
+        uint opcode,
+        uint offset = 0,
+        bool gds = false)
     {
         var memory = new TestCpuMemory(ShaderAddress, 0x100);
         Span<byte> shader = stackalloc byte[3 * sizeof(uint)];
         BinaryPrimitives.WriteUInt32LittleEndian(
             shader,
-            0xD8000000u | (opcode << 18) | offset);
+            0xD8000000u | (opcode << 18) | offset | (gds ? 1u << 17 : 0));
         BinaryPrimitives.WriteUInt32LittleEndian(
             shader[sizeof(uint)..],
             2u | (3u << 8) | (7u << 24));

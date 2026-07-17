@@ -66,7 +66,8 @@ internal sealed class VulkanGuestGpuBackend : IGuestGpuBackend
         uint pixelInputEnable = 0,
         uint pixelInputAddress = 0,
         ulong storageBufferOffsetAlignment = 1,
-        IReadOnlyList<uint>? pixelInputControls = null)
+        IReadOnlyList<uint>? pixelInputControls = null,
+        int gdsBufferIndex = -1)
     {
         shader = null;
         if (!Gen5SpirvTranslator.TryCompilePixelShader(
@@ -84,7 +85,8 @@ internal sealed class VulkanGuestGpuBackend : IGuestGpuBackend
                 storageBufferOffsetAlignment,
                 VulkanVideoPresenter.SupportsFragmentSubgroupOperations,
                 VulkanVideoPresenter.SupportsFragmentShaderBarycentric,
-                pixelInputControls))
+                pixelInputControls,
+                gdsBufferIndex))
         {
             return false;
         }

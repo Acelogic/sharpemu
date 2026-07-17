@@ -10,6 +10,8 @@ public static partial class Gen5SpirvTranslator
     private const uint ScalarRegisterCount = 256;
     private const uint VectorRegisterCount = 512;
     private const uint LdsDwordCount = 8192;
+    public const int GdsByteSize = 64 * 1024;
+    private const uint GdsDwordCount = GdsByteSize / sizeof(uint);
     // Graphics stages model LDS as a per-invocation Private array rather than
     // real workgroup-shared memory. A full 32 KB Private array per vertex/pixel
     // invocation is wasteful and risks Metal compile limits, and per-invocation
@@ -34,7 +36,8 @@ public static partial class Gen5SpirvTranslator
         ulong storageBufferOffsetAlignment = 1,
         bool nativeSubgroupOperations = true,
         bool fragmentShaderBarycentric = true,
-        IReadOnlyList<uint>? pixelInputControls = null) =>
+        IReadOnlyList<uint>? pixelInputControls = null,
+        int gdsBufferIndex = -1) =>
         TryCompilePixelShader(
             state,
             evaluation,
@@ -50,7 +53,8 @@ public static partial class Gen5SpirvTranslator
             storageBufferOffsetAlignment,
             nativeSubgroupOperations,
             fragmentShaderBarycentric,
-            pixelInputControls);
+            pixelInputControls,
+            gdsBufferIndex);
 
     public static bool TryCompilePixelShader(
         Gen5ShaderState state,
@@ -67,7 +71,8 @@ public static partial class Gen5SpirvTranslator
         ulong storageBufferOffsetAlignment = 1,
         bool nativeSubgroupOperations = true,
         bool fragmentShaderBarycentric = true,
-        IReadOnlyList<uint>? pixelInputControls = null)
+        IReadOnlyList<uint>? pixelInputControls = null,
+        int gdsBufferIndex = -1)
     {
         if (outputs.Count > 8 || outputs.Any(output => output.GuestSlot > 7))
         {
@@ -136,7 +141,8 @@ public static partial class Gen5SpirvTranslator
             storageBufferOffsetAlignment: storageBufferOffsetAlignment,
             nativeSubgroupOperations: nativeSubgroupOperations,
             fragmentShaderBarycentric: fragmentShaderBarycentric,
-            pixelInputControls: pixelInputControls);
+            pixelInputControls: pixelInputControls,
+            gdsBufferIndex: gdsBufferIndex);
         return context.TryCompile(out shader, out error);
     }
 
@@ -271,6 +277,7 @@ public static partial class Gen5SpirvTranslator
         private readonly int _totalGlobalBufferCount;
         private readonly int _imageBindingBase;
         private readonly int _initialScalarBufferIndex;
+        private readonly int _gdsBufferIndex;
         private readonly uint _pixelInputEnable;
         private readonly uint _pixelInputAddress;
         private readonly IReadOnlyList<uint> _pixelInputControls;
@@ -401,7 +408,8 @@ public static partial class Gen5SpirvTranslator
             ulong storageBufferOffsetAlignment = 1,
             bool nativeSubgroupOperations = true,
             bool fragmentShaderBarycentric = true,
-            IReadOnlyList<uint>? pixelInputControls = null)
+            IReadOnlyList<uint>? pixelInputControls = null,
+            int gdsBufferIndex = -1)
         {
             _stage = stage;
             _requiredVertexOutputCount = requiredVertexOutputCount;
@@ -426,6 +434,7 @@ public static partial class Gen5SpirvTranslator
                 : totalGlobalBufferCount;
             _imageBindingBase = imageBindingBase;
             _initialScalarBufferIndex = initialScalarBufferIndex;
+            _gdsBufferIndex = gdsBufferIndex;
             _pixelInputEnable = pixelInputEnable;
             _pixelInputAddress = pixelInputAddress;
             _pixelInputControls = pixelInputControls ?? [];
@@ -1954,6 +1963,9 @@ public static partial class Gen5SpirvTranslator
                 "SCbranchVccnz" => SubgroupAny(Load(_boolType, _vcc)),
                 "SCbranchExecz" => LogicalNot(SubgroupAny(Load(_boolType, _exec))),
                 "SCbranchExecnz" => SubgroupAny(Load(_boolType, _exec)),
+                // SharpEmu does not attach a guest GPU debugger, so the
+                // hardware COND_DBG_SYS status bit is always clear.
+                "SCbranchCdbgsys" => _module.ConstantBool(false),
                 _ => 0,
             };
             return condition != 0;
@@ -2071,9 +2083,14 @@ public static partial class Gen5SpirvTranslator
                 return false;
             }
 
+            if (instruction.Opcode == "DsAppend")
+            {
+                return TryEmitDsAppend(instruction, control, out error);
+            }
+
             if (control.Gds)
             {
-                error = "GDS data share is not implemented";
+                error = $"unsupported GDS opcode {instruction.Opcode}";
                 return false;
             }
 
@@ -2311,6 +2328,98 @@ public static partial class Gen5SpirvTranslator
         private static uint EffectiveDsSingleOffsetBytes(
             Gen5DataShareControl control) =>
             control.Offset0 | (control.Offset1 << 8);
+
+        private bool TryEmitDsAppend(
+            Gen5ShaderInstruction instruction,
+            Gen5DataShareControl control,
+            out string error)
+        {
+            error = string.Empty;
+            if (!control.Gds)
+            {
+                error = "LDS DS_APPEND is not implemented";
+                return false;
+            }
+
+            if (_gdsBufferIndex < 0 || _gdsBufferIndex >= _totalGlobalBufferCount)
+            {
+                error = "GDS DS_APPEND requires a bound GDS buffer";
+                return false;
+            }
+
+            if (instruction.Destinations.Count != 1 ||
+                _subgroupInvocationIdInput == 0 ||
+                _waveLaneCount != RdnaWaveLaneCount)
+            {
+                error = "GDS DS_APPEND requires wave32 subgroup ballot support";
+                return false;
+            }
+
+            // RDNA2 performs one atomic add for the first EXEC-enabled lane,
+            // adding the number of enabled lanes, then broadcasts the old
+            // counter value to every enabled lane. M0[31:16] supplies the GDS
+            // byte base; the instruction's 16-bit offset selects the counter.
+            var ballot = _module.AddInstruction(
+                SpirvOp.GroupNonUniformBallot,
+                _uvec4Type,
+                UInt(3),
+                Load(_boolType, _exec));
+            var activeMask = _module.AddInstruction(
+                SpirvOp.CompositeExtract,
+                _uintType,
+                ballot,
+                0);
+            var activeCount = _module.AddInstruction(
+                SpirvOp.BitCount,
+                _uintType,
+                activeMask);
+            var hasActiveLane = IsNotZero(activeMask);
+            var firstActiveLane = _module.AddInstruction(
+                SpirvOp.Select,
+                _uintType,
+                hasActiveLane,
+                Ext(73, _uintType, activeMask),
+                UInt(0));
+            var isFirstActiveLane = _module.AddInstruction(
+                SpirvOp.LogicalAnd,
+                _boolType,
+                hasActiveLane,
+                _module.AddInstruction(
+                    SpirvOp.IEqual,
+                    _boolType,
+                    Load(_uintType, _subgroupInvocationIdInput),
+                    firstActiveLane));
+
+            var destination = instruction.Destinations[0].Value;
+            StoreV(destination, UInt(0), guardWithExec: false);
+            var byteAddress = IAdd(
+                ShiftRightLogical(LoadS(124), UInt(16)),
+                UInt(EffectiveDsSingleOffsetBytes(control)));
+            var dwordAddress = BitwiseAnd(
+                ShiftRightLogical(byteAddress, UInt(2)),
+                UInt(GdsDwordCount - 1));
+            EmitConditional(isFirstActiveLane, () =>
+            {
+                var original = EmitAtomic(
+                    SpirvOp.AtomicIAdd,
+                    _uintType,
+                    BufferWordPointer(_gdsBufferIndex, dwordAddress),
+                    scope: 1,
+                    semantics: 0x48,
+                    value: () => activeCount,
+                    comparator: () => UInt(0));
+                StoreV(destination, original, guardWithExec: false);
+            });
+
+            var broadcast = _module.AddInstruction(
+                SpirvOp.GroupNonUniformBroadcast,
+                _uintType,
+                UInt(3),
+                LoadV(destination),
+                firstActiveLane);
+            StoreV(destination, broadcast);
+            return true;
+        }
 
         private bool ProbeIgnoresShaderTrap()
         {
@@ -6277,9 +6386,7 @@ public static partial class Gen5SpirvTranslator
         }
 
         private uint IsWaveMaskActive(uint mask) =>
-            _subgroupInvocationIdInput == 0
-                ? IsNotZero64(mask)
-                : IsCurrentLaneSet(mask);
+            IsCurrentLaneSet(mask);
 
         private uint IsCurrentLaneSet(uint mask) =>
             IsNotZero64(
@@ -6316,7 +6423,7 @@ public static partial class Gen5SpirvTranslator
 
         private bool UsesLds() =>
             _state.Program.Instructions.Any(instruction =>
-                instruction.Control is Gen5DataShareControl &&
+                instruction.Control is Gen5DataShareControl { Gds: false } &&
                 instruction.Opcode != "DsPermuteB32");
 
         private bool UsesSubgroupShuffle() =>
@@ -6330,7 +6437,7 @@ public static partial class Gen5SpirvTranslator
 
         private bool UsesSubgroupBroadcast() =>
             _state.Program.Instructions.Any(instruction =>
-                instruction.Opcode == "VReadfirstlaneB32");
+                instruction.Opcode is "VReadfirstlaneB32" or "DsAppend");
 
         private bool UsesWaveControl() =>
             _state.Program.Instructions.Any(instruction =>
