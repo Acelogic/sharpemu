@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using SharpEmu.HLE;
 
 namespace SharpEmu.Libs.Kernel;
@@ -28,6 +29,9 @@ public static class KernelSemaphoreCompatExports
     {
         public required int NeedCount { get; init; }
         public required int CancelEpochAtBlock { get; init; }
+        public bool Timed { get; init; }
+        public ulong TimeoutAddress { get; init; }
+        public long DeadlineTimestamp { get; init; }
 
         // Written and read only under the owning semaphore's Gate.
         public int? Result { get; set; }
@@ -49,9 +53,10 @@ public static class KernelSemaphoreCompatExports
         var maxCount = unchecked((int)ctx[CpuRegister.R8]);
         var optionAddress = ctx[CpuRegister.R9];
 
+        const uint supportedAttributeMask = 0x103;
         if (semaphoreAddress == 0 ||
             nameAddress == 0 ||
-            attr > 2 ||
+            (attr & ~supportedAttributeMask) != 0 ||
             initialCount < 0 ||
             maxCount <= 0 ||
             initialCount > maxCount ||
@@ -80,7 +85,7 @@ public static class KernelSemaphoreCompatExports
         };
         _semaphores[handle] = state;
 
-        if (!ctx.TryWriteUInt32(semaphoreAddress, handle))
+        if (!KernelMemoryCompatExports.TryWriteUInt32Compat(ctx, semaphoreAddress, handle))
         {
             _semaphores.TryRemove(handle, out _);
             // Handles are sequential and guest-predictable, so a hostile guest can
@@ -109,6 +114,7 @@ public static class KernelSemaphoreCompatExports
         var handle = unchecked((uint)ctx[CpuRegister.Rdi]);
         var needCount = unchecked((int)ctx[CpuRegister.Rsi]);
         var timeoutAddress = ctx[CpuRegister.Rdx];
+        uint timeoutUsec = 0;
 
         if (!_semaphores.TryGetValue(handle, out var semaphore))
         {
@@ -130,32 +136,41 @@ public static class KernelSemaphoreCompatExports
                 return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
             }
 
-            if (timeoutAddress != 0)
+            if (timeoutAddress != 0 &&
+                !KernelMemoryCompatExports.TryReadUInt32Compat(ctx, timeoutAddress, out timeoutUsec))
             {
-                if (!ctx.TryReadUInt32(timeoutAddress, out _))
-                {
-                    return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
-                }
+                return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
 
-                _ = ctx.TryWriteUInt32(timeoutAddress, 0);
-                TraceSemaphore($"wait-timeout handle=0x{handle:X8} name='{semaphore.Name}' need={needCount} count={semaphore.Count}");
+            if (timeoutAddress != 0 && timeoutUsec == 0)
+            {
+                _ = KernelMemoryCompatExports.TryWriteUInt32Compat(ctx, timeoutAddress, 0);
+                TraceSemaphore($"wait-timeout handle=0x{handle:X8} name='{semaphore.Name}' need={needCount} count={semaphore.Count} timeout_us=0");
                 return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT);
             }
 
+            var deadlineTimestamp = timeoutAddress != 0
+                ? GuestThreadExecution.ComputeDeadlineTimestamp(
+                    TimeSpan.FromTicks(Math.Min((long)timeoutUsec * 10L, TimeSpan.MaxValue.Ticks)))
+                : 0;
             waiter = new SemaphoreWaiter
             {
                 NeedCount = needCount,
                 CancelEpochAtBlock = semaphore.CancelEpoch,
+                Timed = timeoutAddress != 0,
+                TimeoutAddress = timeoutAddress,
+                DeadlineTimestamp = deadlineTimestamp,
             };
             if (GuestThreadExecution.RequestCurrentThreadBlock(
                     ctx,
                     "sceKernelWaitSema",
                     GetSemaphoreWakeKey(handle),
-                    resumeHandler: () => CompleteBlockedSemaWait(semaphore, waiter),
-                    wakeHandler: () => TryConsumeBlockedSemaWait(semaphore, waiter)))
+                    resumeHandler: () => CompleteBlockedSemaWait(ctx, semaphore, waiter),
+                    wakeHandler: () => TryConsumeBlockedSemaWait(semaphore, waiter),
+                    blockDeadlineTimestamp: deadlineTimestamp))
             {
                 semaphore.WaitingThreads++;
-                TraceSemaphore($"wait-block handle=0x{handle:X8} name='{semaphore.Name}' need={needCount} count={semaphore.Count} waiters={semaphore.WaitingThreads}");
+                TraceSemaphore($"wait-block handle=0x{handle:X8} name='{semaphore.Name}' need={needCount} count={semaphore.Count} waiters={semaphore.WaitingThreads} timeout_us={timeoutUsec}");
                 return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
             }
         }
@@ -183,9 +198,20 @@ public static class KernelSemaphoreCompatExports
                 if (semaphore.Count >= needCount)
                 {
                     semaphore.Count -= needCount;
+                    if (timeoutAddress != 0)
+                    {
+                        _ = KernelMemoryCompatExports.TryWriteUInt32Compat(ctx, timeoutAddress, 0);
+                    }
                     TraceSemaphore($"wait-host-wake handle=0x{handle:X8} name='{semaphore.Name}' need={needCount} count={semaphore.Count}");
                     return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
                 }
+            }
+
+            if (waiter.Timed && Stopwatch.GetTimestamp() >= waiter.DeadlineTimestamp)
+            {
+                _ = KernelMemoryCompatExports.TryWriteUInt32Compat(ctx, timeoutAddress, 0);
+                TraceSemaphore($"wait-host-timeout handle=0x{handle:X8} name='{semaphore.Name}' need={needCount} count={semaphore.Count} timeout_us={timeoutUsec}");
+                return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT);
             }
 
             scheduler?.Pump(ctx, "sceKernelWaitSema");
@@ -289,7 +315,8 @@ public static class KernelSemaphoreCompatExports
 
         lock (semaphore.Gate)
         {
-            if (waitingThreadsAddress != 0 && !ctx.TryWriteUInt32(waitingThreadsAddress, unchecked((uint)semaphore.WaitingThreads)))
+            if (waitingThreadsAddress != 0 &&
+                !KernelMemoryCompatExports.TryWriteUInt32Compat(ctx, waitingThreadsAddress, unchecked((uint)semaphore.WaitingThreads)))
             {
                 return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
             }
@@ -361,13 +388,36 @@ public static class KernelSemaphoreCompatExports
             Count = initialCount,
         };
         _semaphores[handle] = state;
-        if (!ctx.TryWriteUInt32(semaphoreAddress, handle))
+        if (!KernelMemoryCompatExports.TryWriteUInt32Compat(ctx, semaphoreAddress, handle))
         {
             _semaphores.TryRemove(handle, out _);
             return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
 
         TraceSemaphore($"posix-init address=0x{semaphoreAddress:X16} handle=0x{handle:X8} count={initialCount}");
+        return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    [SysAbiExport(
+        Nid = "-wUggz2S5yk",
+        ExportName = "sem_setname",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixSemSetName(CpuContext ctx)
+    {
+        // FreeBSD semaphore names are diagnostic metadata. Validate the guest
+        // object and name, but retain the immutable internal label used by the
+        // scheduler so wake keys cannot change while waiters are blocked.
+        var semaphoreAddress = ctx[CpuRegister.Rdi];
+        var nameAddress = ctx[CpuRegister.Rsi];
+        if (!TryGetPosixSemaphoreHandle(ctx, semaphoreAddress, out var handle) ||
+            !_semaphores.ContainsKey(handle) ||
+            nameAddress == 0 ||
+            !ctx.TryReadNullTerminatedUtf8(nameAddress, MaxSemaphoreNameLength, out _))
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
         return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
     }
 
@@ -398,12 +448,25 @@ public static class KernelSemaphoreCompatExports
     {
         if (!TryGetPosixSemaphoreHandle(ctx, ctx[CpuRegister.Rdi], out var handle))
         {
-            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+            KernelRuntimeCompatExports.TrySetErrno(ctx, 22);
+            ctx[CpuRegister.Rax] = ulong.MaxValue;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
         ctx[CpuRegister.Rdi] = handle;
         ctx[CpuRegister.Rsi] = 1;
-        return KernelPollSema(ctx);
+        var result = KernelPollSema(ctx);
+        if (result == (int)OrbisGen2Result.ORBIS_GEN2_OK)
+        {
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        KernelRuntimeCompatExports.TrySetErrno(
+            ctx,
+            result == (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY ? 35 : 22);
+        ctx[CpuRegister.Rax] = ulong.MaxValue;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
     [SysAbiExport(
@@ -414,15 +477,107 @@ public static class KernelSemaphoreCompatExports
     public static int PosixSemTimedWait(CpuContext ctx)
     {
         var timeoutAddress = ctx[CpuRegister.Rsi];
-        if (!TryGetPosixSemaphoreHandle(ctx, ctx[CpuRegister.Rdi], out var handle))
+        if (!TryGetPosixSemaphoreHandle(ctx, ctx[CpuRegister.Rdi], out var handle) ||
+            !_semaphores.TryGetValue(handle, out var semaphore) ||
+            timeoutAddress == 0 ||
+            !ctx.TryReadUInt64(timeoutAddress, out var secondsValue) ||
+            !ctx.TryReadUInt64(timeoutAddress + sizeof(long), out var nanosecondsValue))
         {
-            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+            return ReturnPosixSemaphoreError(ctx, 22);
         }
 
-        ctx[CpuRegister.Rdi] = handle;
-        ctx[CpuRegister.Rsi] = 1;
-        ctx[CpuRegister.Rdx] = timeoutAddress;
-        return KernelWaitSema(ctx);
+        var seconds = unchecked((long)secondsValue);
+        var nanoseconds = unchecked((long)nanosecondsValue);
+        if (seconds < 0 || nanoseconds is < 0 or >= 1_000_000_000L ||
+            seconds > (long.MaxValue - nanoseconds / 1_000_000L) / 1000L)
+        {
+            return ReturnPosixSemaphoreError(ctx, 22);
+        }
+
+        var deadlineMilliseconds = seconds * 1000L + nanoseconds / 1_000_000L;
+        var remainingMilliseconds = deadlineMilliseconds - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (remainingMilliseconds <= 0)
+        {
+            return ReturnPosixSemaphoreError(ctx, 60);
+        }
+
+        var maximumTimeoutMilliseconds = TimeSpan.MaxValue.Ticks / TimeSpan.TicksPerMillisecond;
+        var timeoutTicks = remainingMilliseconds >= maximumTimeoutMilliseconds
+            ? TimeSpan.MaxValue.Ticks
+            : remainingMilliseconds * TimeSpan.TicksPerMillisecond;
+        var deadlineTimestamp = GuestThreadExecution.ComputeDeadlineTimestamp(TimeSpan.FromTicks(timeoutTicks));
+        var waiter = new SemaphoreWaiter
+        {
+            NeedCount = 1,
+            CancelEpochAtBlock = semaphore.CancelEpoch,
+            Timed = true,
+            TimeoutAddress = 0,
+            DeadlineTimestamp = deadlineTimestamp,
+        };
+
+        lock (semaphore.Gate)
+        {
+            if (semaphore.Deleted)
+            {
+                return ReturnPosixSemaphoreError(ctx, 22);
+            }
+
+            if (semaphore.Count > 0)
+            {
+                semaphore.Count--;
+                ctx[CpuRegister.Rax] = 0;
+                return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+            }
+
+            // Mono enters its GC-safe BLOCKING state before calling sem_timedwait.
+            // Yield guest workers through the continuation scheduler so Mono can
+            // execute DONE_BLOCKING after the import returns. Pumping other guest
+            // work from inside this import leaves the worker's Mono state parked
+            // in BLOCKING and trips the next managed magic trampoline.
+            if (GuestThreadExecution.RequestCurrentThreadBlock(
+                    ctx,
+                    "sem_timedwait",
+                    GetSemaphoreWakeKey(handle),
+                    resumeHandler: () => CompleteBlockedPosixSemaWait(ctx, semaphore, waiter),
+                    wakeHandler: () => TryConsumeBlockedSemaWait(semaphore, waiter),
+                    blockDeadlineTimestamp: deadlineTimestamp))
+            {
+                semaphore.WaitingThreads++;
+                TraceSemaphore($"posix-timedwait-block handle=0x{handle:X8} name='{semaphore.Name}' waiters={semaphore.WaitingThreads}");
+                ctx[CpuRegister.Rax] = 0;
+                return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+            }
+        }
+
+        // The primary executor has no resumable guest-thread continuation. Keep
+        // its producer/consumer fallback, but guest workers always take the safe
+        // scheduler path above.
+        while (true)
+        {
+            lock (semaphore.Gate)
+            {
+                if (semaphore.Deleted)
+                {
+                    return ReturnPosixSemaphoreError(ctx, 22);
+                }
+
+                if (semaphore.Count > 0)
+                {
+                    semaphore.Count--;
+                    ctx[CpuRegister.Rax] = 0;
+                    return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+                }
+            }
+
+            if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() >= deadlineMilliseconds)
+            {
+                // FreeBSD/Orbis ETIMEDOUT.
+                return ReturnPosixSemaphoreError(ctx, 60);
+            }
+
+            GuestThreadExecution.Scheduler?.Pump(ctx, "sem_timedwait");
+            Thread.Sleep(1);
+        }
     }
 
     [SysAbiExport(
@@ -463,7 +618,7 @@ public static class KernelSemaphoreCompatExports
             count = semaphore.Count;
         }
 
-        return ctx.TryWriteUInt32(valueAddress, unchecked((uint)count))
+        return KernelMemoryCompatExports.TryWriteUInt32Compat(ctx, valueAddress, unchecked((uint)count))
             ? ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK)
             : ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
     }
@@ -485,7 +640,7 @@ public static class KernelSemaphoreCompatExports
         var result = KernelDeleteSema(ctx);
         if (result == (int)OrbisGen2Result.ORBIS_GEN2_OK)
         {
-            _ = ctx.TryWriteUInt32(semaphoreAddress, 0);
+            _ = KernelMemoryCompatExports.TryWriteUInt32Compat(ctx, semaphoreAddress, 0);
         }
 
         return result;
@@ -495,8 +650,15 @@ public static class KernelSemaphoreCompatExports
     {
         handle = 0;
         return semaphoreAddress != 0 &&
-               ctx.TryReadUInt32(semaphoreAddress, out handle) &&
+               KernelMemoryCompatExports.TryReadUInt32Compat(ctx, semaphoreAddress, out handle) &&
                handle != 0;
+    }
+
+    private static int ReturnPosixSemaphoreError(CpuContext ctx, int error)
+    {
+        KernelRuntimeCompatExports.TrySetErrno(ctx, error);
+        ctx[CpuRegister.Rax] = ulong.MaxValue;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
     // Wake handler: runs under the scheduler's guest-thread gate (lock order:
@@ -547,21 +709,53 @@ public static class KernelSemaphoreCompatExports
 
     // Resume handler: runs on the woken guest thread outside the scheduler gate;
     // its return value becomes the guest's RAX for the resumed sceKernelWaitSema.
-    private static int CompleteBlockedSemaWait(KernelSemaphoreState semaphore, SemaphoreWaiter waiter)
+    private static int CompleteBlockedSemaWait(CpuContext ctx, KernelSemaphoreState semaphore, SemaphoreWaiter waiter)
     {
         lock (semaphore.Gate)
         {
             if (waiter.Result is null && !TryConsumeBlockedSemaWaitLocked(semaphore, waiter))
             {
-                // Nothing readies a parked semaphore waiter without the wake handler
-                // resolving it, so reaching here means the scheduler contract changed.
-                Console.Error.WriteLine(
-                    $"[LOADER][GAP] sema.resume-no-outcome name='{semaphore.Name}' need={waiter.NeedCount} count={semaphore.Count}");
-                waiter.Result = (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TRY_AGAIN;
+                waiter.Result = waiter.Timed
+                    ? (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT
+                    : (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TRY_AGAIN;
                 semaphore.WaitingThreads = Math.Max(0, semaphore.WaitingThreads - 1);
+                TraceSemaphore(
+                    waiter.Timed
+                        ? $"wake-timeout name='{semaphore.Name}' need={waiter.NeedCount} count={semaphore.Count}"
+                        : $"resume-no-outcome name='{semaphore.Name}' need={waiter.NeedCount} count={semaphore.Count}");
+            }
+
+            if (waiter.TimeoutAddress != 0)
+            {
+                _ = KernelMemoryCompatExports.TryWriteUInt32Compat(ctx, waiter.TimeoutAddress, 0);
             }
 
             return waiter.Result!.Value;
+        }
+    }
+
+    private static int CompleteBlockedPosixSemaWait(
+        CpuContext ctx,
+        KernelSemaphoreState semaphore,
+        SemaphoreWaiter waiter)
+    {
+        lock (semaphore.Gate)
+        {
+            if (waiter.Result is null && !TryConsumeBlockedSemaWaitLocked(semaphore, waiter))
+            {
+                waiter.Result = (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT;
+                semaphore.WaitingThreads = Math.Max(0, semaphore.WaitingThreads - 1);
+                TraceSemaphore($"posix-timedwait-timeout name='{semaphore.Name}' count={semaphore.Count}");
+            }
+
+            if (waiter.Result == (int)OrbisGen2Result.ORBIS_GEN2_OK)
+            {
+                return 0;
+            }
+
+            var errno = waiter.Result == (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT ? 60 : 22;
+            KernelRuntimeCompatExports.TrySetErrno(ctx, errno);
+            return -1;
         }
     }
 

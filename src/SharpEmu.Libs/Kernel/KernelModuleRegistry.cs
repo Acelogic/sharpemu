@@ -11,6 +11,7 @@ public static class KernelModuleRegistry
 {
     private static readonly object _gate = new();
     private static readonly Dictionary<int, ModuleEntry> _modulesByHandle = new();
+    private static readonly Dictionary<int, Dictionary<string, ulong>> _symbolsByHandle = new();
     private static readonly Dictionary<string, int> _handleByPath = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, int> _handleByName = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<int, int> _sysmoduleHandleById = new();
@@ -32,6 +33,7 @@ public static class KernelModuleRegistry
         ulong BaseAddress,
         ulong EndAddress,
         ulong EntryPoint,
+        ulong EhFrameHeaderAddress,
         bool IsMain,
         bool IsSystemModule);
 
@@ -40,6 +42,7 @@ public static class KernelModuleRegistry
         lock (_gate)
         {
             _modulesByHandle.Clear();
+            _symbolsByHandle.Clear();
             _handleByPath.Clear();
             _handleByName.Clear();
             _sysmoduleHandleById.Clear();
@@ -53,7 +56,9 @@ public static class KernelModuleRegistry
         ulong size,
         ulong entryPoint,
         bool isMain,
-        bool isSystemModule = false)
+        bool isSystemModule = false,
+        ulong ehFrameHeaderAddress = 0,
+        IReadOnlyDictionary<string, ulong>? runtimeSymbols = null)
     {
         var normalizedPath = NormalizePath(modulePath);
         lock (_gate)
@@ -67,10 +72,12 @@ public static class KernelModuleRegistry
                     BaseAddress = baseAddress,
                     EndAddress = ComputeEnd(baseAddress, size),
                     EntryPoint = entryPoint,
+                    EhFrameHeaderAddress = ehFrameHeaderAddress,
                     IsMain = existing.IsMain || isMain,
                     IsSystemModule = existing.IsSystemModule || isSystemModule,
                 };
                 _modulesByHandle[existingHandle] = updated;
+                _symbolsByHandle[existingHandle] = CopyRuntimeSymbols(runtimeSymbols);
                 _handleByName[updated.Name] = existingHandle;
                 return existingHandle;
             }
@@ -84,9 +91,11 @@ public static class KernelModuleRegistry
                 BaseAddress: baseAddress,
                 EndAddress: ComputeEnd(baseAddress, size),
                 EntryPoint: entryPoint,
+                EhFrameHeaderAddress: ehFrameHeaderAddress,
                 IsMain: isMain,
                 IsSystemModule: isSystemModule);
             _modulesByHandle[handle] = entry;
+            _symbolsByHandle[handle] = CopyRuntimeSymbols(runtimeSymbols);
             if (!string.IsNullOrWhiteSpace(normalizedPath))
             {
                 _handleByPath[normalizedPath] = handle;
@@ -119,6 +128,7 @@ public static class KernelModuleRegistry
                 BaseAddress: 0,
                 EndAddress: 0,
                 EntryPoint: 0,
+                EhFrameHeaderAddress: 0,
                 IsMain: false,
                 IsSystemModule: isSystemModule);
             _modulesByHandle[handle] = entry;
@@ -203,6 +213,22 @@ public static class KernelModuleRegistry
         }
     }
 
+    public static bool TryResolveSymbol(int handle, string symbolName, out ulong address)
+    {
+        address = 0;
+        if (handle <= 0 || string.IsNullOrWhiteSpace(symbolName))
+        {
+            return false;
+        }
+
+        lock (_gate)
+        {
+            return _symbolsByHandle.TryGetValue(handle, out var symbols) &&
+                   symbols.TryGetValue(symbolName, out address) &&
+                   address >= 0x10000;
+        }
+    }
+
     public static bool TryFindByPathOrName(string? modulePathOrName, out ModuleEntry module)
     {
         module = default;
@@ -279,6 +305,26 @@ public static class KernelModuleRegistry
         }
 
         return false;
+    }
+
+    private static Dictionary<string, ulong> CopyRuntimeSymbols(
+        IReadOnlyDictionary<string, ulong>? runtimeSymbols)
+    {
+        var copy = new Dictionary<string, ulong>(StringComparer.Ordinal);
+        if (runtimeSymbols == null)
+        {
+            return copy;
+        }
+
+        foreach (var (name, address) in runtimeSymbols)
+        {
+            if (!string.IsNullOrWhiteSpace(name) && address >= 0x10000)
+            {
+                copy[name] = address;
+            }
+        }
+
+        return copy;
     }
 
     private static bool TryResolveHandleByNameLocked(string moduleName, out int handle)

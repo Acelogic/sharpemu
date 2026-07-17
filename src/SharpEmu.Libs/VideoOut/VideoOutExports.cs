@@ -40,12 +40,14 @@ public static class VideoOutExports
     private const ulong SceVideoOutPixelFormatA2R10G10B10Bt2020Pq = 0x88740000;
     private const ulong SceVideoOutInternalEventVblank = 0x5;
     private const ulong SceVideoOutInternalEventFlip = 0x6;
+    private const ulong SceVideoOutInternalEventSetMode = 0x7;
     private const short OrbisKernelEventFilterVideoOut = -13;
 
     private static readonly object _stateGate = new();
     private static readonly object _frameDumpGate = new();
     private static readonly Dictionary<int, VideoOutPortState> _ports = new();
     private static readonly Dictionary<(int Handle, int BufferIndex, ulong Address), ulong> _lastFrameFingerprints = new();
+    private static readonly List<FlipEventRegistration> _systemVblankEvents = new();
     private static int _nextHandle = 1;
     private static int _frameDumpCount;
     private static long _nextFrameDumpIndex;
@@ -63,6 +65,8 @@ public static class VideoOutExports
     private static long _presentedFrameCount;
     private static long _vblankSignalCount;
     private static long _flipSubmitCount;
+    private static long _systemVblankSignalCount;
+    private static Timer? _systemVblankTimer;
 
     public static void ConfigureApplicationInfo(string? title, string? titleId, string? version)
     {
@@ -91,6 +95,30 @@ public static class VideoOutExports
         {
             return _windowTitle;
         }
+    }
+
+    /// <summary>
+    /// Starts the firmware splash presenter for an explicitly requested
+    /// ShellCore cold-boot diagnostic. Normal application launches remain
+    /// demand-driven by VideoOut buffer registration.
+    /// </summary>
+    public static bool TryStartBootSplash()
+    {
+        if (!string.Equals(
+                Environment.GetEnvironmentVariable("SHARPEMU_BOOT_SPLASH"),
+                "1",
+                StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        lock (_stateGate)
+        {
+            _windowTitle = "SharpEmu - PS5 Cold Boot";
+        }
+
+        VulkanVideoPresenter.EnsureStarted(1280, 720);
+        return true;
     }
 
     private sealed class VideoOutPortState
@@ -362,6 +390,75 @@ public static class VideoOutExports
         // edge now; later calls to WaitVblank advance the same notification sequence.
         SignalVblank(port);
         TraceVideoOut($"videoout.add_vblank_event eq=0x{equeue:X16} handle={handle} udata=0x{userData:X16}");
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "Ek+VR4lcJQI",
+        ExportName = "sceVideoOutSysAddVblankEvent",
+        Target = Generation.Gen5,
+        LibraryName = "libSceVideoOut")]
+    public static int VideoOutSysAddVblankEvent(CpuContext ctx) =>
+        RegisterSystemVblankEvent(ctx, "sceVideoOutSysAddVblankEvent");
+
+    [SysAbiExport(
+        Nid = "Am8Hlr7tlxA",
+        ExportName = "sceVideoOutSysAddVblankEvent2",
+        Target = Generation.Gen5,
+        LibraryName = "libSceVideoOut")]
+    public static int VideoOutSysAddVblankEvent2(CpuContext ctx) =>
+        RegisterSystemVblankEvent(ctx, "sceVideoOutSysAddVblankEvent2");
+
+    [SysAbiExport(
+        Nid = "fYWVVDKZOCk",
+        ExportName = "sceVideoOutSysAddSetModeEvent2",
+        Target = Generation.Gen5,
+        LibraryName = "libSceVideoOut")]
+    public static int VideoOutSysAddSetModeEvent2(CpuContext ctx)
+    {
+        var equeue = ctx[CpuRegister.Rdi];
+        if (!KernelEventQueueCompatExports.IsValidEqueue(equeue))
+        {
+            return OrbisVideoOutErrorInvalidEventQueue;
+        }
+
+        // ShellCore registers the display-mode event before it opens a normal
+        // VideoOut port. In explicit boot-screen diagnostic mode, use that
+        // first real display milestone to bring up the existing Vulkan
+        // presenter and its firmware-derived splash frame.
+        if (string.Equals(
+                Environment.GetEnvironmentVariable("SHARPEMU_BOOT_SPLASH"),
+                "1",
+                StringComparison.Ordinal))
+        {
+            VulkanVideoPresenter.EnsureStarted(1280, 720);
+        }
+
+        var userData = ctx[CpuRegister.Rdx];
+        _ = KernelEventQueueCompatExports.TriggerDisplayEvent(
+            equeue,
+            SceVideoOutInternalEventSetMode,
+            OrbisKernelEventFilterVideoOut,
+            SceVideoOutInternalEventSetMode,
+            userData);
+        TraceVideoOut(
+            $"videoout.sys_add_set_mode_event2 eq=0x{equeue:X16} mode={ctx[CpuRegister.Rsi]} udata=0x{userData:X16}");
+
+        if (HostMainThread.IsAvailable &&
+            string.Equals(
+                Environment.GetEnvironmentVariable("SHARPEMU_BOOT_SPLASH"),
+                "1",
+                StringComparison.Ordinal) &&
+            string.Equals(
+                Environment.GetEnvironmentVariable("SHARPEMU_KEEP_VIDEOOUT_ON_EXIT"),
+                "1",
+                StringComparison.Ordinal))
+        {
+            Console.Error.WriteLine(
+                "[LOADER][INFO] ShellCore reached its display-mode milestone; holding the cold-boot frame until the window is closed.");
+            HostMainThread.WaitForIdle();
+        }
+
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
@@ -879,6 +976,67 @@ public static class VideoOutExports
             Console.Error.WriteLine(
                 $"[LOADER][SYNC] vblank#{signalCount} handle={port.Handle} count={port.VblankCount} " +
                 $"queues={vblankEvents.Count} hint=0x{eventHint:X16}");
+        }
+    }
+
+    private static int RegisterSystemVblankEvent(CpuContext ctx, string exportName)
+    {
+        var equeue = ctx[CpuRegister.Rdi];
+        if (!KernelEventQueueCompatExports.IsValidEqueue(equeue))
+        {
+            return OrbisVideoOutErrorInvalidEventQueue;
+        }
+
+        // These system events are not attached to an application VideoOut port. PSM
+        // registers them before its display buffers exist, so provide a 60 Hz source
+        // that can drive its event/render thread through startup.
+        var userData = ctx[CpuRegister.Rdx];
+        lock (_stateGate)
+        {
+            var existingIndex = _systemVblankEvents.FindIndex(
+                registration => registration.Equeue == equeue);
+            var registration = new FlipEventRegistration(equeue, userData);
+            if (existingIndex >= 0)
+            {
+                _systemVblankEvents[existingIndex] = registration;
+            }
+            else
+            {
+                _systemVblankEvents.Add(registration);
+            }
+
+            _systemVblankTimer ??= new Timer(
+                static _ => SignalSystemVblank(),
+                null,
+                TimeSpan.Zero,
+                TimeSpan.FromMilliseconds(16));
+        }
+
+        TraceVideoOut(
+            $"videoout.{exportName} eq=0x{equeue:X16} option={ctx[CpuRegister.Rsi]} udata=0x{userData:X16}");
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    private static void SignalSystemVblank()
+    {
+        List<FlipEventRegistration> registrations;
+        ulong eventHint;
+        lock (_stateGate)
+        {
+            var count = unchecked((ulong)Interlocked.Increment(ref _systemVblankSignalCount));
+            eventHint = SceVideoOutInternalEventVblank |
+                ((count & 0x0000_FFFF_FFFF_FFFFUL) << 16);
+            registrations = new List<FlipEventRegistration>(_systemVblankEvents);
+        }
+
+        foreach (var registration in registrations)
+        {
+            _ = KernelEventQueueCompatExports.TriggerDisplayEvent(
+                registration.Equeue,
+                SceVideoOutInternalEventVblank,
+                OrbisKernelEventFilterVideoOut,
+                eventHint,
+                registration.UserData);
         }
     }
 

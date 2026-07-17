@@ -16,7 +16,10 @@ namespace SharpEmu.HLE;
 public static class HostMainThread
 {
     private static readonly BlockingCollection<Action> _work = new();
+    private static readonly object _idleGate = new();
+    private static readonly ManualResetEventSlim _idle = new(initialState: true);
     private static Action? _shutdownRequestHandler;
+    private static int _pendingWork;
 
     public static bool IsAvailable { get; private set; }
 
@@ -33,6 +36,12 @@ public static class HostMainThread
 
     public static void Post(Action work)
     {
+        lock (_idleGate)
+        {
+            _pendingWork++;
+            _idle.Reset();
+        }
+
         try
         {
             _work.Add(work);
@@ -40,6 +49,7 @@ public static class HostMainThread
         catch (InvalidOperationException)
         {
             // Shutdown already requested; the process is exiting.
+            CompleteWork();
         }
     }
 
@@ -59,8 +69,20 @@ public static class HostMainThread
             {
                 Console.Error.WriteLine($"[LOADER][ERROR] Main-thread work failed: {exception}");
             }
+            finally
+            {
+                CompleteWork();
+            }
         }
     }
+
+    /// <summary>
+    /// Waits until all work posted to the host main thread has returned. This
+    /// lets an explicitly requested diagnostic VideoOut window remain visible
+    /// after guest execution stops; closing the window completes its posted
+    /// presenter loop and releases the emulation thread.
+    /// </summary>
+    public static void WaitForIdle() => _idle.Wait();
 
     public static void Shutdown()
     {
@@ -75,5 +97,17 @@ public static class HostMainThread
         }
 
         _work.CompleteAdding();
+    }
+
+    private static void CompleteWork()
+    {
+        lock (_idleGate)
+        {
+            _pendingWork = Math.Max(0, _pendingWork - 1);
+            if (_pendingWork == 0)
+            {
+                _idle.Set();
+            }
+        }
     }
 }

@@ -100,6 +100,9 @@ public readonly record struct GuestCpuContinuation(
 public static class GuestThreadExecution
 {
     [ThreadStatic]
+    private static bool _quiesceNewGuestThreads;
+
+    [ThreadStatic]
     private static ulong _currentGuestThreadHandle;
 
     [ThreadStatic]
@@ -154,6 +157,16 @@ public static class GuestThreadExecution
     private static ulong _currentImportReturnSlotAddress;
 
     public static IGuestThreadScheduler? Scheduler { get; set; }
+
+    /// <summary>
+    /// When set for the current executor thread, pthread creation publishes the
+    /// guest handle but does not schedule the persistent guest entry point.
+    /// </summary>
+    public static bool QuiesceNewGuestThreads
+    {
+        get => _quiesceNewGuestThreads;
+        set => _quiesceNewGuestThreads = value;
+    }
 
     public static bool IsGuestThread => _currentGuestThreadHandle != 0;
 

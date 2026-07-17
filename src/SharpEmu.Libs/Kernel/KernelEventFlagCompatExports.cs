@@ -16,6 +16,7 @@ public static class KernelEventFlagCompatExports
     private const uint AttrThreadPriority = 0x02;
     private const uint AttrSingle = 0x10;
     private const uint AttrMulti = 0x20;
+    private const uint AttrShared = 0x100;
     private const uint WaitAnd = 0x01;
     private const uint WaitOr = 0x02;
     private const uint ClearAll = 0x10;
@@ -30,6 +31,7 @@ public static class KernelEventFlagCompatExports
         public required uint Attributes { get; init; }
         public ulong Bits { get; set; }
         public int WaitingThreads { get; set; }
+        public ulong CancelEpoch { get; set; }
         public object Gate { get; } = new();
     }
 
@@ -239,6 +241,7 @@ public static class KernelEventFlagCompatExports
                 return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT);
             }
 
+            var cancelEpochAtBlock = state.CancelEpoch;
             var currentGuestThread = GuestThreadExecution.CurrentGuestThreadHandle;
             var currentFiber = FiberExports.GetCurrentFiberAddressForDiagnostics(ctx);
             var managedThread = Environment.CurrentManagedThreadId;
@@ -256,6 +259,7 @@ public static class KernelEventFlagCompatExports
                             pattern,
                             waitMode,
                             resultAddress,
+                            cancelEpochAtBlock,
                             out var preparedResult))
                     {
                         return false;
@@ -297,6 +301,15 @@ public static class KernelEventFlagCompatExports
                             releaseWaiter = false;
                             TraceEventFlag($"wait-wake handle=0x{handle:X16} pattern=0x{pattern:X16} bits=0x{state.Bits:X16} waiters={state.WaitingThreads} ret=0x{returnRip:X16}");
                             return ctx.SetReturn(pumpedWaitResult);
+                        }
+
+                        if (state.CancelEpoch != cancelEpochAtBlock)
+                        {
+                            state.WaitingThreads = Math.Max(0, state.WaitingThreads - 1);
+                            releaseWaiter = false;
+                            _ = TryWriteResultPattern(ctx, resultAddress, state.Bits);
+                            TraceEventFlag($"wait-canceled handle=0x{handle:X16} pattern=0x{pattern:X16} waiters={state.WaitingThreads} ret=0x{returnRip:X16}");
+                            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_CANCELED);
                         }
 
                         Monitor.Wait(state.Gate, HostWaitPumpMilliseconds);
@@ -345,11 +358,13 @@ public static class KernelEventFlagCompatExports
             }
 
             state.Bits = setPattern;
+            state.CancelEpoch++;
             state.WaitingThreads = 0;
             Monitor.PulseAll(state.Gate);
             TraceEventFlag($"cancel handle=0x{handle:X16} bits=0x{setPattern:X16}");
         }
 
+        _ = GuestThreadExecution.Scheduler?.WakeBlockedThreads(GetEventFlagWakeKey(handle));
         return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
     }
 
@@ -359,7 +374,7 @@ public static class KernelEventFlagCompatExports
         var threadMode = attributes & 0xF0;
         return (queueMode is 0 or AttrThreadFifo or AttrThreadPriority) &&
             (threadMode is 0 or AttrSingle or AttrMulti) &&
-            (attributes & ~0x33u) == 0;
+            (attributes & ~(0x33u | AttrShared)) == 0;
     }
 
     private static bool IsValidWaitMode(uint waitMode)
@@ -420,11 +435,21 @@ public static class KernelEventFlagCompatExports
         ulong pattern,
         uint waitMode,
         ulong resultAddress,
+        ulong cancelEpochAtBlock,
         out OrbisGen2Result result)
     {
         lock (state.Gate)
         {
             result = OrbisGen2Result.ORBIS_GEN2_OK;
+            if (state.CancelEpoch != cancelEpochAtBlock)
+            {
+                result = OrbisGen2Result.ORBIS_GEN2_ERROR_CANCELED;
+                _ = TryWriteResultPattern(ctx, resultAddress, state.Bits);
+                state.WaitingThreads = Math.Max(0, state.WaitingThreads - 1);
+                TraceEventFlag($"wait-wake-canceled pattern=0x{pattern:X16} bits=0x{state.Bits:X16} waiters={state.WaitingThreads}");
+                return true;
+            }
+
             if (!IsSatisfied(state.Bits, pattern, waitMode))
             {
                 return false;

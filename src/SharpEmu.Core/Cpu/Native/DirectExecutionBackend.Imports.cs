@@ -6,9 +6,12 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using SharpEmu.Core.Cpu;
 using SharpEmu.HLE;
+using SharpEmu.Libs.Kernel;
 
 namespace SharpEmu.Core.Cpu.Native;
 
@@ -175,7 +178,21 @@ public sealed partial class DirectExecutionBackend
 		var isGuestWorker = GuestThreadExecution.IsGuestThread;
 		if (!IsLikelyReturnAddress(num7))
 		{
-			for (int i = 1; i <= 4; i++)
+			// A guest tail-call into an import has no new return address at the
+			// trampoline's expected slot. Prefer the current frame's saved return
+			// before scanning arbitrary stack words; generated AOT images can map
+			// executable-looking sentinel values (for example 0x800000001).
+			if (string.Equals(importStubEntry.Nid, "K-jXhbt2gn4", StringComparison.Ordinal) &&
+				value4 > 0x10000 &&
+				value4 < 0x0000800000000000 &&
+				TryReadStackU64(value4 + 8, out var frameReturn) &&
+				IsPlausibleReturnAddress(frameReturn))
+			{
+				*(ulong*)(argPackPtr + 96) = frameReturn;
+				num7 = frameReturn;
+				Console.Error.WriteLine($"[LOADER][WARNING] Import#{num}: recovered tail-call return RIP from rbp+8 -> 0x{num7:X16}");
+			}
+			for (int i = 1; !IsLikelyReturnAddress(num7) && i <= 4; i++)
 			{
 				ulong num8 = *(ulong*)(argPackPtr + 96 + i * 8);
 				if (IsLikelyReturnAddress(num8))
@@ -203,6 +220,12 @@ public sealed partial class DirectExecutionBackend
 			 string.Equals(_probeImportReturn, importStubEntry.Nid, StringComparison.Ordinal)))
 		{
 			ProbeReturnRip(num7, num);
+		}
+		if (!string.IsNullOrWhiteSpace(_probeImportArguments) &&
+			(string.Equals(_probeImportArguments, "*", StringComparison.Ordinal) ||
+			 string.Equals(_probeImportArguments, importStubEntry.Nid, StringComparison.Ordinal)))
+		{
+			ProbeImportArguments(cpuContext, importStubEntry.Nid, num);
 		}
 		if (_logGuestContext)
 		{
@@ -267,7 +290,8 @@ public sealed partial class DirectExecutionBackend
 		{
 			flag5 = importStubEntry.Nid.Contains(_importFilter!, StringComparison.OrdinalIgnoreCase);
 		}
-		bool flag6 = _logAllImports || flag5;
+		bool flag6 = _logAllImports || flag5 ||
+			(_importReturnRipFilter != 0 && num7 == _importReturnRipFilter);
 		if (!flag0 && (flag6 || periodicTrace))
 		{
 			if (matchedExport != null)
@@ -310,6 +334,14 @@ public sealed partial class DirectExecutionBackend
 				cpuContext[CpuRegister.Rdi],
 				cpuContext[CpuRegister.Rsi],
 				cpuContext[CpuRegister.Rdx]);
+		}
+		if (_traceShellCoreLogger &&
+			num7 == 0x000000080114AA0CUL &&
+			Interlocked.Increment(ref _traceShellCoreLoggerCount) <= 8)
+		{
+			Console.Error.WriteLine($"[LOADER][TRACE] shellcore_logger_lock#{num}: guest=0x{GuestThreadExecution.CurrentGuestThreadHandle:X16}");
+			TraceImportFrameChain(cpuContext, num);
+			DumpRecentImportTrace();
 		}
 		if (importStubEntry.Nid == "8zTFvBIAIN8" && num <= 256)
 		{
@@ -425,6 +457,15 @@ public sealed partial class DirectExecutionBackend
 			{
 				GuestThreadExecution.RestoreImportCallFrame(previousImportCallFrame);
 			}
+			if (TryBypassMissingShellCorePadControllerSingleton(
+					argPackPtr,
+					num7,
+					value8,
+					cpuContext))
+			{
+				dispatchResolved = true;
+				orbisGen2Result = OrbisGen2Result.ORBIS_GEN2_OK;
+			}
 			if (dispatchResolved &&
 				orbisGen2Result == OrbisGen2Result.ORBIS_GEN2_OK &&
 				string.Equals(importStubEntry.Nid, "BohYr-F7-is", StringComparison.Ordinal))
@@ -434,9 +475,12 @@ public sealed partial class DirectExecutionBackend
 			if (!dispatchResolved)
 			{
 				LastError = "Missing HLE export for NID: " + importStubEntry.Nid;
-				Console.Error.WriteLine(
-					$"[LOADER][WARN] Import#{num} unresolved: nid={importStubEntry.Nid} ret=0x{num7:X16} " +
-					$"rdi=0x{value:X16} rsi=0x{value2:X16} rdx=0x{num3:X16} rcx=0x{num4:X16} r8=0x{num5:X16} r9=0x{num6:X16}");
+				if (_logAllImports || ShouldLogUnresolvedImport(importStubEntry.Nid))
+				{
+					Console.Error.WriteLine(
+						$"[LOADER][WARN] Import#{num} unresolved: nid={importStubEntry.Nid} ret=0x{num7:X16} " +
+						$"rdi=0x{value:X16} rsi=0x{value2:X16} rdx=0x{num3:X16} rcx=0x{num4:X16} r8=0x{num5:X16} r9=0x{num6:X16}");
+				}
 				if (importStubEntry.Nid == "L-Q3LEjIbgA")
 				{
 					string value18 = string.Join(" ", importStubEntry.Nid.Select(delegate (char c)
@@ -461,6 +505,12 @@ public sealed partial class DirectExecutionBackend
 						$"[LOADER][WARN] Import#{num} result: {orbisGen2Result} ({importStubEntry.Nid}) " +
 						$"rdi=0x{value:X16} rsi=0x{value2:X16} rdx=0x{num3:X16} rcx=0x{num4:X16} ret=0x{num7:X16}");
 				}
+			}
+			if (_logImportReturns && flag6)
+			{
+				Console.Error.WriteLine(
+					$"[LOADER][TRACE] Import#{num} return: nid={importStubEntry.Nid} " +
+					$"rax=0x{cpuContext[CpuRegister.Rax]:X16} ret=0x{num7:X16}");
 			}
 			cpuContext[CpuRegister.Rbx] = value3;
 			cpuContext[CpuRegister.Rbp] = value4;
@@ -497,6 +547,10 @@ public sealed partial class DirectExecutionBackend
 			}
 			if (GuestThreadExecution.TryConsumeCurrentEntryExit(out var exitValue, out var exitReason))
 			{
+				if (string.Equals(exitReason, "abort", StringComparison.Ordinal))
+				{
+					TraceImportFrameChain(cpuContext, num);
+				}
 				if (TryCompleteGuestEntryToHostStub(argPackPtr, num, num7, importStubEntry.Nid, exitReason, exitValue))
 				{
 					cpuContext[CpuRegister.Rax] = exitValue;
@@ -555,6 +609,32 @@ public sealed partial class DirectExecutionBackend
 			cpuContext[CpuRegister.Rax] = 18446744071562199298uL;
 			return 18446744071562199298uL;
 		}
+	}
+
+	private unsafe static bool TryBypassMissingShellCorePadControllerSingleton(
+		nint argPackPtr,
+		ulong returnRip,
+		ulong instance,
+		CpuContext cpuContext)
+	{
+		// SceShellCore's optional pad-controller firmware updater can be absent even
+		// though its server worker is started. The worker then calls its local
+		// singleton with a null instance and faults immediately after the mutex-lock
+		// import. Return through the method's normal success epilogue instead; no
+		// lock was acquired because the would-be mutex address is 0x8.
+		const ulong nullSingletonReturnRip = 0x0000000800A5200EuL;
+		const ulong successEpilogueRip = 0x0000000800A520D4uL;
+		if (returnRip != nullSingletonReturnRip || instance != 0)
+		{
+			return false;
+		}
+
+		*(ulong*)(argPackPtr + 96) = successEpilogueRip;
+		cpuContext[CpuRegister.Rax] = 0;
+		Console.Error.WriteLine(
+			$"[LOADER][WARNING] bypassed absent ShellCore PadController updater singleton " +
+			$"at 0x{returnRip:X16} -> 0x{successEpilogueRip:X16}");
+		return true;
 	}
 
 	private unsafe bool TryDispatchLeafImport(
@@ -762,6 +842,20 @@ public sealed partial class DirectExecutionBackend
 		}
 
 		return count <= 8 || count % 10000 == 0;
+	}
+
+	private bool ShouldLogUnresolvedImport(string nid)
+	{
+		var key = nid + "\0unresolved";
+		int count;
+		lock (_importResultLogSampleGate)
+		{
+			_importResultLogSamples.TryGetValue(key, out count);
+			count++;
+			_importResultLogSamples[key] = count;
+		}
+
+		return count <= 8;
 	}
 
 	private static bool ShouldLogExpectedImportResults() =>
@@ -980,6 +1074,10 @@ public sealed partial class DirectExecutionBackend
 		}
 		Console.Error.WriteLine(
 			$"[LOADER][INFO] Guest entry exit at import#{dispatchIndex}: nid={nid} ret=0x{returnRip:X16} reason={reason} value=0x{value:X16}");
+		if (string.Equals(reason, "abort", StringComparison.Ordinal))
+		{
+			DumpRecentImportTrace();
+		}
 		return true;
 	}
 
@@ -1316,13 +1414,24 @@ public sealed partial class DirectExecutionBackend
 			cpuContext[CpuRegister.Rax] = 18446744073709551615uL;
 			return OrbisGen2Result.ORBIS_GEN2_OK;
 		}
-		if (!TryResolveRuntimeSymbolAddress(symbolName, out var resolvedAddress) &&
-			!TryResolveRuntimeSymbolAlias(symbolName, out resolvedAddress))
+		var moduleHandle = unchecked((int)cpuContext[CpuRegister.Rdi]);
+		var symbolNid = ComputeSonyNid(symbolName);
+		if (!KernelModuleRegistry.TryResolveSymbol(moduleHandle, symbolName, out var resolvedAddress) &&
+			!KernelModuleRegistry.TryResolveSymbol(moduleHandle, symbolNid, out resolvedAddress) &&
+			!TryResolveRuntimeSymbolAddress(symbolName, out resolvedAddress) &&
+			!TryResolveRuntimeSymbolAlias(symbolName, out resolvedAddress) &&
+			!TryResolveRuntimeSymbolAddress(symbolNid, out resolvedAddress) &&
+			!TryGetOrCreateDynamicHleTrampoline(symbolName, symbolNid, out resolvedAddress))
 		{
 			Console.Error.WriteLine(
 				$"[LOADER][WARN] sceKernelDlsym failed: handle=0x{cpuContext[CpuRegister.Rdi]:X} symbol='{symbolName}'");
 			cpuContext[CpuRegister.Rax] = 18446744073709551615uL;
 			return OrbisGen2Result.ORBIS_GEN2_OK;
+		}
+		if (string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_DLSYM"), "1", StringComparison.Ordinal))
+		{
+			Console.Error.WriteLine(
+				$"[LOADER][TRACE] sceKernelDlsym handle=0x{moduleHandle:X} symbol='{symbolName}' -> 0x{resolvedAddress:X16}");
 		}
 		if (outputAddress == 0L || !TryWriteUInt64Compat(outputAddress, resolvedAddress))
 		{
@@ -1331,6 +1440,44 @@ public sealed partial class DirectExecutionBackend
 		}
 		cpuContext[CpuRegister.Rax] = 0uL;
 		return OrbisGen2Result.ORBIS_GEN2_OK;
+	}
+
+	private bool TryGetOrCreateDynamicHleTrampoline(
+		string symbolName,
+		string symbolNid,
+		out ulong address)
+	{
+		address = 0;
+		if (!_moduleManager.TryGetExport(symbolNid, out var export))
+		{
+			return false;
+		}
+
+		lock (_dynamicHleTrampolineGate)
+		{
+			if (_dynamicHleTrampolines.TryGetValue(symbolNid, out address))
+			{
+				return true;
+			}
+
+			var importIndex = _importEntries.Length;
+			var trampoline = CreateImportHandlerTrampoline(importIndex);
+			if (trampoline == 0)
+			{
+				return false;
+			}
+
+			var entries = new ImportStubEntry[importIndex + 1];
+			Array.Copy(_importEntries, entries, importIndex);
+			entries[importIndex] = new ImportStubEntry(0, symbolNid, export);
+			_importEntries = entries;
+
+			address = unchecked((ulong)trampoline);
+			_dynamicHleTrampolines[symbolNid] = address;
+			Console.Error.WriteLine(
+				$"[LOADER][INFO] Created dynamic HLE dlsym bridge: {symbolName} ({symbolNid}) -> 0x{address:X16}");
+			return true;
+		}
 	}
 
 	private bool TryResolveRuntimeSymbolAlias(string symbolName, out ulong address)
@@ -1346,6 +1493,27 @@ public sealed partial class DirectExecutionBackend
 		};
 
 		return alias != null && TryResolveRuntimeSymbolAddress(alias, out address);
+	}
+
+	private static string ComputeSonyNid(string symbolName)
+	{
+		ReadOnlySpan<byte> salt =
+		[
+			0x51, 0x8D, 0x64, 0xA6, 0x35, 0xDE, 0xD8, 0xC1,
+			0xE6, 0xB0, 0x39, 0xB1, 0xC3, 0xE5, 0x52, 0x30,
+		];
+		var symbolBytes = Encoding.UTF8.GetBytes(symbolName);
+		var hashInput = new byte[symbolBytes.Length + salt.Length];
+		symbolBytes.CopyTo(hashInput, 0);
+		salt.CopyTo(hashInput.AsSpan(symbolBytes.Length));
+		var digest = SHA1.HashData(hashInput);
+		Span<byte> nidBytes = stackalloc byte[8];
+		for (var i = 0; i < nidBytes.Length; i++)
+		{
+			nidBytes[i] = digest[nidBytes.Length - 1 - i];
+		}
+
+		return Convert.ToBase64String(nidBytes).TrimEnd('=').Replace('/', '-');
 	}
 
 	private OrbisGen2Result DispatchIl2CppApiLookupSymbol()

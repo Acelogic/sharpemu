@@ -11,6 +11,8 @@ public static class KernelExports
     private static readonly object _cxaGate = new();
     private static readonly List<CxaDestructorEntry> _cxaDestructors = new();
     private static readonly object _coredumpGate = new();
+    private static readonly object _quiescedThreadGate = new();
+    private static readonly HashSet<ulong> _quiescedThreadHandles = new();
     private static ulong _coredumpHandler;
     private static ulong _coredumpHandlerContext;
     private const uint Gen4CompiledSdkVersion = 0x05000000;
@@ -45,6 +47,33 @@ public static class KernelExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "sp+h-CJV1Ns",
+        ExportName = "sceKernelGetCompiledSdkVersionCompat1270",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int KernelGetCompiledSdkVersionCompat1270(CpuContext ctx)
+    {
+        // Firmware 12.70's libkernel implements this export with the same
+        // one-pointer ABI as sceKernelGetCompiledSdkVersion. It obtains the
+        // value through sysctl(CTL_KERN, KERN_PROC, 0x24, getpid()).
+        return KernelGetCompiledSdkVersion(ctx);
+    }
+
+    [SysAbiExport(
+        Nid = "Yrwoq3bti3c",
+        ExportName = "sceKernelRngPseudoSysctlGateCompat1270",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int KernelRngPseudoSysctlGateCompat1270(CpuContext ctx)
+    {
+        // This 12.70 libkernel compatibility gate probes the four-integer
+        // sysctl MIB { CTL_KERN, KERN_PROC, 0x37, -1 }. Returning zero selects
+        // ShellCore's current kern.rng_pseudo path instead of /dev/rng.
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
@@ -220,6 +249,60 @@ public static class KernelExports
     public static int PthreadCreate(CpuContext ctx)
         => PthreadCreateCore(ctx, ctx[CpuRegister.R8]);
 
+    [SysAbiExport(
+        Nid = "cPGKQ8XPkf8",
+        ExportName = "__sharpemu_gen5_thrd_start_with_name",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int Gen5ThrdStartWithName(CpuContext ctx)
+    {
+        // Gen5 libc uses (threadOut, entry, argument, name), while the kernel
+        // pthread entry point uses (threadOut, attr, entry, argument, name).
+        var entryAddress = ctx[CpuRegister.Rsi];
+        var argument = ctx[CpuRegister.Rdx];
+        var nameAddress = ctx[CpuRegister.Rcx];
+        ctx[CpuRegister.Rsi] = 0;
+        ctx[CpuRegister.Rdx] = entryAddress;
+        ctx[CpuRegister.Rcx] = argument;
+        return PthreadCreateCore(ctx, nameAddress);
+    }
+
+    [SysAbiExport(
+        Nid = "2cXiHqvKFUM",
+        ExportName = "__sharpemu_gen5_thrd_start",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int Gen5ThrdStart(CpuContext ctx)
+    {
+        // Observed Gen5 libc ABI: (threadOut, entry, argument).
+        var entryAddress = ctx[CpuRegister.Rsi];
+        var argument = ctx[CpuRegister.Rdx];
+        ctx[CpuRegister.Rsi] = 0;
+        ctx[CpuRegister.Rdx] = entryAddress;
+        ctx[CpuRegister.Rcx] = argument;
+        return PthreadCreateCore(ctx, nameAddress: 0);
+    }
+
+    [SysAbiExport(
+        Nid = "kuI8yo7-b4w",
+        ExportName = "__sharpemu_gen5_thrd_start_with_name_attr",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int Gen5ThrdStartWithNameAndAttr(CpuContext ctx)
+    {
+        // Observed Gen5 libc ABI: (threadOut, entry, argument, name, attr).
+        // Reorder it to the kernel pthread ABI consumed by the common thread
+        // scheduler: (threadOut, attr, entry, argument, name).
+        var entryAddress = ctx[CpuRegister.Rsi];
+        var argument = ctx[CpuRegister.Rdx];
+        var nameAddress = ctx[CpuRegister.Rcx];
+        var attrAddress = ctx[CpuRegister.R8];
+        ctx[CpuRegister.Rsi] = attrAddress;
+        ctx[CpuRegister.Rdx] = entryAddress;
+        ctx[CpuRegister.Rcx] = argument;
+        return PthreadCreateCore(ctx, nameAddress);
+    }
+
     private static int PthreadCreateCore(CpuContext ctx, ulong nameAddress)
     {
         var threadIdAddress = ctx[CpuRegister.Rdi];
@@ -252,7 +335,20 @@ public static class KernelExports
         }
 
         var scheduler = GuestThreadExecution.Scheduler;
-        if (scheduler is not null && entryAddress != 0)
+        if (GuestThreadExecution.QuiesceNewGuestThreads && entryAddress != 0)
+        {
+            lock (_quiescedThreadGate)
+            {
+                _quiescedThreadHandles.Add(threadHandle);
+            }
+
+            if (ShouldTracePthread())
+            {
+                Console.Error.WriteLine(
+                    $"[LOADER][TRACE] pthread_create: quiesced guest thread '{name}' entry=0x{entryAddress:X16}");
+            }
+        }
+        else if (scheduler is not null && entryAddress != 0)
         {
             var request = new GuestThreadStartRequest(
                 threadHandle,
@@ -332,7 +428,20 @@ public static class KernelExports
         }
 
         var returnValue = 0UL;
-        if (GuestThreadExecution.Scheduler is { } scheduler &&
+        bool wasQuiesced;
+        lock (_quiescedThreadGate)
+        {
+            wasQuiesced = _quiescedThreadHandles.Remove(threadId);
+        }
+
+        if (wasQuiesced && ShouldTracePthread())
+        {
+            Console.Error.WriteLine(
+                $"[LOADER][TRACE] pthread_join: completing quiesced thread=0x{threadId:X16}");
+        }
+
+        if (!wasQuiesced &&
+            GuestThreadExecution.Scheduler is { } scheduler &&
             !scheduler.TryJoinThread(ctx, threadId, out returnValue, out var error))
         {
             Console.Error.WriteLine(
@@ -367,11 +476,31 @@ public static class KernelExports
     public static int PosixPthreadJoin(CpuContext ctx) => PthreadJoin(ctx);
 
     [SysAbiExport(
+        Nid = "qnYxp6VUtbI",
+        ExportName = "__sharpemu_gen5_thrd_join",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int Gen5ThrdJoin(CpuContext ctx) => PthreadJoin(ctx);
+
+    [SysAbiExport(
         Nid = "wuCroIGjt2g",
         ExportName = "open",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int Open(CpuContext ctx) => KernelMemoryCompatExports.KernelOpenUnderscore(ctx);
+    public static int Open(CpuContext ctx)
+    {
+        var result = KernelMemoryCompatExports.KernelOpenUnderscore(ctx);
+        if (result == (int)OrbisGen2Result.ORBIS_GEN2_OK)
+        {
+            return result;
+        }
+
+        // POSIX open reports failures as -1 (and sets errno on the real
+        // platform). Do not expose an Orbis error value as a file descriptor:
+        // ShellCore only checks for -1 before passing the result to read.
+        ctx[CpuRegister.Rax] = ulong.MaxValue;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
 
     [SysAbiExport(
         Nid = "1G3lF1Gg1k8",
