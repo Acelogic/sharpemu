@@ -500,12 +500,9 @@ public static class Gen5ShaderScalarEvaluator
                             bufferDescriptor.Stride;
                         var elementBytes =
                             (ulong)Math.Max(bufferMemory.DwordCount, 1u) * sizeof(uint);
-                        var recordSpan = Math.Max(
-                            (ulong)bufferDescriptor.Stride,
-                            SaturatingAdd(bindingOffset, elementBytes));
                         var requiredBytes = SaturatingAdd(
                             lastRecordOffset,
-                            recordSpan);
+                            SaturatingAdd(bindingOffset, elementBytes));
                         vertexReadBytes = Math.Min(vertexReadBytes, requiredBytes);
                     }
 

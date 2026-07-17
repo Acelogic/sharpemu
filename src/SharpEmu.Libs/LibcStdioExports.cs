@@ -263,7 +263,10 @@ public static class LibcStdioExports
                     break;
                 }
 
-                if (!ctx.Memory.TryWrite(destination + totalRead, buffer.AsSpan(0, read)))
+                if (!KernelMemoryCompatExports.TryWriteCompat(
+                        ctx,
+                        destination + totalRead,
+                        buffer.AsSpan(0, read)))
                 {
                     ctx[CpuRegister.Rax] = totalRead / elementSize;
                     return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;

@@ -95,6 +95,32 @@ public sealed class KernelMemoryCompatExportsTests
     }
 
     [Fact]
+    public void Memalign_SmallBlockReservesNativeAllocatorSpanHeader()
+    {
+        var context = new CpuContext(new FakeCpuMemory(0x1_0000_0000, 0x1000), Generation.Gen5);
+        context[CpuRegister.Rdi] = 4;
+        context[CpuRegister.Rsi] = 64;
+
+        Assert.Equal(0, KernelMemoryCompatExports.Memalign(context));
+        var allocation = context[CpuRegister.Rax];
+        Assert.NotEqual(0UL, allocation);
+        try
+        {
+            Assert.Equal(0x10UL, allocation & 0xFFFF);
+            Assert.Equal(0, Marshal.ReadInt64(unchecked((nint)(allocation - 0x10))));
+            Marshal.WriteInt64(unchecked((nint)allocation), 0x1234_5678_9ABC_DEF0);
+            Assert.Equal(
+                unchecked((long)0x1234_5678_9ABC_DEF0),
+                Marshal.ReadInt64(unchecked((nint)allocation)));
+        }
+        finally
+        {
+            context[CpuRegister.Rdi] = allocation;
+            Assert.Equal(0, KernelMemoryCompatExports.Free(context));
+        }
+    }
+
+    [Fact]
     public void BasicLibcCompatExports_RegisterByKnownNids()
     {
         var manager = new ModuleManager();

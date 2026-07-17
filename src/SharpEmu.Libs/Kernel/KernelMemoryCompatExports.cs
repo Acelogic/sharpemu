@@ -1717,10 +1717,9 @@ public static partial class KernelMemoryCompatExports
     public static int Memalign(CpuContext ctx)
     {
         ctx[CpuRegister.Rax] =
-            TryAllocateAlignedLibcHeap(
+            TryAllocateMemalignLibcHeap(
                 alignmentValue: ctx[CpuRegister.Rdi],
                 requestedSize: ctx[CpuRegister.Rsi],
-                requireSizeMultiple: false,
                 out var address)
                 ? address
                 : 0;
@@ -7515,6 +7514,89 @@ public static partial class KernelMemoryCompatExports
                    out var alignment,
                    out var size) &&
                TryAllocateLibcHeapCore(size, alignment, zeroFill: false, out address);
+    }
+
+    private static bool TryAllocateMemalignLibcHeap(
+        ulong alignmentValue,
+        ulong requestedSize,
+        out ulong address)
+    {
+        address = 0;
+        if (!TryValidateAlignedAllocation(
+                alignmentValue,
+                requestedSize,
+                requireSizeMultiple: false,
+                requirePointerSizedAlignment: false,
+                out var alignment,
+                out var size))
+        {
+            return false;
+        }
+
+        // Chowdren frees its small transient vertex buffers through the native
+        // PS5 libc allocator even though memalign is an imported function. That
+        // allocator masks pointers down to a 64 KiB span and reads its header.
+        // Keep these compatibility allocations on their own span so the native
+        // free path never interprets an unrelated neighbouring allocation as
+        // allocator metadata.
+        if (alignment <= DefaultLibcHeapAlignment && size <= 0x1000)
+        {
+            return TryAllocateNativeFreeCompatibleLibcHeap(size, out address);
+        }
+
+        return TryAllocateLibcHeapCore(size, alignment, zeroFill: false, out address);
+    }
+
+    private static unsafe bool TryAllocateNativeFreeCompatibleLibcHeap(
+        nuint requestedSize,
+        out ulong address)
+    {
+        address = 0;
+        const nuint spanAlignment = 0x10000;
+        const nuint spanHeaderSize = 0x10;
+        var actualSize = requestedSize == 0 ? 1u : requestedSize;
+
+        nuint totalSize;
+        try
+        {
+            checked
+            {
+                totalSize = actualSize + spanAlignment - 1 + spanHeaderSize;
+            }
+        }
+        catch (OverflowException)
+        {
+            return false;
+        }
+
+        var baseAddress = VirtualAlloc(0, totalSize, MemCommit | MemReserve, HostPageReadWrite);
+        if (baseAddress == 0)
+        {
+            return false;
+        }
+
+        var spanAddress = AlignUp(unchecked((ulong)baseAddress), spanAlignment);
+        var allocationAddress = spanAddress + spanHeaderSize;
+        try
+        {
+            NativeMemory.Clear((void*)spanAddress, spanHeaderSize);
+        }
+        catch
+        {
+            _ = VirtualFree(baseAddress, 0, MemRelease);
+            return false;
+        }
+
+        lock (_libcAllocGate)
+        {
+            _libcAllocations[allocationAddress] = new LibcHeapAllocation(
+                baseAddress,
+                actualSize,
+                DefaultLibcHeapAlignment);
+        }
+
+        address = allocationAddress;
+        return true;
     }
 
     private static bool TryValidateAlignedAllocation(
