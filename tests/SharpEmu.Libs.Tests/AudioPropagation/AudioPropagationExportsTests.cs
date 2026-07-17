@@ -444,6 +444,140 @@ public sealed class AudioPropagationExportsTests
     }
 
     [Fact]
+    public void SetRaysReadsOnlyTagThenSizeForEachSubmittedRecord()
+    {
+        var system = CreateSystem();
+        Fill(RaysAddress, 2 * RaySize, 0);
+        for (var index = 0; index < 2; index++)
+        {
+            var address = RaysAddress + (ulong)(index * RaySize);
+            WriteUInt32(address, RayTag);
+            WriteUInt64(address + 0x08, RaySize);
+        }
+
+        var memory = new RecordingFaultingCpuMemory(_memory);
+        var context = new CpuContext(memory, Generation.Gen5);
+        context[CpuRegister.Rdi] = system;
+        context[CpuRegister.Rsi] = RaysAddress;
+        context[CpuRegister.Rdx] = 2;
+
+        Assert.Equal(0, AudioPropagationExports.SystemSetRays(context));
+        Assert.Equal(
+            new[]
+            {
+                new ReadAccess(RaysAddress, sizeof(uint)),
+                new ReadAccess(RaysAddress + 0x08, sizeof(ulong)),
+                new ReadAccess(RaysAddress + RaySize, sizeof(uint)),
+                new ReadAccess(RaysAddress + RaySize + 0x08, sizeof(ulong)),
+            },
+            memory.ReadAttempts);
+    }
+
+    [Fact]
+    public void SetRaysShortCircuitsHeaderReadsInFirmwareOrder()
+    {
+        var system = CreateSystem();
+        Fill(RaysAddress, 2 * RaySize, 0);
+
+        var faultedTagMemory = new RecordingFaultingCpuMemory(
+            _memory,
+            readFaultStartAddress: RaysAddress);
+        var faultedTagContext = new CpuContext(faultedTagMemory, Generation.Gen5);
+        faultedTagContext[CpuRegister.Rdi] = system;
+        faultedTagContext[CpuRegister.Rsi] = RaysAddress;
+        faultedTagContext[CpuRegister.Rdx] = 2;
+
+        Assert.Equal(
+            ErrorInvalidPointer,
+            AudioPropagationExports.SystemSetRays(faultedTagContext));
+        Assert.Equal(
+            new[] { new ReadAccess(RaysAddress, sizeof(uint)) },
+            faultedTagMemory.ReadAttempts);
+
+        WriteUInt32(RaysAddress, 0xDEADBEEF);
+        WriteUInt64(RaysAddress + 0x08, RaySize);
+
+        var badTagMemory = new RecordingFaultingCpuMemory(
+            _memory,
+            readFaultStartAddress: RaysAddress + 0x08);
+        var badTagContext = new CpuContext(badTagMemory, Generation.Gen5);
+        badTagContext[CpuRegister.Rdi] = system;
+        badTagContext[CpuRegister.Rsi] = RaysAddress;
+        badTagContext[CpuRegister.Rdx] = 2;
+
+        Assert.Equal(
+            ErrorInvalidStructure,
+            AudioPropagationExports.SystemSetRays(badTagContext));
+        Assert.Equal(
+            new[] { new ReadAccess(RaysAddress, sizeof(uint)) },
+            badTagMemory.ReadAttempts);
+
+        WriteUInt32(RaysAddress, RayTag);
+        var faultedSizeMemory = new RecordingFaultingCpuMemory(
+            _memory,
+            readFaultStartAddress: RaysAddress + 0x08);
+        var faultedSizeContext = new CpuContext(faultedSizeMemory, Generation.Gen5);
+        faultedSizeContext[CpuRegister.Rdi] = system;
+        faultedSizeContext[CpuRegister.Rsi] = RaysAddress;
+        faultedSizeContext[CpuRegister.Rdx] = 2;
+
+        Assert.Equal(
+            ErrorInvalidPointer,
+            AudioPropagationExports.SystemSetRays(faultedSizeContext));
+        Assert.Equal(
+            new[]
+            {
+                new ReadAccess(RaysAddress, sizeof(uint)),
+                new ReadAccess(RaysAddress + 0x08, sizeof(ulong)),
+            },
+            faultedSizeMemory.ReadAttempts);
+
+        WriteUInt64(RaysAddress + 0x08, 0x57);
+        var badSizeMemory = new RecordingFaultingCpuMemory(_memory);
+        var badSizeContext = new CpuContext(badSizeMemory, Generation.Gen5);
+        badSizeContext[CpuRegister.Rdi] = system;
+        badSizeContext[CpuRegister.Rsi] = RaysAddress;
+        badSizeContext[CpuRegister.Rdx] = 2;
+
+        Assert.Equal(
+            ErrorInvalidStructure,
+            AudioPropagationExports.SystemSetRays(badSizeContext));
+        Assert.Equal(
+            new[]
+            {
+                new ReadAccess(RaysAddress, sizeof(uint)),
+                new ReadAccess(RaysAddress + 0x08, sizeof(ulong)),
+            },
+            badSizeMemory.ReadAttempts);
+    }
+
+    [Fact]
+    public void SetRaysAcceptsUnmatchedRecordWhenOnlyHeaderIsReadable()
+    {
+        var system = CreateSystem();
+        Fill(RaysAddress, RaySize, 0);
+        WriteUInt32(RaysAddress, RayTag);
+        WriteUInt64(RaysAddress + 0x08, RaySize);
+
+        var memory = new RecordingFaultingCpuMemory(
+            _memory,
+            readFaultStartAddress: RaysAddress + 0x10);
+        var context = new CpuContext(memory, Generation.Gen5);
+        context[CpuRegister.Rdi] = system;
+        context[CpuRegister.Rsi] = RaysAddress;
+        context[CpuRegister.Rdx] = 1;
+
+        Assert.Equal(0, AudioPropagationExports.SystemSetRays(context));
+        Assert.Equal(
+            new[]
+            {
+                new ReadAccess(RaysAddress, sizeof(uint)),
+                new ReadAccess(RaysAddress + 0x08, sizeof(ulong)),
+            },
+            memory.ReadAttempts);
+    }
+
+    [Fact]
     public void SystemRegistryExhaustionReturnsResourceErrorWithoutOutputWrite()
     {
         for (var index = 0; index < 256; index++)
@@ -618,6 +752,31 @@ public sealed class AudioPropagationExportsTests
     {
         public bool TryRead(ulong virtualAddress, Span<byte> destination) =>
             inner.TryRead(virtualAddress, destination);
+
+        public bool TryWrite(ulong virtualAddress, ReadOnlySpan<byte> source) =>
+            inner.TryWrite(virtualAddress, source);
+    }
+
+    private readonly record struct ReadAccess(ulong Address, int Width);
+
+    private sealed class RecordingFaultingCpuMemory(
+        ICpuMemory inner,
+        ulong? readFaultStartAddress = null) : ICpuMemory
+    {
+        public List<ReadAccess> ReadAttempts { get; } = [];
+
+        public bool TryRead(ulong virtualAddress, Span<byte> destination)
+        {
+            ReadAttempts.Add(new ReadAccess(virtualAddress, destination.Length));
+            if (readFaultStartAddress is { } faultAddress &&
+                (virtualAddress >= faultAddress ||
+                    faultAddress - virtualAddress < (ulong)destination.Length))
+            {
+                return false;
+            }
+
+            return inner.TryRead(virtualAddress, destination);
+        }
 
         public bool TryWrite(ulong virtualAddress, ReadOnlySpan<byte> source) =>
             inner.TryWrite(virtualAddress, source);

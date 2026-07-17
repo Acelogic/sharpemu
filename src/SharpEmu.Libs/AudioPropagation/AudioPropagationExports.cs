@@ -335,17 +335,25 @@ public static class AudioPropagationExports
             return SetReturn(ctx, ErrorInvalidPointer);
         }
 
-        Span<byte> record = stackalloc byte[(int)RaySize];
         for (var index = 0U; index < count; index++)
         {
             var recordAddress = raysAddress + ((ulong)index * RaySize);
-            if (!ctx.Memory.TryRead(recordAddress, record))
+            if (!TryReadUInt32(ctx, recordAddress, out var tag))
             {
                 return SetReturn(ctx, ErrorInvalidPointer);
             }
 
-            if (BinaryPrimitives.ReadUInt32LittleEndian(record) != RayTag ||
-                BinaryPrimitives.ReadUInt64LittleEndian(record[0x08..]) != RaySize)
+            if (tag != RayTag)
+            {
+                return SetReturn(ctx, ErrorInvalidStructure);
+            }
+
+            if (!TryReadUInt64(ctx, recordAddress + 0x08, out var size))
+            {
+                return SetReturn(ctx, ErrorInvalidPointer);
+            }
+
+            if (size != RaySize)
             {
                 return SetReturn(ctx, ErrorInvalidStructure);
             }
