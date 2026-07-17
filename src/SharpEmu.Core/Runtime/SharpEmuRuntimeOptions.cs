@@ -12,4 +12,8 @@ public readonly struct SharpEmuRuntimeOptions
     public bool StrictDynlibResolution { get; init; }
 
     public int ImportTraceLimit { get; init; }
+
+    public SharpEmuBootMode BootMode { get; init; }
+
+    public string? SystemRoot { get; init; }
 }

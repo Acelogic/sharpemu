@@ -87,6 +87,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
           <TextBox x:Name="SearchBox" Watermark="Search library…" Width="240" VerticalAlignment="Center" />
           <Button x:Name="AddFolderButton" Classes="ghost" Content="＋ Add folder" VerticalAlignment="Center" />
           <Button x:Name="RescanButton" Classes="ghost" Content="⟳ Rescan" VerticalAlignment="Center" />
+          <Button x:Name="SystemUiButton" Classes="ghost" Content="Boot System UI…" VerticalAlignment="Center" />
           <Button x:Name="OpenFileButton" Classes="ghost" Content="Open file…" VerticalAlignment="Center" />
         </StackPanel>
       </Grid>

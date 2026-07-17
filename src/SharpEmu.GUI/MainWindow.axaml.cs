@@ -145,6 +145,7 @@ public partial class MainWindow : Window
         AddFolderButton.Click += async (_, _) => await AddFolderAsync();
         EmptyAddFolderButton.Click += async (_, _) => await AddFolderAsync();
         RescanButton.Click += async (_, _) => await RescanLibraryAsync();
+        SystemUiButton.Click += async (_, _) => await BootSystemUiAsync();
         OpenFileButton.Click += async (_, _) => await OpenFileAsync();
         LaunchButton.Click += (_, _) => LaunchSelected();
         ClearLogButton.Click += (_, _) => { _consoleLines.Clear(); _allConsoleLines.Clear(); };
@@ -1657,6 +1658,44 @@ public partial class MainWindow : Window
 
     // ---- Launching ----
 
+    private async Task BootSystemUiAsync()
+    {
+        if (_isRunning)
+        {
+            return;
+        }
+
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "Select the extracted system-software filesystem root",
+            AllowMultiple = false,
+        });
+        var rootFolder = folders.FirstOrDefault();
+        var systemRoot = rootFolder?.TryGetLocalPath();
+        if (string.IsNullOrWhiteSpace(systemRoot))
+        {
+            return;
+        }
+
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Select the System UI entry executable",
+            AllowMultiple = false,
+            SuggestedStartLocation = rootFolder,
+            FileTypeFilter = new[]
+            {
+                new FilePickerFileType("System executables") { Patterns = new[] { "*.self", "*.elf", "*.bin" } },
+                FilePickerFileTypes.All,
+            },
+        });
+
+        var entryPath = files.FirstOrDefault()?.TryGetLocalPath();
+        if (!string.IsNullOrWhiteSpace(entryPath))
+        {
+            Launch(entryPath, "System UI", systemRoot: systemRoot);
+        }
+    }
+
     private async Task OpenFileAsync()
     {
         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
@@ -1686,7 +1725,11 @@ public partial class MainWindow : Window
         }
     }
 
-    private void Launch(string ebootPath, string displayName, string? titleId = null)
+    private void Launch(
+        string ebootPath,
+        string displayName,
+        string? titleId = null,
+        string? systemRoot = null)
     {
         if (_isRunning)
         {
@@ -1735,12 +1778,18 @@ public partial class MainWindow : Window
             CpuEngine = CpuExecutionEngine.NativeOnly,
             StrictDynlibResolution = effective.StrictDynlibResolution,
             ImportTraceLimit = Math.Max(0, effective.ImportTraceLimit),
+            BootMode = string.IsNullOrWhiteSpace(systemRoot)
+                ? SharpEmuBootMode.Game
+                : SharpEmuBootMode.SystemUi,
+            SystemRoot = systemRoot,
         };
 
         _isRunning = true;
         _runningGameName = displayName;
         SessionGameTitle.Text = displayName;
-        _runningGameTitleId = resolvedTitleId;
+        _runningGameTitleId = string.IsNullOrWhiteSpace(systemRoot)
+            ? resolvedTitleId
+            : null;
         _runningSinceUnixSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         StatusDot.Fill = SuccessLineBrush;
         StatusText.Text = Localization.Instance.Format("Launch.Running", displayName);
@@ -1931,6 +1980,12 @@ public partial class MainWindow : Window
         if (launch.RuntimeOptions.ImportTraceLimit > 0)
         {
             arguments.Add($"--trace-imports={launch.RuntimeOptions.ImportTraceLimit}");
+        }
+
+        if (launch.RuntimeOptions.BootMode == SharpEmuBootMode.SystemUi)
+        {
+            arguments.Add("--system-ui");
+            arguments.Add($"--system-root={launch.RuntimeOptions.SystemRoot}");
         }
 
         if (surface.TryGetChildProcessDescriptor(out var descriptor))
@@ -2229,6 +2284,7 @@ public partial class MainWindow : Window
         StopButton.IsEnabled = _isRunning && !_isStopping;
         SessionStopButton.IsEnabled = _isRunning && !_isStopping;
         OpenFileButton.IsEnabled = !_isRunning;
+        SystemUiButton.IsEnabled = !_isRunning;
     }
 
     private void UpdateSessionBarVisibility()

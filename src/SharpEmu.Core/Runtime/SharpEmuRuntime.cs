@@ -37,6 +37,8 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
     private readonly ISymbolCatalog _symbolCatalog;
     private readonly CpuExecutionOptions _cpuExecutionOptions;
     private readonly IFileSystem _fileSystem;
+    private readonly SharpEmuBootMode _bootMode;
+    private readonly string? _systemRoot;
     private bool _disposed;
 
     public string? LastExecutionDiagnostics { get; private set; }
@@ -56,7 +58,9 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         IModuleManager moduleManager,
         ISymbolCatalog? symbolCatalog = null,
         CpuExecutionOptions cpuExecutionOptions = default,
-        IFileSystem? fileSystem = null)
+        IFileSystem? fileSystem = null,
+        SharpEmuBootMode bootMode = SharpEmuBootMode.Game,
+        string? systemRoot = null)
     {
         _selfLoader = selfLoader ?? throw new ArgumentNullException(nameof(selfLoader));
         _virtualMemory = virtualMemory ?? throw new ArgumentNullException(nameof(virtualMemory));
@@ -70,6 +74,8 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             ImportTraceLimit = Math.Max(0, cpuExecutionOptions.ImportTraceLimit),
         };
         _fileSystem = fileSystem ?? new PhysicalFileSystem();
+        _bootMode = bootMode;
+        _systemRoot = systemRoot;
     }
 
     public static ISharpEmuRuntime CreateDefault(SharpEmuRuntimeOptions options = default)
@@ -97,7 +103,9 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             moduleManager,
             Aerolib.Instance,
             cpuExecutionOptions,
-            fileSystem);
+            fileSystem,
+            options.BootMode,
+            options.SystemRoot);
     }
 
     public SelfImage LoadImage(string ebootPath)
@@ -130,7 +138,22 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
     public OrbisGen2Result Run(string ebootPath)
     {
         var normalizedEbootPath = Path.GetFullPath(ebootPath);
+        var systemSoftwareLayout = _bootMode == SharpEmuBootMode.SystemUi
+            ? SystemSoftwareLayout.Create(_systemRoot, normalizedEbootPath)
+            : null;
+        using var systemSoftwareBinding = BindSystemSoftwareLayout(systemSoftwareLayout);
         using var app0Binding = BindApp0Root(normalizedEbootPath);
+        if (systemSoftwareLayout is null)
+        {
+            Console.Error.WriteLine("[RUNTIME] Boot mode: Game");
+        }
+        else
+        {
+            Console.Error.WriteLine("[RUNTIME] Boot mode: System UI");
+            Console.Error.WriteLine(systemSoftwareLayout.BuildDiagnosticSummary());
+            systemSoftwareLayout.EnsureEntryIsLoadable();
+        }
+
         Console.Error.WriteLine($"[RUNTIME] Loading: {ebootPath}");
         LastExecutionDiagnostics = null;
         LastExecutionTrace = null;
@@ -143,7 +166,16 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         VideoOutExports.ConfigureApplicationInfo(image.Title, image.TitleId, image.Version);
         SaveDataExports.ConfigureApplicationInfo(image.TitleId);
         SystemServiceExports.ConfigureApplicationInfo(image.TitleId);
-        _ = RegisterLoadedModule(normalizedEbootPath, image, isMain: true, isSystemModule: false);
+        if (systemSoftwareLayout is null)
+        {
+            LogAppBundleInfo(normalizedEbootPath, image);
+        }
+
+        _ = RegisterLoadedModule(
+            normalizedEbootPath,
+            image,
+            isMain: true,
+            isSystemModule: systemSoftwareLayout is not null);
         KernelRuntimeCompatExports.ConfigureProcessProcParamAddress(image.ProcParamAddress);
         Console.Error.WriteLine($"[RUNTIME] Entry: 0x{image.EntryPoint:X16}");
         var generation = image.ElfHeader.AbiVersion == 2 ? Generation.Gen5 : Generation.Gen4;
@@ -157,7 +189,11 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
 
         HleDataSymbols.ConfigureProcessImageName(processImageName);
         MergeKnownHleDataSymbols(activeRuntimeSymbols);
-        var loadedModuleImages = LoadAdjacentSceModules(ebootPath, activeImportStubs, activeRuntimeSymbols);
+        var loadedModuleImages = LoadAdjacentSceModules(
+            ebootPath,
+            activeImportStubs,
+            activeRuntimeSymbols,
+            isSystemModule: systemSoftwareLayout is not null);
         RebindImportedDataSymbols(image, loadedModuleImages, activeRuntimeSymbols);
         var initializerResult = RunAllInitializers(
             image,
@@ -367,6 +403,117 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         }
 
         return result;
+    }
+
+    private static void LogAppBundleInfo(string ebootPath, SelfImage image)
+    {
+        var executableName = Path.GetFileName(ebootPath);
+        if (string.IsNullOrWhiteSpace(executableName))
+        {
+            executableName = "eboot.bin";
+        }
+
+        var displayName = string.IsNullOrWhiteSpace(image.Title) ? "(unknown)" : image.Title!.Trim();
+        var titleId = string.IsNullOrWhiteSpace(image.TitleId) ? "(unknown)" : image.TitleId!.Trim();
+        var version = string.IsNullOrWhiteSpace(image.Version) ? "(unknown)" : image.Version!.Trim();
+        var contentId = ResolveContentId(Path.GetDirectoryName(ebootPath)) ?? "(unknown)";
+
+        var builder = new StringBuilder();
+        builder.AppendLine("App bundle info:");
+        builder.AppendLine($"- Display name: {displayName}");
+        builder.AppendLine($"- Version: {version}");
+        builder.AppendLine($"- Title ID: {titleId}");
+        builder.AppendLine($"- Content ID: {contentId}");
+        builder.AppendLine($"- Executable: {executableName}");
+        builder.Append("- Platform: PlayStation 5");
+        Console.Error.WriteLine(builder.ToString());
+    }
+
+    private static string? ResolveContentId(string? bundleRoot)
+    {
+        if (string.IsNullOrEmpty(bundleRoot))
+        {
+            return null;
+        }
+
+        foreach (var candidate in new[]
+        {
+            Path.Combine(bundleRoot, "sce_sys", "param.json"),
+            Path.Combine(bundleRoot, "param.json"),
+        })
+        {
+            if (!File.Exists(candidate))
+            {
+                continue;
+            }
+
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllBytes(candidate));
+                if (doc.RootElement.TryGetProperty("contentId", out var contentId))
+                {
+                    return contentId.GetString();
+                }
+            }
+            catch (Exception ex) when (ex is IOException or System.Text.Json.JsonException)
+            {
+            }
+
+            break;
+        }
+
+        return null;
+    }
+
+    private static SystemSoftwareBindingScope? BindSystemSoftwareLayout(SystemSoftwareLayout? layout)
+    {
+        KernelMemoryCompatExports.ClearGuestPathMounts();
+        if (layout is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            foreach (var mount in layout.Mounts)
+            {
+                KernelMemoryCompatExports.RegisterGuestPathMount(
+                    mount.GuestPath,
+                    mount.HostPath,
+                    readOnly: mount.ReadOnly);
+            }
+
+            const string systemRootVariableName = "SHARPEMU_SYSTEM_ROOT";
+            var previousSystemRoot = Environment.GetEnvironmentVariable(systemRootVariableName);
+            Environment.SetEnvironmentVariable(systemRootVariableName, layout.RootPath);
+            return new SystemSoftwareBindingScope(systemRootVariableName, previousSystemRoot);
+        }
+        catch
+        {
+            KernelMemoryCompatExports.ClearGuestPathMounts();
+            throw;
+        }
+    }
+
+    private sealed class SystemSoftwareBindingScope(
+        string variableName,
+        string? previousValue) : IDisposable
+    {
+        private readonly string _variableName = variableName;
+        private readonly string? _previousValue = previousValue;
+        private bool _disposed;
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            KernelMemoryCompatExports.ClearGuestPathMounts();
+            Environment.SetEnvironmentVariable(_variableName, _previousValue);
+            _disposed = true;
+        }
     }
 
     private static App0BindingScope? BindApp0Root(string normalizedEbootPath)
@@ -622,7 +769,8 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
     private List<LoadedModuleImage> LoadAdjacentSceModules(
         string ebootPath,
         IDictionary<ulong, string> importStubs,
-        IDictionary<string, ulong> runtimeSymbols)
+        IDictionary<string, ulong> runtimeSymbols,
+        bool isSystemModule)
     {
         var loadedImages = new List<LoadedModuleImage>();
         var ebootDirectory = Path.GetDirectoryName(ebootPath);
@@ -718,7 +866,11 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
                 mergedImportCount += MergeImportStubs(importStubs, moduleImage.ImportStubs, modulePath);
                 mergedSymbolCount += MergeRuntimeSymbols(runtimeSymbols, moduleImage.RuntimeSymbols);
                 InstallNativePluginCompatibilityHooks(importStubs, moduleImage, modulePath);
-                var moduleHandle = RegisterLoadedModule(modulePath, moduleImage, isMain: false, isSystemModule: false);
+                var moduleHandle = RegisterLoadedModule(
+                    modulePath,
+                    moduleImage,
+                    isMain: false,
+                    isSystemModule: isSystemModule);
                 var moduleName = Path.GetFileName(modulePath);
                 var startAtBoot = moduleEntry.StartAtBoot ||
                     string.Equals(moduleName, "libfmod.prx", StringComparison.OrdinalIgnoreCase) ||
