@@ -7,9 +7,11 @@ namespace SharpEmu.Libs.Rudp;
 
 public static class RudpExports
 {
+    private const int RudpErrorNotInitialized = unchecked((int)0x80770001);
     private const int RudpErrorAlreadyInitialized = unchecked((int)0x80770002);
     private const int RudpErrorInvalidArgument = unchecked((int)0x80770004);
     private const int RudpErrorOutOfMemory = unchecked((int)0x80770007);
+    private const int RudpErrorInvalidEventHandler = unchecked((int)0x80770022);
     private const int MinimumAllocatorStorageSize = 0xF8 + 0x2D8;
     private const int GuestBufferProbeSize = 4096;
 
@@ -17,6 +19,8 @@ public static class RudpExports
     private static bool _initialized;
     private static ulong _retainedBufferAddress;
     private static int _retainedBufferSize;
+    private static ulong _eventHandlerAddress;
+    private static ulong _eventHandlerUserData;
 
     [SysAbiExport(
         Nid = "amuBfI-AQc4",
@@ -53,6 +57,34 @@ public static class RudpExports
             _retainedBufferAddress = bufferAddress;
             _retainedBufferSize = bufferSize;
             _initialized = true;
+            return ctx.SetReturn(0);
+        }
+    }
+
+    [SysAbiExport(
+        Nid = "SUEVes8gvmw",
+        ExportName = "sceRudpSetEventHandler",
+        Target = Generation.Gen5,
+        LibraryName = "libSceRudp")]
+    public static int SetEventHandler(CpuContext ctx)
+    {
+        var handlerAddress = ctx[CpuRegister.Rdi];
+        var userData = ctx[CpuRegister.Rsi];
+
+        lock (StateGate)
+        {
+            if (!_initialized)
+            {
+                return ctx.SetReturn(RudpErrorNotInitialized);
+            }
+
+            if (handlerAddress == 0)
+            {
+                return ctx.SetReturn(RudpErrorInvalidEventHandler);
+            }
+
+            _eventHandlerAddress = handlerAddress;
+            _eventHandlerUserData = userData;
             return ctx.SetReturn(0);
         }
     }
@@ -97,6 +129,15 @@ public static class RudpExports
         }
     }
 
+    internal static (ulong HandlerAddress, ulong UserData)
+        GetEventHandlerStateForTests()
+    {
+        lock (StateGate)
+        {
+            return (_eventHandlerAddress, _eventHandlerUserData);
+        }
+    }
+
     internal static void ResetForTests()
     {
         lock (StateGate)
@@ -110,5 +151,7 @@ public static class RudpExports
         _initialized = false;
         _retainedBufferAddress = 0;
         _retainedBufferSize = 0;
+        _eventHandlerAddress = 0;
+        _eventHandlerUserData = 0;
     }
 }

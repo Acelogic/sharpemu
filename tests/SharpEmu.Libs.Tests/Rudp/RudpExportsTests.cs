@@ -10,9 +10,11 @@ namespace SharpEmu.Libs.Tests.Rudp;
 public sealed class RudpExportsTests : IDisposable
 {
     private const ulong BaseAddress = 0x1_0000_0000;
+    private const int NotInitialized = unchecked((int)0x80770001);
     private const int AlreadyInitialized = unchecked((int)0x80770002);
     private const int InvalidArgument = unchecked((int)0x80770004);
     private const int OutOfMemory = unchecked((int)0x80770007);
+    private const int InvalidEventHandler = unchecked((int)0x80770022);
 
     public RudpExportsTests() => RudpExports.ResetForTests();
 
@@ -96,8 +98,91 @@ public sealed class RudpExportsTests : IDisposable
         Assert.Equal("libSceRudp", export.LibraryName);
     }
 
+    [Fact]
+    public void SetEventHandlerNid_RegistersForGen5WithRudpIdentity()
+    {
+        var manager = new ModuleManager();
+        manager.RegisterExports(
+            SharpEmu.Generated.SysAbiExportRegistry.CreateExports(Generation.Gen5));
+
+        Assert.True(manager.TryGetExport("SUEVes8gvmw", out var export));
+        Assert.Equal("sceRudpSetEventHandler", export.Name);
+        Assert.Equal("libSceRudp", export.LibraryName);
+    }
+
+    [Fact]
+    public void SetEventHandler_ChecksInitializationBeforeNullHandler()
+    {
+        var ctx = CreateContext();
+        ctx[CpuRegister.Rdi] = 0;
+        ctx[CpuRegister.Rsi] = 0x1234;
+
+        Assert.Equal(NotInitialized, RudpExports.SetEventHandler(ctx));
+        Assert.Equal((0UL, 0UL), RudpExports.GetEventHandlerStateForTests());
+    }
+
+    [Fact]
+    public void SetEventHandler_RejectsNullHandlerWithoutReplacingState()
+    {
+        var ctx = CreateInitializedContext();
+        ctx[CpuRegister.Rdi] = 0x1234_5678;
+        ctx[CpuRegister.Rsi] = 0x8765_4321;
+        Assert.Equal(0, RudpExports.SetEventHandler(ctx));
+
+        ctx[CpuRegister.Rdi] = 0;
+        ctx[CpuRegister.Rsi] = 0xDEAD_BEEF;
+
+        Assert.Equal(InvalidEventHandler, RudpExports.SetEventHandler(ctx));
+        Assert.Equal(
+            (0x1234_5678UL, 0x8765_4321UL),
+            RudpExports.GetEventHandlerStateForTests());
+    }
+
+    [Fact]
+    public void SetEventHandler_RetainsAndReplacesCallbackPairWithoutProbingGuestMemory()
+    {
+        var ctx = CreateInitializedContext();
+
+        ctx[CpuRegister.Rdi] = 0xFFFF_0000_1234_5678;
+        ctx[CpuRegister.Rsi] = 0x8765_4321;
+        Assert.Equal(0, RudpExports.SetEventHandler(ctx));
+        Assert.Equal(
+            (0xFFFF_0000_1234_5678UL, 0x8765_4321UL),
+            RudpExports.GetEventHandlerStateForTests());
+
+        ctx[CpuRegister.Rdi] = 0xFFFF_0000_8765_4321;
+        ctx[CpuRegister.Rsi] = 0;
+        Assert.Equal(0, RudpExports.SetEventHandler(ctx));
+        Assert.Equal(
+            (0xFFFF_0000_8765_4321UL, 0UL),
+            RudpExports.GetEventHandlerStateForTests());
+    }
+
+    [Fact]
+    public void ResetForTests_ClearsRetainedEventHandlerPair()
+    {
+        var ctx = CreateInitializedContext();
+        ctx[CpuRegister.Rdi] = 0x1234_5678;
+        ctx[CpuRegister.Rsi] = 0x8765_4321;
+        Assert.Equal(0, RudpExports.SetEventHandler(ctx));
+
+        RudpExports.ResetForTests();
+
+        Assert.Equal((0UL, 0UL), RudpExports.GetEventHandlerStateForTests());
+        Assert.False(RudpExports.GetStateForTests().Initialized);
+    }
+
     private static CpuContext CreateContext() =>
         new(new FakeCpuMemory(BaseAddress, 0x4000), Generation.Gen5);
+
+    private static CpuContext CreateInitializedContext()
+    {
+        var ctx = CreateContext();
+        ctx[CpuRegister.Rdi] = BaseAddress;
+        ctx[CpuRegister.Rsi] = 0x1000;
+        Assert.Equal(0, RudpExports.Init(ctx));
+        return ctx;
+    }
 
     private sealed class FaultingMemory : ICpuMemory
     {
