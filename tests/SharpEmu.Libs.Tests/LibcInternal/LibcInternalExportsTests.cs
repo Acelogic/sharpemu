@@ -1,7 +1,9 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using System.Runtime.InteropServices;
 using SharpEmu.HLE;
+using SharpEmu.Libs.Kernel;
 using SharpEmu.Libs.LibcInternal;
 using Xunit;
 
@@ -36,5 +38,34 @@ public sealed class LibcInternalExportsTests
 
         Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, result);
         Assert.Equal(0UL, context[CpuRegister.Rax]);
+    }
+
+    [Fact]
+    public void AtomicFetchAddAndSub_UpdateNativeMappedGuestMemory()
+    {
+        var context = new CpuContext(new FakeCpuMemory(0x1_0000_0000, 0x1000), Generation.Gen5);
+        context[CpuRegister.Rdi] = sizeof(uint);
+        Assert.Equal(0, KernelMemoryCompatExports.Malloc(context));
+        var valueAddress = context[CpuRegister.Rax];
+        try
+        {
+            Marshal.WriteInt32(unchecked((nint)valueAddress), 7);
+            context[CpuRegister.Rdi] = valueAddress;
+            context[CpuRegister.Rsi] = 3;
+            Assert.Equal(0, LibcInternalExports.AtomicFetchAdd32Compat1270(context));
+            Assert.Equal(7UL, context[CpuRegister.Rax]);
+            Assert.Equal(10, Marshal.ReadInt32(unchecked((nint)valueAddress)));
+
+            context[CpuRegister.Rdi] = valueAddress;
+            context[CpuRegister.Rsi] = 4;
+            Assert.Equal(0, LibcInternalExports.AtomicFetchSub32Compat1270(context));
+            Assert.Equal(10UL, context[CpuRegister.Rax]);
+            Assert.Equal(6, Marshal.ReadInt32(unchecked((nint)valueAddress)));
+        }
+        finally
+        {
+            context[CpuRegister.Rdi] = valueAddress;
+            Assert.Equal(0, KernelMemoryCompatExports.Free(context));
+        }
     }
 }

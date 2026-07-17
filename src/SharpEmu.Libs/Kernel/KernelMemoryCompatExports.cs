@@ -3220,7 +3220,7 @@ public static partial class KernelMemoryCompatExports
 
         var buffer = GC.AllocateUninitializedArray<byte>(requested);
         var read = stream.Read(buffer, 0, requested);
-        if (read > 0 && !ctx.Memory.TryWrite(bufferAddress, buffer.AsSpan(0, read)))
+        if (read > 0 && !TryWriteCompat(ctx, bufferAddress, buffer.AsSpan(0, read)))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -4781,13 +4781,13 @@ public static partial class KernelMemoryCompatExports
         {
             var maxWritable = (int)Math.Min((ulong)int.MaxValue, bufferSize - 1);
             var copyLength = Math.Min(maxWritable, outputBytes.Length);
-            if (copyLength > 0 && !ctx.Memory.TryWrite(destination, outputBytes[..copyLength]))
+            if (copyLength > 0 && !TryWriteCompat(ctx, destination, outputBytes[..copyLength]))
             {
                 return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
             }
 
             Span<byte> nullTerminator = stackalloc byte[1];
-            if (!ctx.Memory.TryWrite(destination + (ulong)copyLength, nullTerminator))
+            if (!TryWriteCompat(ctx, destination + (ulong)copyLength, nullTerminator))
             {
                 return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
             }
@@ -6488,7 +6488,7 @@ public static partial class KernelMemoryCompatExports
         return !string.IsNullOrWhiteSpace(guestPath);
     }
 
-    private static bool TryReadCompat(CpuContext ctx, ulong address, Span<byte> destination)
+    internal static bool TryReadCompat(CpuContext ctx, ulong address, Span<byte> destination)
     {
         if (destination.IsEmpty)
         {
@@ -6555,7 +6555,7 @@ public static partial class KernelMemoryCompatExports
         return true;
     }
 
-    private static bool TryWriteCompat(CpuContext ctx, ulong address, ReadOnlySpan<byte> source)
+    internal static bool TryWriteCompat(CpuContext ctx, ulong address, ReadOnlySpan<byte> source)
     {
         if (source.IsEmpty)
         {

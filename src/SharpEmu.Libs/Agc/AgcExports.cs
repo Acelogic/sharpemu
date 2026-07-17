@@ -1590,7 +1590,7 @@ public static partial class AgcExports
                 : commandAddress + 4;
         }
 
-        if (!ctx.TryWriteUInt64(outputAddress, payloadAddress))
+        if (!TryWriteUInt64(ctx, outputAddress, payloadAddress))
         {
             return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
@@ -12770,7 +12770,7 @@ public static partial class AgcExports
         }
 
         var nextCursor = cursorUp + ((ulong)sizeDwords * sizeof(uint));
-        if (!ctx.TryWriteUInt64(commandBufferAddress + CommandBufferCursorUpOffset, nextCursor))
+        if (!TryWriteUInt64(ctx, commandBufferAddress + CommandBufferCursorUpOffset, nextCursor))
         {
             return false;
         }
@@ -13045,22 +13045,12 @@ public static partial class AgcExports
             return true;
         }
 
-        Span<byte> buffer = stackalloc byte[sizeof(uint)];
-        if (!ctx.Memory.TryRead(address, buffer))
-        {
-            value = 0;
-            return false;
-        }
-
-        value = BinaryPrimitives.ReadUInt32LittleEndian(buffer);
-        return true;
+        return KernelMemoryCompatExports.TryReadUInt32Compat(ctx, address, out value);
     }
 
     private static bool TryWriteUInt32(CpuContext ctx, ulong address, uint value)
     {
-        Span<byte> buffer = stackalloc byte[sizeof(uint)];
-        BinaryPrimitives.WriteUInt32LittleEndian(buffer, value);
-        return ctx.Memory.TryWrite(address, buffer);
+        return KernelMemoryCompatExports.TryWriteUInt32Compat(ctx, address, value);
     }
 
     private static bool TryReadUInt64(CpuContext ctx, ulong address, out ulong value)
@@ -13074,16 +13064,11 @@ public static partial class AgcExports
             return true;
         }
 
-        Span<byte> buffer = stackalloc byte[sizeof(ulong)];
-        if (!ctx.Memory.TryRead(address, buffer))
-        {
-            value = 0;
-            return false;
-        }
-
-        value = BinaryPrimitives.ReadUInt64LittleEndian(buffer);
-        return true;
+        return KernelMemoryCompatExports.TryReadUInt64Compat(ctx, address, out value);
     }
+
+    private static bool TryWriteUInt64(CpuContext ctx, ulong address, ulong value) =>
+        KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, address, value);
 
     private static bool TryReadGuestCString(
         CpuContext ctx,

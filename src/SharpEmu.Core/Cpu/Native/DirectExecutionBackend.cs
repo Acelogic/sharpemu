@@ -1595,10 +1595,6 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		{
 			return true;
 		}
-		if (IsLibcAllocatorExport(exportName))
-		{
-			return CanUseLleLibcAllocatorFamily();
-		}
 		if (string.Equals(value, "0", StringComparison.Ordinal))
 		{
 			return true;
@@ -1610,55 +1606,27 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		return IsSafeLleLibcExport(exportName);
 	}
 
-	private bool CanUseLleLibcAllocatorFamily()
+	internal static bool IsSafeLleLibcExport(string exportName)
 	{
-		return HasUsableLleLibcExport("gQX+4GDQjpM", "malloc") &&
-			   HasUsableLleLibcExport("tIhsqj0qsFE", "free") &&
-			   HasUsableLleLibcExport("2X5agFjKxMc", "calloc") &&
-			   HasUsableLleLibcExport("Y7aJ1uydPMo", "realloc") &&
-			   HasUsableLleLibcExport("Ujf3KzMvRmI", "memalign") &&
-			   HasUsableLleLibcExport("2Btkg8k24Zg", "aligned_alloc") &&
-			   HasUsableLleLibcExport("cVSk9y8URbc", "posix_memalign");
-	}
-
-	private bool HasUsableLleLibcExport(string nid, string exportName)
-	{
-		if (TryResolveRuntimeSymbolAddress(nid, out var address) && IsDirectImportTargetUsable(address))
-		{
-			return true;
-		}
-
-		foreach (var candidate in EnumerateRuntimeSymbolCandidates(exportName))
-		{
-			if (TryResolveRuntimeSymbolAddress(candidate, out address) && IsDirectImportTargetUsable(address))
-			{
-				return true;
-			}
-		}
-
-		return false;
-	}
-
-	private static bool IsLibcAllocatorExport(string exportName)
-	{
+		// Prefer the mapped firmware implementation for exports whose state or
+		// callbacks must stay inside libSceLibcInternal. Mixing these with HLE
+		// compatibility objects changes object/allocator identity or re-enters a
+		// guest callback through a different execution path. Firmware 12.70 shows
+		// _Getptolower at 0x3FD30, locale initialization/access at 0x90530 and
+		// 0x92250, and qsort's firmware callback loop at 0x6B490. The general
+		// allocator family remains HLE by default: an LLE malloc can block inside
+		// an auxiliary guest thread, and its continuation cannot safely unwind
+		// through the game's aligned-allocation thunk.
 		return exportName switch
 		{
-			"malloc" or
-			"free" or
-			"calloc" or
-			"realloc" or
-			"memalign" or
-			"aligned_alloc" or
-			"posix_memalign" or
-			"malloc_usable_size" => true,
-			_ => false,
-		};
-	}
-
-	private static bool IsSafeLleLibcExport(string exportName)
-	{
-		return exportName switch
-		{
+			"_Getptolower" or
+			"_ZNSt6locale16_GetgloballocaleEv" or
+			"_ZNSt6locale5_InitEv" or
+			"sceLibcMspaceCreate" or
+			"sceLibcMspaceDestroy" or
+			"sceLibcMspaceMalloc" or
+			"sceLibcMspaceMallocStatsFast" or
+			"qsort" or
 			"memcpy" or
 			"memmove" or
 			"memset" or

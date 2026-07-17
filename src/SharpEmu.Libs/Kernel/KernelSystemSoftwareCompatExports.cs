@@ -1,6 +1,7 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using System.Buffers.Binary;
 using SharpEmu.HLE;
 
 namespace SharpEmu.Libs.Kernel;
@@ -18,6 +19,12 @@ public static class KernelSystemSoftwareCompatExports
     private static ulong _gen5CtypeTableAddress;
     private static readonly object Gen5GlobalLocaleGate = new();
     private static ulong _gen5GlobalLocaleAddress;
+    private const int Gen5GlobalLocaleFacetCount = 0x28;
+    private const int Gen5GlobalLocaleAllocationSize = 0x1000;
+    private const int Gen5GlobalLocaleFacetTableOffset = 0x100;
+    private const int Gen5GlobalLocaleFacetObjectsOffset = 0x300;
+    private const int Gen5GlobalLocaleFacetObjectStride = 0x20;
+    private const int Gen5GlobalLocaleNameOffset = 0x900;
     private static ulong _psmPInvokeTableAddress;
     private static ulong _psmInternalCallTableAddress;
 
@@ -147,37 +154,110 @@ public static class KernelSystemSoftwareCompatExports
     {
         lock (Gen5GlobalLocaleGate)
         {
-            Span<byte> probe = stackalloc byte[1];
-            if (_gen5GlobalLocaleAddress == 0 ||
-                !ctx.Memory.TryRead(_gen5GlobalLocaleAddress, probe))
+            if (!HasUsableGen5GlobalLocale(ctx, _gen5GlobalLocaleAddress))
             {
-                if (!KernelMemoryCompatExports.TryAllocateHleData(
-                        ctx,
-                        0x100,
-                        16,
-                        out _gen5GlobalLocaleAddress) ||
-                    !KernelMemoryCompatExports.TryWriteDummyVtable(ctx, _gen5GlobalLocaleAddress) ||
-                    !KernelMemoryCompatExports.TryWriteUInt64Compat(
-                        ctx,
-                        _gen5GlobalLocaleAddress + 0x28,
-                        _gen5GlobalLocaleAddress + 0x80) ||
-                    !ctx.Memory.TryWrite(
-                        _gen5GlobalLocaleAddress + 0x80,
-                        new byte[] { (byte)'C', 0 }))
+                if (!TryCreateGen5GlobalLocale(ctx, out _gen5GlobalLocaleAddress))
                 {
                     _gen5GlobalLocaleAddress = 0;
                     return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
                 }
             }
 
-            // libc++ expects a process-global polymorphic locale object and
-            // immediately dispatches virtual slot +0x10. The classic "C"
-            // locale plus the shared no-op vtable is sufficient for ShellCore
-            // formatting paths until full libc++ facet ownership is modeled.
+            // Firmware 12.70 libSceLibcInternal hEQ2Yi4PJXA returns the
+            // process-global locale implementation at DAT_001bb5b8. Its
+            // initialized object has a vtable at +0, refcount at +8, a facet
+            // pointer table at +0x10, 0x28 entries at +0x18, the all-category
+            // mask at +0x20, and the locale name at +0x28. Keep that ABI shape
+            // even while individual facet behavior remains a no-op fallback.
             ctx[CpuRegister.Rax] = _gen5GlobalLocaleAddress;
         }
 
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    private static bool HasUsableGen5GlobalLocale(CpuContext ctx, ulong localeAddress)
+    {
+        if (localeAddress == 0 ||
+            !ctx.TryReadUInt64(localeAddress, out var vtableAddress) ||
+            vtableAddress == 0 ||
+            !ctx.TryReadUInt64(localeAddress + 0x10, out var facetTableAddress) ||
+            facetTableAddress != localeAddress + Gen5GlobalLocaleFacetTableOffset ||
+            !ctx.TryReadUInt64(localeAddress + 0x18, out var facetCount) ||
+            facetCount != Gen5GlobalLocaleFacetCount ||
+            !ctx.TryReadUInt64(facetTableAddress, out var firstFacetAddress) ||
+            firstFacetAddress == 0 ||
+            !ctx.TryReadUInt64(
+                facetTableAddress + ((Gen5GlobalLocaleFacetCount - 1) * sizeof(ulong)),
+                out var lastFacetAddress) ||
+            lastFacetAddress == 0)
+        {
+            return false;
+        }
+
+        Span<byte> localeName = stackalloc byte[2];
+        return ctx.Memory.TryRead(localeAddress + Gen5GlobalLocaleNameOffset, localeName) &&
+               localeName[0] == (byte)'C' &&
+               localeName[1] == 0;
+    }
+
+    private static bool TryCreateGen5GlobalLocale(CpuContext ctx, out ulong localeAddress)
+    {
+        localeAddress = 0;
+        if (!KernelMemoryCompatExports.TryGetDummyCallbackTable(ctx, out var fallbackVtableAddress) ||
+            fallbackVtableAddress == 0 ||
+            !KernelMemoryCompatExports.TryAllocateHleData(
+                ctx,
+                Gen5GlobalLocaleAllocationSize,
+                0x1000,
+                out localeAddress))
+        {
+            localeAddress = 0;
+            return false;
+        }
+
+        var localeBytes = new byte[Gen5GlobalLocaleAllocationSize];
+        BinaryPrimitives.WriteUInt64LittleEndian(localeBytes.AsSpan(0x00), fallbackVtableAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(localeBytes.AsSpan(0x08), 1);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            localeBytes.AsSpan(0x10),
+            localeAddress + Gen5GlobalLocaleFacetTableOffset);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            localeBytes.AsSpan(0x18),
+            Gen5GlobalLocaleFacetCount);
+        BinaryPrimitives.WriteUInt64LittleEndian(localeBytes.AsSpan(0x20), 0x3F);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            localeBytes.AsSpan(0x28),
+            localeAddress + Gen5GlobalLocaleNameOffset);
+        localeBytes[Gen5GlobalLocaleNameOffset] = (byte)'C';
+
+        for (var index = 0; index < Gen5GlobalLocaleFacetCount; index++)
+        {
+            var facetAddress = localeAddress +
+                Gen5GlobalLocaleFacetObjectsOffset +
+                (ulong)(index * Gen5GlobalLocaleFacetObjectStride);
+            BinaryPrimitives.WriteUInt64LittleEndian(
+                localeBytes.AsSpan(Gen5GlobalLocaleFacetTableOffset + (index * sizeof(ulong))),
+                facetAddress);
+            BinaryPrimitives.WriteUInt64LittleEndian(
+                localeBytes.AsSpan(
+                    Gen5GlobalLocaleFacetObjectsOffset +
+                    (index * Gen5GlobalLocaleFacetObjectStride)),
+                fallbackVtableAddress);
+            BinaryPrimitives.WriteUInt64LittleEndian(
+                localeBytes.AsSpan(
+                    Gen5GlobalLocaleFacetObjectsOffset +
+                    (index * Gen5GlobalLocaleFacetObjectStride) +
+                    sizeof(ulong)),
+                1);
+        }
+
+        if (!ctx.Memory.TryWrite(localeAddress, localeBytes))
+        {
+            localeAddress = 0;
+            return false;
+        }
+
+        return true;
     }
 
     [SysAbiExport(
@@ -187,12 +267,11 @@ public static class KernelSystemSoftwareCompatExports
         LibraryName = "libc")]
     public static int Gen5LocaleInitGuard(CpuContext ctx)
     {
-        // This libc++ helper returns an optional reference-counted guard. Its
-        // observed ShellCore callers explicitly accept null and skip the two
-        // virtual cleanup calls, while locale work itself uses the process-
-        // global object returned by _Getgloballocale above.
-        ctx[CpuRegister.Rax] = 0;
-        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        // Firmware 12.70 libSceLibcInternal 9rMML086SEE at 0x90530 calls the
+        // global-locale initializer and leaves its _Locimp pointer in RAX.
+        // Returning null here breaks the caller's lazy facet holder: it stores
+        // this result at +0x10 and immediately invokes virtual slot +0x10.
+        return Gen5GetGlobalLocale(ctx);
     }
 
     [SysAbiExport(

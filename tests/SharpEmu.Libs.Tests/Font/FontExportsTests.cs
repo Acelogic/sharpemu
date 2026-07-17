@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 using SharpEmu.HLE;
 using SharpEmu.Libs.Font;
+using SharpEmu.Libs.Kernel;
 using Xunit;
 
 namespace SharpEmu.Libs.Tests.Font;
@@ -521,6 +523,39 @@ public sealed class FontExportsTests
         Assert.Equal(0, FontExports.DestroyRenderer(_ctx));
         Assert.Equal(0UL, ReadUInt64(HandleSlotAddress + 8));
         Assert.False(_memory.IsAllocated(renderer));
+    }
+
+    [Fact]
+    public void CreatedHandles_WriteThroughNativeMappedCallerSlots()
+    {
+        _ctx[CpuRegister.Rdi] = 0x18;
+        Assert.Equal(0, KernelMemoryCompatExports.Malloc(_ctx));
+        var slots = _ctx[CpuRegister.Rax];
+        Assert.NotEqual(0UL, slots);
+
+        try
+        {
+            _ctx[CpuRegister.Rcx] = slots;
+            Assert.Equal(0, FontExports.CreateLibraryWithEdition(_ctx));
+            var library = unchecked((ulong)Marshal.ReadInt64((nint)slots));
+            Assert.NotEqual(0UL, library);
+
+            _ctx[CpuRegister.Rcx] = slots + 8;
+            Assert.Equal(0, FontExports.CreateRendererWithEdition(_ctx));
+            var renderer = unchecked((ulong)Marshal.ReadInt64((nint)(slots + 8)));
+            Assert.NotEqual(0UL, renderer);
+
+            _ctx[CpuRegister.Rdi] = library;
+            _ctx[CpuRegister.R8] = slots + 0x10;
+            Assert.Equal(0, FontExports.OpenFontSet(_ctx));
+            var font = unchecked((ulong)Marshal.ReadInt64((nint)(slots + 0x10)));
+            Assert.NotEqual(0UL, font);
+        }
+        finally
+        {
+            _ctx[CpuRegister.Rdi] = slots;
+            Assert.Equal(0, KernelMemoryCompatExports.Free(_ctx));
+        }
     }
 
     [Fact]

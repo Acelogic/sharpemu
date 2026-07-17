@@ -3,6 +3,7 @@
 
 using System.Buffers.Binary;
 using SharpEmu.HLE;
+using SharpEmu.Libs.Kernel;
 
 namespace SharpEmu.Libs.Font;
 
@@ -58,13 +59,13 @@ public static class FontExports
         if (descriptorAddress == 0 ||
             !TryWriteUInt32(ctx, descriptorAddress, MemoryMagic) ||
             !TryWriteUInt32(ctx, descriptorAddress + 0x04, regionSize) ||
-            !ctx.TryWriteUInt64(descriptorAddress + 0x08, regionAddress) ||
-            !ctx.TryWriteUInt64(descriptorAddress + 0x10, mspaceAddress) ||
-            !ctx.TryWriteUInt64(descriptorAddress + 0x18, interfaceAddress) ||
-            !ctx.TryWriteUInt64(descriptorAddress + 0x20, destroyCallback) ||
-            !ctx.TryWriteUInt64(descriptorAddress + 0x28, 0) ||
-            !ctx.TryWriteUInt64(descriptorAddress + 0x30, 0) ||
-            !ctx.TryWriteUInt64(descriptorAddress + 0x38, mspaceAddress))
+            !TryWriteUInt64(ctx, descriptorAddress + 0x08, regionAddress) ||
+            !TryWriteUInt64(ctx, descriptorAddress + 0x10, mspaceAddress) ||
+            !TryWriteUInt64(ctx, descriptorAddress + 0x18, interfaceAddress) ||
+            !TryWriteUInt64(ctx, descriptorAddress + 0x20, destroyCallback) ||
+            !TryWriteUInt64(ctx, descriptorAddress + 0x28, 0) ||
+            !TryWriteUInt64(ctx, descriptorAddress + 0x30, 0) ||
+            !TryWriteUInt64(ctx, descriptorAddress + 0x38, mspaceAddress))
         {
             return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
@@ -120,7 +121,7 @@ public static class FontExports
                 return SetReturn(ctx, FontErrorInvalidFont);
             }
 
-            if (!ctx.TryReadUInt64(fontAddress + 0x30, out var boundRenderer))
+            if (!TryReadUInt64(ctx, fontAddress + 0x30, out var boundRenderer))
             {
                 return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
             }
@@ -139,11 +140,11 @@ public static class FontExports
             // FW11 snapshots the font's configured scale/effects into its render
             // state, then publishes the renderer binding.
             Span<byte> configuredState = stackalloc byte[0x28];
-            if (!ctx.Memory.TryRead(fontAddress + 0x40, configuredState) ||
-                !ctx.Memory.TryWrite(fontAddress + 0x68, configuredState) ||
-                !ctx.TryWriteUInt64(fontAddress + 0x30, rendererAddress))
+            if (!TryReadMemory(ctx, fontAddress + 0x40, configuredState) ||
+                !TryWriteMemory(ctx, fontAddress + 0x68, configuredState) ||
+                !TryWriteUInt64(ctx, fontAddress + 0x30, rendererAddress))
             {
-                _ = ctx.TryWriteUInt64(fontAddress + 0x30, 0);
+                _ = TryWriteUInt64(ctx, fontAddress + 0x30, 0);
                 return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
             }
 
@@ -166,7 +167,7 @@ public static class FontExports
                 return SetReturn(ctx, FontErrorInvalidFont);
             }
 
-            if (!ctx.TryReadUInt64(fontAddress + 0x30, out var rendererAddress))
+            if (!TryReadUInt64(ctx, fontAddress + 0x30, out var rendererAddress))
             {
                 return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
             }
@@ -176,7 +177,7 @@ public static class FontExports
                 return SetReturn(ctx, FontErrorRendererNotBound);
             }
 
-            return ctx.TryWriteUInt64(fontAddress + 0x30, 0)
+            return TryWriteUInt64(ctx, fontAddress + 0x30, 0)
                 ? SetSuccess(ctx)
                 : SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
@@ -366,7 +367,7 @@ public static class FontExports
 
         if (setupHandle != 0)
         {
-            return ctx.TryWriteUInt64(outputAddress, setupHandle)
+            return TryWriteUInt64(ctx, outputAddress, setupHandle)
                 ? SetSuccess(ctx)
                 : SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
@@ -379,15 +380,15 @@ public static class FontExports
         if (sourceHandle != 0)
         {
             Span<byte> source = stackalloc byte[OpaqueObjectSize];
-            if (ctx.Memory.TryRead(sourceHandle, source))
+            if (TryReadMemory(ctx, sourceHandle, source))
             {
-                _ = ctx.Memory.TryWrite(handle, source);
+                _ = TryWriteMemory(ctx, handle, source);
             }
         }
 
         if (!TryWriteUInt16(ctx, handle, FontMagic) ||
             !TryWriteUInt16(ctx, handle + 0x02, OwnedObjectFlag) ||
-            !ctx.TryWriteUInt64(outputAddress, handle))
+            !TryWriteUInt64(ctx, outputAddress, handle))
         {
             FreeGuestAllocation(ctx, handle);
             return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
@@ -425,12 +426,12 @@ public static class FontExports
                 return SetReturn(ctx, FontErrorInvalidArgument);
             }
 
-            if (!ctx.TryWriteUInt64(outputAddress, 0))
+            if (!TryWriteUInt64(ctx, outputAddress, 0))
             {
                 return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
             }
 
-            if (!ctx.TryReadUInt64(fontAddress + 0x28, out var libraryAddress) ||
+            if (!TryReadUInt64(ctx, fontAddress + 0x28, out var libraryAddress) ||
                 !HasMagic(ctx, libraryAddress, LibraryMagic))
             {
                 return SetReturn(ctx, FontErrorInvalidFont);
@@ -441,11 +442,11 @@ public static class FontExports
             var allocatorProvenance = fontAddress;
             if (definitionAddress != 0)
             {
-                if (!ctx.TryReadUInt16(definitionAddress + 0x04, out var definitionFlags) ||
-                    !ctx.TryReadUInt16(fontAddress + 0x02, out var fontFlags) ||
+                if (!TryReadUInt16(ctx, definitionAddress + 0x04, out var definitionFlags) ||
+                    !TryReadUInt16(ctx, fontAddress + 0x02, out var fontFlags) ||
                     !TryReadByte(ctx, definitionAddress + 0x06, out var horizontalDetail) ||
                     !TryReadByte(ctx, definitionAddress + 0x07, out var verticalDetail) ||
-                    !ctx.TryReadUInt64(definitionAddress + 0x08, out var allocatorOverride) ||
+                    !TryReadUInt64(ctx, definitionAddress + 0x08, out var allocatorOverride) ||
                     (definitionFlags & 0xFFEE) != 0 ||
                     (horizontalDetail == 0 && verticalDetail != 0) ||
                     (horizontalDetail != 0 &&
@@ -474,13 +475,13 @@ public static class FontExports
             if (!TryWriteUInt16(ctx, glyphAddress, GlyphMagic) ||
                 !TryWriteUInt16(ctx, glyphAddress + 0x02, 0) ||
                 !TryWriteUInt32(ctx, glyphAddress + 0x04, codepoint) ||
-                !ctx.TryWriteUInt64(glyphAddress + 0x08, fontAddress) ||
-                !ctx.TryWriteUInt64(glyphAddress + 0x10, SyntheticGlyphOwnershipCookie) ||
-                !ctx.TryWriteUInt64(glyphAddress + 0x18, allocatorProvenance) ||
-                !ctx.TryWriteUInt64(outputAddress, glyphAddress))
+                !TryWriteUInt64(ctx, glyphAddress + 0x08, fontAddress) ||
+                !TryWriteUInt64(ctx, glyphAddress + 0x10, SyntheticGlyphOwnershipCookie) ||
+                !TryWriteUInt64(ctx, glyphAddress + 0x18, allocatorProvenance) ||
+                !TryWriteUInt64(ctx, outputAddress, glyphAddress))
             {
                 FreeGuestAllocation(ctx, glyphAddress);
-                _ = ctx.TryWriteUInt64(outputAddress, 0);
+                _ = TryWriteUInt64(ctx, outputAddress, 0);
                 return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
             }
 
@@ -501,9 +502,9 @@ public static class FontExports
             var attribute = unchecked((int)ctx[CpuRegister.Rsi]);
             var previousAttributeAddress = ctx[CpuRegister.Rdx];
             if (!HasMagic(ctx, glyphAddress, GlyphMagic) ||
-                !ctx.TryReadUInt16(glyphAddress + 0x02, out var flags))
+                !TryReadUInt16(ctx, glyphAddress + 0x02, out var flags))
             {
-                _ = previousAttributeAddress == 0 || ctx.TryWriteInt32(previousAttributeAddress, 0);
+                _ = previousAttributeAddress == 0 || TryWriteInt32(ctx, previousAttributeAddress, 0);
                 return SetReturn(ctx, FontErrorInvalidGlyph);
             }
 
@@ -518,13 +519,13 @@ public static class FontExports
                     updatedFlags = (ushort)(flags | 0x02);
                     break;
                 default:
-                    _ = previousAttributeAddress == 0 || ctx.TryWriteInt32(previousAttributeAddress, 0);
+                    _ = previousAttributeAddress == 0 || TryWriteInt32(ctx, previousAttributeAddress, 0);
                     return SetReturn(ctx, FontErrorInvalidArgument);
             }
 
             if (!TryWriteUInt16(ctx, glyphAddress + 0x02, updatedFlags) ||
                 (previousAttributeAddress != 0 &&
-                 !ctx.TryWriteInt32(previousAttributeAddress, previousAttribute)))
+                 !TryWriteInt32(ctx, previousAttributeAddress, previousAttribute)))
             {
                 return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
             }
@@ -549,15 +550,15 @@ public static class FontExports
                 return SetReturn(ctx, FontErrorInvalidArgument);
             }
 
-            if (!ctx.TryReadUInt64(glyphSlotAddress, out var glyphAddress) ||
+            if (!TryReadUInt64(ctx, glyphSlotAddress, out var glyphAddress) ||
                 !HasMagic(ctx, glyphAddress, GlyphMagic))
             {
                 return SetReturn(ctx, FontErrorInvalidGlyph);
             }
 
-            if (!ctx.TryReadUInt64(glyphAddress + 0x10, out var cookie) ||
-                !ctx.TryReadUInt64(glyphAddress + 0x08, out var ownerFontAddress) ||
-                !ctx.TryReadUInt64(glyphAddress + 0x18, out var allocatorProvenance) ||
+            if (!TryReadUInt64(ctx, glyphAddress + 0x10, out var cookie) ||
+                !TryReadUInt64(ctx, glyphAddress + 0x08, out var ownerFontAddress) ||
+                !TryReadUInt64(ctx, glyphAddress + 0x18, out var allocatorProvenance) ||
                 cookie != SyntheticGlyphOwnershipCookie ||
                 ctx.Memory is not IGuestMemoryAllocator allocator)
             {
@@ -582,7 +583,7 @@ public static class FontExports
                 return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
             }
 
-            if (!ctx.TryWriteUInt64(glyphSlotAddress, 0))
+            if (!TryWriteUInt64(ctx, glyphSlotAddress, 0))
             {
                 _ = TryWriteUInt16(ctx, glyphAddress, GlyphMagic);
                 return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
@@ -591,7 +592,7 @@ public static class FontExports
             if (!allocator.TryFreeGuestMemory(glyphAddress))
             {
                 _ = TryWriteUInt16(ctx, glyphAddress, GlyphMagic);
-                _ = ctx.TryWriteUInt64(glyphSlotAddress, glyphAddress);
+                _ = TryWriteUInt64(ctx, glyphSlotAddress, glyphAddress);
                 return SetReturn(ctx, FontErrorInvalidState);
             }
 
@@ -636,7 +637,7 @@ public static class FontExports
             }
 
             Span<byte> surface = stackalloc byte[0x28];
-            if (!ctx.Memory.TryRead(surfaceAddress, surface) ||
+            if (!TryReadMemory(ctx, surfaceAddress, surface) ||
                 !TryReadFallbackGeometry(ctx, fontAddress, renderState: true, out var geometry))
             {
                 return ReturnRenderFailure(ctx, metricsAddress, resultAddress,
@@ -679,14 +680,14 @@ public static class FontExports
         {
             var fontAddress = ctx[CpuRegister.Rdi];
             if (!HasMagic(ctx, fontAddress, FontMagic) ||
-                !ctx.TryReadUInt64(fontAddress + 0x28, out var libraryAddress) ||
+                !TryReadUInt64(ctx, fontAddress + 0x28, out var libraryAddress) ||
                 !HasMagic(ctx, libraryAddress, LibraryMagic) ||
-                !ctx.TryReadUInt16(fontAddress + 0x02, out var flags))
+                !TryReadUInt16(ctx, fontAddress + 0x02, out var flags))
             {
                 return SetReturn(ctx, FontErrorInvalidFont);
             }
 
-            _ = ctx.TryWriteUInt64(fontAddress + 0x30, 0);
+            _ = TryWriteUInt64(ctx, fontAddress + 0x30, 0);
             if ((flags & OwnedObjectFlag) == 0)
             {
                 return TryWriteUInt32(ctx, fontAddress, 0)
@@ -725,7 +726,7 @@ public static class FontExports
                 return SetReturn(ctx, FontErrorInvalidArgument);
             }
 
-            if (!ctx.TryReadUInt64(rendererSlotAddress, out var rendererAddress) ||
+            if (!TryReadUInt64(ctx, rendererSlotAddress, out var rendererAddress) ||
                 !HasMagic(ctx, rendererAddress, RendererMagic))
             {
                 return SetReturn(ctx, FontErrorInvalidRenderer);
@@ -736,7 +737,7 @@ public static class FontExports
                 return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
             }
 
-            if (!ctx.TryWriteUInt64(rendererSlotAddress, 0))
+            if (!TryWriteUInt64(ctx, rendererSlotAddress, 0))
             {
                 _ = TryWriteUInt16(ctx, rendererAddress, RendererMagic);
                 return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
@@ -746,7 +747,7 @@ public static class FontExports
                 !allocator.TryFreeGuestMemory(rendererAddress))
             {
                 _ = TryWriteUInt16(ctx, rendererAddress, RendererMagic);
-                _ = ctx.TryWriteUInt64(rendererSlotAddress, rendererAddress);
+                _ = TryWriteUInt64(ctx, rendererSlotAddress, rendererAddress);
                 return SetReturn(ctx, FontErrorInvalidState);
             }
 
@@ -807,7 +808,7 @@ public static class FontExports
         var width = (uint)ctx[CpuRegister.R8];
         var height = (uint)ctx[CpuRegister.R9];
         if (surfaceAddress == 0 ||
-            !ctx.TryWriteUInt64(surfaceAddress, bufferAddress) ||
+            !TryWriteUInt64(ctx, surfaceAddress, bufferAddress) ||
             !TryWriteUInt32(ctx, surfaceAddress + 0x08, widthBytes) ||
             !TryWriteUInt32(ctx, surfaceAddress + 0x0C, pixelBytes) ||
             !TryWriteUInt32(ctx, surfaceAddress + 0x10, width) ||
@@ -960,7 +961,7 @@ public static class FontExports
     {
         if (outputAddress != 0)
         {
-            _ = ctx.TryWriteUInt64(outputAddress, 0);
+            _ = TryWriteUInt64(ctx, outputAddress, 0);
         }
 
         return SetReturn(ctx, result);
@@ -994,7 +995,7 @@ public static class FontExports
                 BitConverter.SingleToUInt32Bits(values[index]));
         }
 
-        return ctx.Memory.TryWrite(metricsAddress, metrics);
+        return TryWriteMemory(ctx, metricsAddress, metrics);
     }
 
     private readonly record struct FallbackGeometry(
@@ -1131,7 +1132,7 @@ public static class FontExports
                 var columnOffset = (ulong)destinationX * pixelBytes;
                 if (rowOffset > ulong.MaxValue - columnOffset ||
                     bufferAddress > ulong.MaxValue - rowOffset - columnOffset ||
-                    !ctx.Memory.TryWrite(bufferAddress + rowOffset + columnOffset, pixel[..(int)pixelBytes]))
+                    !TryWriteMemory(ctx, bufferAddress + rowOffset + columnOffset, pixel[..(int)pixelBytes]))
                 {
                     return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
                 }
@@ -1187,7 +1188,7 @@ public static class FontExports
                 BitConverter.SingleToUInt32Bits(values[index]));
         }
 
-        return ctx.Memory.TryWrite(metricsAddress, metrics);
+        return TryWriteMemory(ctx, metricsAddress, metrics);
     }
 
     private static bool WriteFallbackRenderResult(
@@ -1212,7 +1213,7 @@ public static class FontExports
         BinaryPrimitives.WriteUInt32LittleEndian(result[0x34..], BitConverter.SingleToUInt32Bits(geometry.Height));
         BinaryPrimitives.WriteUInt32LittleEndian(result[0x38..], geometry.PixelWidth);
         BinaryPrimitives.WriteUInt32LittleEndian(result[0x3C..], geometry.PixelHeight);
-        return ctx.Memory.TryWrite(resultAddress, result);
+        return TryWriteMemory(ctx, resultAddress, result);
     }
 
     private static int ValidateFontWithRenderer(CpuContext ctx, ulong fontAddress)
@@ -1222,7 +1223,7 @@ public static class FontExports
             return FontErrorInvalidFont;
         }
 
-        return ctx.TryReadUInt64(fontAddress + 0x30, out var rendererAddress) &&
+        return TryReadUInt64(ctx, fontAddress + 0x30, out var rendererAddress) &&
             rendererAddress != 0 && HasMagic(ctx, rendererAddress, RendererMagic)
             ? 0
             : FontErrorRendererNotBound;
@@ -1262,8 +1263,8 @@ public static class FontExports
 
         if (!TryWriteUInt16(ctx, handle, FontMagic) ||
             !TryWriteUInt16(ctx, handle + 0x02, OwnedObjectFlag) ||
-            !ctx.TryWriteUInt64(handle + 0x28, libraryAddress) ||
-            !ctx.TryWriteUInt64(outputAddress, handle))
+            !TryWriteUInt64(ctx, handle + 0x28, libraryAddress) ||
+            !TryWriteUInt64(ctx, outputAddress, handle))
         {
             FreeGuestAllocation(ctx, handle);
             return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
@@ -1279,7 +1280,7 @@ public static class FontExports
             return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
 
-        if (!TryWriteUInt16(ctx, handle, magic) || !ctx.TryWriteUInt64(outputAddress, handle))
+        if (!TryWriteUInt16(ctx, handle, magic) || !TryWriteUInt64(ctx, outputAddress, handle))
         {
             FreeGuestAllocation(ctx, handle);
             return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
@@ -1299,7 +1300,7 @@ public static class FontExports
 
         Span<byte> bytes = stackalloc byte[size];
         bytes.Clear();
-        if (ctx.Memory.TryWrite(address, bytes))
+        if (TryWriteMemory(ctx, address, bytes))
         {
             return true;
         }
@@ -1318,7 +1319,7 @@ public static class FontExports
     }
 
     private static bool HasMagic(CpuContext ctx, ulong address, ushort magic) =>
-        address != 0 && ctx.TryReadUInt16(address, out var actual) && actual == magic;
+        address != 0 && TryReadUInt16(ctx, address, out var actual) && actual == magic;
 
     private static float ReadXmmSingle(CpuContext ctx, int registerIndex)
     {
@@ -1327,12 +1328,12 @@ public static class FontExports
     }
 
     private static bool TryReadSingleBits(CpuContext ctx, ulong address, out uint bits) =>
-        ctx.TryReadUInt32(address, out bits);
+        TryReadUInt32(ctx, address, out bits);
 
     private static bool TryReadSingle(CpuContext ctx, ulong address, out float value)
     {
         value = 0.0f;
-        if (!ctx.TryReadUInt32(address, out var bits))
+        if (!TryReadUInt32(ctx, address, out var bits))
         {
             return false;
         }
@@ -1344,7 +1345,7 @@ public static class FontExports
     private static bool TryReadByte(CpuContext ctx, ulong address, out byte value)
     {
         Span<byte> byteValue = stackalloc byte[1];
-        if (!ctx.Memory.TryRead(address, byteValue))
+        if (!TryReadMemory(ctx, address, byteValue))
         {
             value = 0;
             return false;
@@ -1366,14 +1367,57 @@ public static class FontExports
 
         Span<byte> bytes = stackalloc byte[size];
         bytes.Clear();
-        return ctx.Memory.TryWrite(address, bytes);
+        return TryWriteMemory(ctx, address, bytes);
     }
 
-    private static bool TryWriteUInt16(CpuContext ctx, ulong address, ushort value) =>
-        ctx.TryWriteUInt16(address, value);
+    private static bool TryReadMemory(CpuContext ctx, ulong address, Span<byte> destination) =>
+        KernelMemoryCompatExports.TryReadCompat(ctx, address, destination);
 
-    private static bool TryWriteUInt32(CpuContext ctx, ulong address, uint value) =>
-        ctx.TryWriteUInt32(address, value);
+    private static bool TryWriteMemory(CpuContext ctx, ulong address, ReadOnlySpan<byte> source) =>
+        KernelMemoryCompatExports.TryWriteCompat(ctx, address, source);
+
+    private static bool TryReadUInt16(CpuContext ctx, ulong address, out ushort value)
+    {
+        Span<byte> bytes = stackalloc byte[sizeof(ushort)];
+        if (!TryReadMemory(ctx, address, bytes))
+        {
+            value = 0;
+            return false;
+        }
+
+        value = BinaryPrimitives.ReadUInt16LittleEndian(bytes);
+        return true;
+    }
+
+    private static bool TryReadUInt32(CpuContext ctx, ulong address, out uint value) =>
+        KernelMemoryCompatExports.TryReadUInt32Compat(ctx, address, out value);
+
+    private static bool TryReadUInt64(CpuContext ctx, ulong address, out ulong value) =>
+        KernelMemoryCompatExports.TryReadUInt64Compat(ctx, address, out value);
+
+    private static bool TryWriteInt32(CpuContext ctx, ulong address, int value) =>
+        TryWriteUInt32(ctx, address, unchecked((uint)value));
+
+    private static bool TryWriteUInt16(CpuContext ctx, ulong address, ushort value)
+    {
+        Span<byte> bytes = stackalloc byte[sizeof(ushort)];
+        BinaryPrimitives.WriteUInt16LittleEndian(bytes, value);
+        return TryWriteMemory(ctx, address, bytes);
+    }
+
+    private static bool TryWriteUInt32(CpuContext ctx, ulong address, uint value)
+    {
+        Span<byte> bytes = stackalloc byte[sizeof(uint)];
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes, value);
+        return TryWriteMemory(ctx, address, bytes);
+    }
+
+    private static bool TryWriteUInt64(CpuContext ctx, ulong address, ulong value)
+    {
+        Span<byte> bytes = stackalloc byte[sizeof(ulong)];
+        BinaryPrimitives.WriteUInt64LittleEndian(bytes, value);
+        return TryWriteMemory(ctx, address, bytes);
+    }
 
     private static int SetSuccess(CpuContext ctx) => SetReturn(ctx, 0);
 

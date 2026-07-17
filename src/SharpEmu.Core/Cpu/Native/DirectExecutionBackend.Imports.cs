@@ -316,7 +316,7 @@ public sealed partial class DirectExecutionBackend
 		}
 		if (!isGuestWorker &&
 			!ActiveForcedGuestExit &&
-			ShouldForceGuestExitOnImportLoop(in importStubEntry, num7, num, value, value2) &&
+			ShouldForceGuestExitOnImportLoop(in importStubEntry, num7, num, value, value2, num3) &&
 			TryForceGuestExitToHostStub(argPackPtr, num, num7, importStubEntry.Nid))
 		{
 			cpuContext[CpuRegister.Rax] = 1uL;
@@ -1724,7 +1724,13 @@ public sealed partial class DirectExecutionBackend
 			ActiveCpuContext.TryWriteUInt64(returnSlotAddress, hostExit);
 	}
 
-	private bool ShouldForceGuestExitOnImportLoop(in ImportStubEntry entry, ulong returnRip, long dispatchIndex, ulong arg0, ulong arg1)
+	private bool ShouldForceGuestExitOnImportLoop(
+		in ImportStubEntry entry,
+		ulong returnRip,
+		long dispatchIndex,
+		ulong arg0,
+		ulong arg1,
+		ulong arg2)
 	{
 		if (dispatchIndex < 1200)
 		{
@@ -1740,7 +1746,7 @@ public sealed partial class DirectExecutionBackend
 			return false;
 		}
 		var value = entry.NidHash;
-		RecordImportLoopSignature(value, returnRip, BuildImportLoopSignature(value, returnRip, arg0, arg1));
+		RecordImportLoopSignature(value, returnRip, BuildImportLoopSignature(value, returnRip, arg0, arg1, arg2));
 		// The O(period x repeats) pattern scan is a boot/hang watchdog, not a
 		// steady-state feature; sampling every 256th dispatch keeps its cost
 		// off the hot path while still tripping within a couple of thousand
@@ -1801,10 +1807,18 @@ public sealed partial class DirectExecutionBackend
 		return DefaultImportLoopGuardSeconds;
 	}
 
-	private ulong BuildImportLoopSignature(ulong nidHash, ulong returnRip, ulong arg0, ulong arg1)
+	internal static ulong BuildImportLoopSignature(
+		ulong nidHash,
+		ulong returnRip,
+		ulong arg0,
+		ulong arg1,
+		ulong arg2)
 	{
 		ulong num = returnRip >> 2;
-		ulong num2 = ((arg0 >> 4) * 11400714819323198485uL) ^ ((arg1 >> 4) * 14029467366897019727uL);
+		ulong num2 =
+			((arg0 >> 4) * 11400714819323198485uL) ^
+			((arg1 >> 4) * 14029467366897019727uL) ^
+			((arg2 >> 4) * 1609587929392839161uL);
 		return num ^ nidHash * 11400714819323198485uL ^ num2;
 	}
 

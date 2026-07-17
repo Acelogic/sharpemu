@@ -296,7 +296,8 @@ public static class KernelExports
             name,
             priority,
             affinityMask);
-        if (threadIdAddress != 0 && !ctx.TryWriteUInt64(threadIdAddress, threadHandle))
+        if (threadIdAddress != 0 &&
+            !KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, threadIdAddress, threadHandle))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -411,7 +412,7 @@ public static class KernelExports
         }
 
         if (returnValueAddress != 0 &&
-            !ctx.TryWriteUInt64(returnValueAddress, returnValue))
+            !KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, returnValueAddress, returnValue))
         {
             ctx[CpuRegister.Rax] =
                 unchecked((ulong)(int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
@@ -529,7 +530,7 @@ public static class KernelExports
         var len = 0;
         while (len < buf.Length)
         {
-            if (!ctx.Memory.TryRead(address + (ulong)len, one))
+            if (!KernelMemoryCompatExports.TryReadCompat(ctx, address + (ulong)len, one))
                 return len == 0 ? $"<unreadable 0x{address:X16}>" : System.Text.Encoding.UTF8.GetString(buf[..len]);
 
             if (one[0] == 0)

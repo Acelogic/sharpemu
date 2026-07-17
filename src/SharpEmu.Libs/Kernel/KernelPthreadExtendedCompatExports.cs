@@ -119,7 +119,7 @@ public static class KernelPthreadExtendedCompatExports
         {
             Span<byte> emptyContext = stackalloc byte[0x500];
             emptyContext.Clear();
-            if (!ctx.Memory.TryWrite(contextAddress, emptyContext))
+            if (!KernelMemoryCompatExports.TryWriteCompat(ctx, contextAddress, emptyContext))
             {
                 ctx[CpuRegister.Rax] = 22;
                 return 22;
@@ -167,7 +167,7 @@ public static class KernelPthreadExtendedCompatExports
         Write64(bytes, 0x108, 0x480);
         Write64(bytes, 0x480, continuation.FsBase);
         Write64(bytes, 0x488, continuation.GsBase);
-        return ctx.Memory.TryWrite(contextAddress, bytes);
+        return KernelMemoryCompatExports.TryWriteCompat(ctx, contextAddress, bytes);
     }
 
     [SysAbiExport(
@@ -323,7 +323,7 @@ public static class KernelPthreadExtendedCompatExports
     public static int PosixPthreadSpinInit(CpuContext ctx)
     {
         var address = ctx[CpuRegister.Rdi];
-        if (address == 0 || !ctx.TryWriteUInt64(address, 0))
+        if (address == 0 || !KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, address, 0))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
@@ -344,7 +344,7 @@ public static class KernelPthreadExtendedCompatExports
         _spinStates.TryRemove(address, out _);
         if (address != 0)
         {
-            _ = ctx.TryWriteUInt64(address, 0);
+            _ = KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, address, 0);
         }
 
         ctx[CpuRegister.Rax] = 0;
@@ -567,7 +567,7 @@ public static class KernelPthreadExtendedCompatExports
             affinityMask = GetOrCreateThreadStateLocked(thread).AffinityMask;
         }
 
-        if (!ctx.TryWriteUInt64(outMaskAddress, affinityMask))
+        if (!KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, outMaskAddress, affinityMask))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -728,7 +728,7 @@ public static class KernelPthreadExtendedCompatExports
         }
 
         var syntheticHandle = AllocateSyntheticHandle(SyntheticPthreadAttrHandleBase, ref _nextSyntheticPthreadAttrHandleId);
-        if (!ctx.TryWriteUInt64(attrAddress, syntheticHandle))
+        if (!KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, attrAddress, syntheticHandle))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -812,7 +812,7 @@ public static class KernelPthreadExtendedCompatExports
             }
         }
 
-        _ = ctx.TryWriteUInt64(attrAddress, 0);
+        _ = KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, attrAddress, 0);
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
@@ -909,7 +909,7 @@ public static class KernelPthreadExtendedCompatExports
             state = GetOrCreateAttrStateLocked(attrAddress);
         }
 
-        if (!ctx.TryWriteUInt64(outMaskAddress, state.AffinityMask))
+        if (!KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, outMaskAddress, state.AffinityMask))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -967,7 +967,7 @@ public static class KernelPthreadExtendedCompatExports
             state = GetOrCreateAttrStateLocked(attrAddress);
         }
 
-        if (!ctx.TryWriteUInt64(outGuardSizeAddress, state.GuardSize))
+        if (!KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, outGuardSizeAddress, state.GuardSize))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -996,7 +996,7 @@ public static class KernelPthreadExtendedCompatExports
             state = GetOrCreateAttrStateLocked(attrAddress);
         }
 
-        if (!ctx.TryWriteUInt64(outStackAddressPointer, state.StackAddress))
+        if (!KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, outStackAddressPointer, state.StackAddress))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -1026,8 +1026,8 @@ public static class KernelPthreadExtendedCompatExports
             state = GetOrCreateAttrStateLocked(attrAddress);
         }
 
-        if (!ctx.TryWriteUInt64(outStackAddressPointer, state.StackAddress) ||
-            !ctx.TryWriteUInt64(outStackSizeAddress, state.StackSize))
+        if (!KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, outStackAddressPointer, state.StackAddress) ||
+            !KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, outStackSizeAddress, state.StackSize))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -1066,7 +1066,7 @@ public static class KernelPthreadExtendedCompatExports
             state = GetOrCreateAttrStateLocked(attrAddress);
         }
 
-        if (!ctx.TryWriteUInt64(outStackSizeAddress, state.StackSize))
+        if (!KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, outStackSizeAddress, state.StackSize))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -2115,7 +2115,7 @@ public static class KernelPthreadExtendedCompatExports
             }
         }
 
-        if (ctx.TryReadUInt64(attrAddress, out var pointedHandle) && pointedHandle != 0)
+        if (KernelMemoryCompatExports.TryReadUInt64Compat(ctx, attrAddress, out var pointedHandle) && pointedHandle != 0)
         {
             lock (_stateGate)
             {
@@ -2141,13 +2141,13 @@ public static class KernelPthreadExtendedCompatExports
         var payload = new byte[payloadLength + 1];
         utf8.AsSpan(0, payloadLength).CopyTo(payload);
         payload[^1] = 0;
-        return ctx.Memory.TryWrite(address, payload);
+        return KernelMemoryCompatExports.TryWriteCompat(ctx, address, payload);
     }
 
     private static bool TryReadInt32(CpuContext ctx, ulong address, out int value)
     {
         Span<byte> bytes = stackalloc byte[sizeof(int)];
-        if (!ctx.Memory.TryRead(address, bytes))
+        if (!KernelMemoryCompatExports.TryReadCompat(ctx, address, bytes))
         {
             value = 0;
             return false;
@@ -2161,6 +2161,6 @@ public static class KernelPthreadExtendedCompatExports
     {
         Span<byte> bytes = stackalloc byte[sizeof(int)];
         BinaryPrimitives.WriteInt32LittleEndian(bytes, value);
-        return ctx.Memory.TryWrite(address, bytes);
+        return KernelMemoryCompatExports.TryWriteCompat(ctx, address, bytes);
     }
 }

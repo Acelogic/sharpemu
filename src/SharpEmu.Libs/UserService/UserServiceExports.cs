@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using SharpEmu.HLE;
+using SharpEmu.Libs.Kernel;
 using System.Buffers.Binary;
 using System.Text;
 using System.Threading;
@@ -70,7 +71,7 @@ public static class UserServiceExports
         BinaryPrimitives.WriteInt32LittleEndian(userIds[0x04..], InvalidUserId);
         BinaryPrimitives.WriteInt32LittleEndian(userIds[0x08..], InvalidUserId);
         BinaryPrimitives.WriteInt32LittleEndian(userIds[0x0C..], InvalidUserId);
-        return ctx.Memory.TryWrite(userIdListAddress, userIds)
+        return KernelMemoryCompatExports.TryWriteCompat(ctx, userIdListAddress, userIds)
             ? SetReturnWithTrace(
                 ctx,
                 0,
@@ -100,7 +101,7 @@ public static class UserServiceExports
         Span<byte> payload = stackalloc byte[sizeof(int) * 2];
         BinaryPrimitives.WriteInt32LittleEndian(payload[0..], 0);
         BinaryPrimitives.WriteInt32LittleEndian(payload[sizeof(int)..], PrimaryUserId);
-        return ctx.Memory.TryWrite(eventAddress, payload)
+        return KernelMemoryCompatExports.TryWriteCompat(ctx, eventAddress, payload)
             ? SetReturnWithTrace(
                 ctx,
                 0,
@@ -136,7 +137,7 @@ public static class UserServiceExports
 
         Span<byte> output = stackalloc byte[nameBytes.Length + 1];
         nameBytes.CopyTo(output);
-        return ctx.Memory.TryWrite(nameAddress, output)
+        return KernelMemoryCompatExports.TryWriteCompat(ctx, nameAddress, output)
             ? SetReturnWithTrace(
                 ctx,
                 0,
@@ -201,7 +202,7 @@ public static class UserServiceExports
         Span<byte> presets = stackalloc byte[0x28];
         presets.Clear();
         BinaryPrimitives.WriteUInt64LittleEndian(presets, (ulong)presets.Length);
-        if (!ctx.Memory.TryWrite(presetsAddress, presets))
+        if (!KernelMemoryCompatExports.TryWriteCompat(ctx, presetsAddress, presets))
         {
             return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
@@ -264,7 +265,7 @@ public static class UserServiceExports
     {
         Span<byte> bytes = stackalloc byte[sizeof(int)];
         BinaryPrimitives.WriteInt32LittleEndian(bytes, value);
-        return ctx.Memory.TryWrite(address, bytes);
+        return KernelMemoryCompatExports.TryWriteCompat(ctx, address, bytes);
     }
 
     private static int WriteUserSettingInt32(CpuContext ctx, int value, string operation)

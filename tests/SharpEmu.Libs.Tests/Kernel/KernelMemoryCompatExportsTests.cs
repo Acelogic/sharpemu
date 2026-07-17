@@ -66,6 +66,35 @@ public sealed class KernelMemoryCompatExportsTests
     }
 
     [Fact]
+    public void Snprintf_WritesToNativeMappedGuestMemory()
+    {
+        const ulong memoryBase = 0x1_0000_0000;
+        const ulong formatAddress = memoryBase + 0x100;
+        var memory = new FakeCpuMemory(memoryBase, 0x1000);
+        var context = new CpuContext(memory, Generation.Gen5);
+        memory.WriteCString(formatAddress, "ASTRO");
+
+        context[CpuRegister.Rdi] = 32;
+        Assert.Equal(0, KernelMemoryCompatExports.Malloc(context));
+        var destination = context[CpuRegister.Rax];
+        try
+        {
+            context[CpuRegister.Rdi] = destination;
+            context[CpuRegister.Rsi] = 32;
+            context[CpuRegister.Rdx] = formatAddress;
+
+            Assert.Equal(0, KernelMemoryCompatExports.Snprintf(context));
+            Assert.Equal(5UL, context[CpuRegister.Rax]);
+            Assert.Equal("ASTRO", Marshal.PtrToStringUTF8(unchecked((nint)destination)));
+        }
+        finally
+        {
+            context[CpuRegister.Rdi] = destination;
+            Assert.Equal(0, KernelMemoryCompatExports.Free(context));
+        }
+    }
+
+    [Fact]
     public void BasicLibcCompatExports_RegisterByKnownNids()
     {
         var manager = new ModuleManager();

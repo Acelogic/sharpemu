@@ -3,6 +3,7 @@
 
 using System.Runtime.InteropServices;
 using SharpEmu.HLE;
+using SharpEmu.Libs.Kernel;
 
 namespace SharpEmu.Libs.LibcInternal;
 
@@ -62,7 +63,9 @@ public static class LibcInternalExports
     public static int LibcHeapGetTraceInfo(CpuContext ctx)
     {
         var infoAddress = ctx[CpuRegister.Rdi];
-        if (infoAddress == 0 || !ctx.TryReadUInt64(infoAddress, out var size) || size != HeapTraceInfoSize)
+        if (infoAddress == 0 ||
+            !KernelMemoryCompatExports.TryReadUInt64Compat(ctx, infoAddress, out var size) ||
+            size != HeapTraceInfoSize)
         {
             ctx[CpuRegister.Rax] = 0;
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
@@ -77,8 +80,16 @@ public static class LibcInternalExports
 
         var maskAddress = unchecked((ulong)(storage + HeapTraceMaskOffset));
         var tableAddress = unchecked((ulong)(storage + HeapTraceTableOffset));
-        if (!ctx.TryWriteUInt64(infoAddress + 16, maskAddress) ||
-            !ctx.TryWriteUInt64(infoAddress + 24, tableAddress))
+        Span<byte> pointerBytes = stackalloc byte[sizeof(ulong)];
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt64LittleEndian(pointerBytes, maskAddress);
+        if (!KernelMemoryCompatExports.TryWriteCompat(ctx, infoAddress + 16, pointerBytes))
+        {
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt64LittleEndian(pointerBytes, tableAddress);
+        if (!KernelMemoryCompatExports.TryWriteCompat(ctx, infoAddress + 24, pointerBytes))
         {
             ctx[CpuRegister.Rax] = 0;
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
@@ -126,7 +137,7 @@ public static class LibcInternalExports
         Span<byte> bytes = stackalloc byte[sizeof(uint)];
         lock (_atomic32Gate)
         {
-            if (!ctx.Memory.TryRead(valueAddress, bytes))
+            if (!KernelMemoryCompatExports.TryReadCompat(ctx, valueAddress, bytes))
             {
                 return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
             }
@@ -136,7 +147,7 @@ public static class LibcInternalExports
                 ? unchecked(previous - delta)
                 : unchecked(previous + delta);
             System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(bytes, next);
-            if (!ctx.Memory.TryWrite(valueAddress, bytes))
+            if (!KernelMemoryCompatExports.TryWriteCompat(ctx, valueAddress, bytes))
             {
                 return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
             }
