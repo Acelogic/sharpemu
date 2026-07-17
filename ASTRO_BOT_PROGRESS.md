@@ -17,7 +17,8 @@ diagnostic controls only.
 
 - Worktree: `/Users/mcruz/Developer/sharpemu-astro-playable-next`
 - Branch: `codex/astro-playable-next`
-- Base commit before this checkpoint: `fc5d762`.
+- Current upstream integration: merge commit `2effc63`, incorporating
+  `par274/main` through `a9a4f51` without dropping the ASTRO fixes.
 - The original-shader boot sequence renders boot art, multiple controller-symbol
   animation frames, and the PS Studios wordmark. The F1 performance overlay is
   enabled by default.
@@ -25,6 +26,8 @@ diagnostic controls only.
   passes reproducibly after the bounded host-buffer LRU fix.
 - Semantic-aware interpolant mapping now renders the controller-symbol animation
   with coherent geometry and substantially more accurate brightness/color.
+- E218 confirms the same ordered controller-symbol animation and PS Studios
+  wordmark survive the latest upstream merge before exact title start.
 - The title/worldmap output is still a uniform red frame rather than the
   recognizable menu, and sustained title performance is about 1.2 FPS.
 - E206 proves the four rotating 96 KiB CPU selector tables are populated once the
@@ -68,6 +71,7 @@ diagnostic controls only.
 | E212-E214 | Immediate post-draw readback already contained the repeated bands. Shader dumps identified ES `0x50076BE00` and PS `0x50076D300`; treating their attributes as identity-mapped was the remaining false assumption. | Corruption originated before presentation. Decode the AGC semantic tables rather than tuning the presenter. | `artifacts/astro-bot/runs/20260716-221034-e212-vinterp-uniform-readback/`, `.../20260716-223129-e214b-vinterp-vertex-program/`. |
 | E215 | Static headers prove PS semantics `0,2,3` map to VS outputs `0,2,3`; input 3 is custom/flat and carries the packed-normal values. The runtime registers are exactly `0x000,0x002,0x423`. Controller geometry/color becomes coherent, but other shaders expose duplicate host locations. | The earlier conclusion that packed VS parameter 3 was unused was wrong. Generic semantic mapping is required. | `artifacts/astro-bot/runs/20260716-225754-e215-semantic-interpolant-mapping/`. |
 | E216 | Host locations keyed by pixel attribute plus vertex-export fan-out eliminate duplicate `locn0` declarations. Fourteen interpolation and two AGC mapping tests pass. A visible original-shader run renders the corrected controller sequence, reaches exact title start, loads `worldmap`, and reports no MoltenVK/pipeline errors; the final frame remains uniform red. | Stage linkage is fixed without title-specific shader replacement. Resume at the existing title producer/composition boundary; the menu is not rendered yet. | `artifacts/astro-bot/runs/20260716-230809-e216-unique-host-interpolants/`. |
+| E218 | Merging `par274/main` through `a9a4f51` required only AGC and Vulkan-presenter conflict resolution. Release publishes cleanly; 256 library, 27 shader, 33 source-generator, and 6 harness tests pass. The visible original-shader run captures 136 frames, classifies the ordered animation/controller/wordmark sequence, reaches exact title start at 112.497 seconds, loads `worldmap`, and ends on the same uniform-red title frame. | The upstream merge preserves the controller-symbol regression gate and all known ASTRO progress. The red menu output remains the active graphics blocker. | `artifacts/astro-bot/runs/20260716-233311-e218-post-upstream-controller-direct/`. |
 
 ## Corrected conclusions: do not repeat
 
@@ -137,12 +141,13 @@ python3 scripts/astro-test.py test \
 
 ## Validation and artifact policy
 
-- Release `osx-x64` publish passed for E216; the transplanted worktree Release
-  build passes with zero warnings and zero errors.
-- Library tests: 205/205 passed (including 2/2 AGC mapping tests).
+- Release `osx-x64` publish passed after the `par274/main` merge with zero
+  warning or error lines.
+- Library tests: 256/256 passed (including the upstream additions and AGC mapping tests).
 - Shader tests: 27/27 passed (including 14/14 interpolation tests).
+- Source-generator tests: 33/33 passed.
 - Harness tests: 6/6 passed.
-- No SharpEmu process remained after E216.
+- No SharpEmu process remained after E218.
 - Retain the PR #216 baseline at
   `artifacts/astro-bot/baselines/pr216/attempt-01-contact-sheet.png`.
 - Retain compact proof for E190, E193, E194, E196, E198-E201, E203, E204, and
