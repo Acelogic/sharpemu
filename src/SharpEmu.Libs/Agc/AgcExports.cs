@@ -14,6 +14,10 @@ using System.Runtime.CompilerServices;
 
 namespace SharpEmu.Libs.Agc;
 
+// Attribution: substantial PS5 AGC command and shader-runtime portions in this file were
+// originally authored by @xnetcat and later adapted in PR #216. Source snapshot:
+// https://github.com/xnetcat/sharpemu/tree/2497ea6799432ac2385a50f739eff2ce922d6fd4
+
 public static partial class AgcExports
 {
 #if DEBUG

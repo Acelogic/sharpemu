@@ -27,6 +27,10 @@ using VkSemaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace SharpEmu.Libs.VideoOut;
 
+// Attribution: substantial PS5 Vulkan presentation and guest-image portions in this file
+// were originally authored by @xnetcat and later adapted in PR #216. Source snapshot:
+// https://github.com/xnetcat/sharpemu/tree/2497ea6799432ac2385a50f739eff2ce922d6fd4
+
 internal readonly record struct VulkanRenderTargetFormat(
     Format Format,
     Gen5PixelOutputKind OutputKind)

@@ -10,6 +10,10 @@ using System.Diagnostics.CodeAnalysis;
 
 namespace SharpEmu.Libs.Kernel;
 
+// Attribution: substantial PS5 pthread compatibility portions in this file were originally
+// authored by @xnetcat and later adapted in PR #216. Source snapshot:
+// https://github.com/xnetcat/sharpemu/tree/2497ea6799432ac2385a50f739eff2ce922d6fd4
+
 public static class KernelPthreadCompatExports
 {
     private const int MutexTypeErrorCheck = 1;

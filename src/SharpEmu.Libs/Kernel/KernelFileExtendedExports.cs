@@ -8,6 +8,10 @@ using System.Threading;
 
 namespace SharpEmu.Libs.Kernel;
 
+// Attribution: substantial PS5 extended-file compatibility portions in this file were
+// originally authored by @xnetcat and later adapted in PR #216. Source snapshot:
+// https://github.com/xnetcat/sharpemu/tree/2497ea6799432ac2385a50f739eff2ce922d6fd4
+
 /// <summary>
 /// Positional and scatter/gather file I/O, synchronization, renaming, fcntl,
 /// polling and asynchronous I/O (AIO) that complement the base file exports.

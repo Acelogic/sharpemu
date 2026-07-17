@@ -6,6 +6,10 @@ using System.Diagnostics;
 
 namespace SharpEmu.HLE;
 
+// Attribution: substantial PS5 TLS/DTV portions in this file were originally authored
+// by @xnetcat and later adapted in PR #216. Source snapshot:
+// https://github.com/xnetcat/sharpemu/tree/2497ea6799432ac2385a50f739eff2ce922d6fd4
+
 /// <summary>
 /// Process-wide registry of ELF PT_TLS templates and per-thread dynamic thread
 /// vectors. AMD64 uses TLS Variant II: startup/static module blocks precede the

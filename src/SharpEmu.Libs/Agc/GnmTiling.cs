@@ -3,6 +3,10 @@
 
 namespace SharpEmu.Libs.Agc;
 
+// Attribution: substantial PS5 GNM tiling portions in this file were originally authored
+// by @xnetcat and later adapted in PR #216. Source snapshot:
+// https://github.com/xnetcat/sharpemu/tree/2497ea6799432ac2385a50f739eff2ce922d6fd4
+
 /// <summary>
 /// Deswizzles RDNA2 (GFX10) tiled texture surfaces into linear layout so they
 /// can be uploaded to Vulkan. PS5 stores most textures in a swizzled layout

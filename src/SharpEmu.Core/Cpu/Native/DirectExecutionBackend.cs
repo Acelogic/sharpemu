@@ -15,6 +15,10 @@ using SharpEmu.HLE;
 
 namespace SharpEmu.Core.Cpu.Native;
 
+// Attribution: substantial PS5 native-execution portions in this file were originally
+// authored by @xnetcat and later adapted in PR #216. Source snapshot:
+// https://github.com/xnetcat/sharpemu/tree/2497ea6799432ac2385a50f739eff2ce922d6fd4
+
 public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, IGuestThreadScheduler, IDisposable
 {
 	private static readonly SharpEmu.Logging.SharpEmuLogger Log = SharpEmu.Logging.SharpEmuLog.For("Native");

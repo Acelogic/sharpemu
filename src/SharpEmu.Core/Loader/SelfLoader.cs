@@ -14,6 +14,10 @@ using SharpEmu.HLE;
 
 namespace SharpEmu.Core.Loader;
 
+// Attribution: substantial PS5 SELF-loading portions in this file were originally authored
+// by @xnetcat and later adapted in PR #216. Source snapshot:
+// https://github.com/xnetcat/sharpemu/tree/2497ea6799432ac2385a50f739eff2ce922d6fd4
+
 public sealed class SelfLoader : ISelfLoader
 {
     private const uint ElfMagic = 0x7F454C46;

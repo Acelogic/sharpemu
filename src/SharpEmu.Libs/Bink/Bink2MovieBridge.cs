@@ -6,6 +6,9 @@ using System.Buffers.Binary;
 
 namespace SharpEmu.Libs.Bink;
 
+// Attribution: the original host-side Bink2 bridge was authored by @xnetcat:
+// https://github.com/xnetcat/sharpemu/commit/23cefcc69b32980724bfa9fb015f32fa518a02a9
+
 /// <summary>
 /// Optional host-side Bink 2 bridge for games that ship a static Bink player.
 ///
