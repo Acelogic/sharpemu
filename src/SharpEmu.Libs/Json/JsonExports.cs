@@ -32,6 +32,11 @@ public static class JsonExports
     private static readonly ConcurrentDictionary<ulong, JsonStringState> _strings = new();
     private static readonly ConcurrentDictionary<JsonReferenceKey, ulong> _valueReferences = new();
     private static readonly JsonElement _nullElement = CreateNullElement();
+    private static readonly object _globalNullAccessCallbackGate = new();
+
+    private const int SceJsonErrorNotInitialized = unchecked((int)0x80848110);
+    private const int SceJsonErrorCallbackAlreadySet = unchecked((int)0x80848112);
+    private const int SceJsonErrorInvalidCallback = unchecked((int)0x80848120);
 
     [SysAbiExport(
         Nid = "-hJRce8wn1U",
@@ -119,6 +124,43 @@ public static class JsonExports
         JsonObjectHeap.GlobalNullAccessCallback = ctx[CpuRegister.Rsi];
         JsonObjectHeap.GlobalNullAccessCallbackContext = ctx[CpuRegister.Rdx];
         TraceJson("Initializer.setGlobalNullAccessCallback", thisAddress, ctx[CpuRegister.Rsi]);
+        return SetReturn(ctx, 0);
+    }
+
+    [SysAbiExport(
+        Nid = "00oCq0RwSAY",
+        ExportName = "_ZN3sce4Json11Initializer27setGlobalNullAccessCallBackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_",
+        Target = Generation.Gen5,
+        LibraryName = "libSceJson2")]
+    public static int InitializerSetGlobalNullAccessCallBack(CpuContext ctx)
+    {
+        var thisAddress = ctx[CpuRegister.Rdi];
+        Span<byte> initialized = stackalloc byte[1];
+        if (thisAddress == 0 ||
+            !ctx.Memory.TryRead(thisAddress, initialized) ||
+            initialized[0] == 0)
+        {
+            return SetReturn(ctx, SceJsonErrorNotInitialized);
+        }
+
+        var callback = ctx[CpuRegister.Rsi];
+        if (callback == 0)
+        {
+            return SetReturn(ctx, SceJsonErrorInvalidCallback);
+        }
+
+        lock (_globalNullAccessCallbackGate)
+        {
+            if (JsonObjectHeap.GlobalNullAccessCallback != 0)
+            {
+                return SetReturn(ctx, SceJsonErrorCallbackAlreadySet);
+            }
+
+            JsonObjectHeap.GlobalNullAccessCallback = callback;
+            JsonObjectHeap.GlobalNullAccessCallbackContext = ctx[CpuRegister.Rdx];
+        }
+
+        TraceJson("Initializer.setGlobalNullAccessCallBack", thisAddress, callback);
         return SetReturn(ctx, 0);
     }
 

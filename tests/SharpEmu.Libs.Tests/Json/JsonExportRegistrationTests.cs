@@ -26,6 +26,7 @@ public sealed class JsonExportRegistrationTests
         ("9KUZFjI1IxA", "_ZN3sce4Json6StringC1EPKc"),
         ("cG1VE2HMl6c", "_ZN3sce4Json6StringD1Ev"),
         ("+drDFyAS6u4", "_ZN3sce4Json11Initializer27setGlobalNullAccessCallbackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_"),
+        ("00oCq0RwSAY", "_ZN3sce4Json11Initializer27setGlobalNullAccessCallBackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_"),
     };
 
     private static ModuleManager CreateRegisteredManager()
@@ -44,7 +45,7 @@ public sealed class JsonExportRegistrationTests
         {
             Assert.True(manager.TryGetExport(nid, out var export), $"NID {nid} did not register.");
             Assert.Equal(name, export.Name);
-            Assert.Equal("libSceJson", export.LibraryName);
+            Assert.Equal(nid == "00oCq0RwSAY" ? "libSceJson2" : "libSceJson", export.LibraryName);
         }
     }
 
@@ -63,6 +64,51 @@ public sealed class JsonExportRegistrationTests
         Assert.Equal(0UL, ctx[CpuRegister.Rax]);
         Assert.Equal(0x8_0012_3456UL, JsonObjectHeap.GlobalNullAccessCallback);
         Assert.Equal(0x1_0000_0800UL, JsonObjectHeap.GlobalNullAccessCallbackContext);
+    }
+
+    [Fact]
+    public void SetGlobalNullAccessCallBack_StoresOnlyTheFirstValidHook()
+    {
+        const ulong initializerAddress = 0x1_0000_0000;
+        JsonObjectHeap.ResetForTests();
+        var memory = new FakeCpuMemory(initializerAddress, 0x1000);
+        Assert.True(memory.TryWrite(initializerAddress, new byte[] { 1 }));
+        var ctx = new CpuContext(memory, Generation.Gen5);
+        ctx[CpuRegister.Rdi] = initializerAddress;
+        ctx[CpuRegister.Rsi] = 0x8_0012_3456;
+        ctx[CpuRegister.Rdx] = initializerAddress + 0x800;
+
+        Assert.Equal(0, JsonExports.InitializerSetGlobalNullAccessCallBack(ctx));
+        Assert.Equal(0x8_0012_3456UL, JsonObjectHeap.GlobalNullAccessCallback);
+        Assert.Equal(initializerAddress + 0x800, JsonObjectHeap.GlobalNullAccessCallbackContext);
+
+        ctx[CpuRegister.Rsi] = 0x8_0065_4321;
+        ctx[CpuRegister.Rdx] = initializerAddress + 0x900;
+        Assert.Equal(unchecked((int)0x80848112), JsonExports.InitializerSetGlobalNullAccessCallBack(ctx));
+        Assert.Equal(0x8_0012_3456UL, JsonObjectHeap.GlobalNullAccessCallback);
+        Assert.Equal(initializerAddress + 0x800, JsonObjectHeap.GlobalNullAccessCallbackContext);
+    }
+
+    [Theory]
+    [InlineData(false, 0x8_0012_3456UL, 0x80848110U)]
+    [InlineData(true, 0UL, 0x80848120U)]
+    public void SetGlobalNullAccessCallBack_RejectsInvalidStateWithoutWrites(
+        bool initializerIsReady,
+        ulong callback,
+        uint expectedError)
+    {
+        const ulong initializerAddress = 0x1_0000_0000;
+        JsonObjectHeap.ResetForTests();
+        var memory = new FakeCpuMemory(initializerAddress, 0x1000);
+        Assert.True(memory.TryWrite(initializerAddress, new[] { initializerIsReady ? (byte)1 : (byte)0 }));
+        var ctx = new CpuContext(memory, Generation.Gen5);
+        ctx[CpuRegister.Rdi] = initializerAddress;
+        ctx[CpuRegister.Rsi] = callback;
+        ctx[CpuRegister.Rdx] = initializerAddress + 0x800;
+
+        Assert.Equal(unchecked((int)expectedError), JsonExports.InitializerSetGlobalNullAccessCallBack(ctx));
+        Assert.Equal(0UL, JsonObjectHeap.GlobalNullAccessCallback);
+        Assert.Equal(0UL, JsonObjectHeap.GlobalNullAccessCallbackContext);
     }
 
     [Fact]
