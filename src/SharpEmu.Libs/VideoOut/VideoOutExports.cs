@@ -36,6 +36,12 @@ public static class VideoOutExports
     private const int VideoOutBuffersEntrySize = 0x20;
     private const int VideoOutOutputStatusSize = 0x30;
     private const int VideoOutVblankStatusSize = 0x28;
+    private const int VideoOutSystemPipelineStatusSize = 0x20;
+    private const int VideoOutSystemResolutionStatus2Size = 0x20;
+    private const uint VideoOutSystemWidth = 1920;
+    private const uint VideoOutSystemHeight = 1080;
+    // SceVideoOutRefreshRate enum value used by PSM for 59.94 Hz.
+    private const ulong VideoOutSystemRefreshRate = 3;
     private const ulong SceVideoOutPixelFormatA8R8G8B8Srgb = 0x80000000;
     private const ulong SceVideoOutPixelFormatA8B8G8R8Srgb = 0x80002200;
     private const ulong SceVideoOutPixelFormatA2R10G10B10 = 0x88060000;
@@ -307,6 +313,80 @@ public static class VideoOutExports
         // The emulator supports any output configuration on the main bus.
         // Return 1 (supported) for SceVideoOutBusTypeMain, 0 otherwise.
         return busType == SceVideoOutBusTypeMain ? 1 : 0;
+    }
+
+    [SysAbiExport(
+        Nid = "O57F5ikhGxo",
+        ExportName = "sceVideoOutSysIsUserStatusSystemDefault",
+        Target = Generation.Gen5,
+        LibraryName = "libSceVideoOut")]
+    public static int VideoOutSysIsUserStatusSystemDefault(CpuContext ctx)
+    {
+        _ = ctx[CpuRegister.Rdi]; // userId (ShellCore uses 0xff)
+        _ = ctx[CpuRegister.Rsi]; // reserved
+        return 1;
+    }
+
+    [SysAbiExport(
+        Nid = "4XsQdhiOaAc",
+        ExportName = "sceVideoOutSysIsUserStatusVr",
+        Target = Generation.Gen5,
+        LibraryName = "libSceVideoOut")]
+    public static int VideoOutSysIsUserStatusVr(CpuContext ctx)
+    {
+        _ = ctx[CpuRegister.Rdi]; // userId
+        _ = ctx[CpuRegister.Rsi]; // reserved
+        return 0;
+    }
+
+    [SysAbiExport(
+        Nid = "dFhciCfO31s",
+        ExportName = "sceVideoOutSysGetPipelineStatus",
+        Target = Generation.Gen5,
+        LibraryName = "libSceVideoOut")]
+    public static int VideoOutSysGetPipelineStatus(CpuContext ctx)
+    {
+        var statusAddress = ctx[CpuRegister.Rdi];
+        if (statusAddress == 0)
+        {
+            return OrbisVideoOutErrorInvalidAddress;
+        }
+
+        Span<byte> status = stackalloc byte[VideoOutSystemPipelineStatusSize];
+        status.Clear();
+        return ctx.Memory.TryWrite(statusAddress, status)
+            ? (int)OrbisGen2Result.ORBIS_GEN2_OK
+            : (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+    }
+
+    [SysAbiExport(
+        Nid = "qLDCAl8ygCw",
+        ExportName = "sceVideoOutSysGetResolutionStatus2",
+        Target = Generation.Gen5,
+        LibraryName = "libSceVideoOut")]
+    public static int VideoOutSysGetResolutionStatus2(CpuContext ctx)
+    {
+        var outputIndex = unchecked((int)ctx[CpuRegister.Rdi]);
+        var statusAddress = ctx[CpuRegister.Rsi];
+        if (statusAddress == 0)
+        {
+            return OrbisVideoOutErrorInvalidAddress;
+        }
+        if (outputIndex is < 0 or > 1)
+        {
+            return OrbisVideoOutErrorInvalidIndex;
+        }
+
+        // KawaiiDra's 12.70 libScePsm call site consumes width at +0x00,
+        // height at +0x04, and the refresh-rate enum at +0x10.
+        Span<byte> status = stackalloc byte[VideoOutSystemResolutionStatus2Size];
+        status.Clear();
+        BinaryPrimitives.WriteUInt32LittleEndian(status[0x00..0x04], VideoOutSystemWidth);
+        BinaryPrimitives.WriteUInt32LittleEndian(status[0x04..0x08], VideoOutSystemHeight);
+        BinaryPrimitives.WriteUInt64LittleEndian(status[0x10..0x18], VideoOutSystemRefreshRate);
+        return ctx.Memory.TryWrite(statusAddress, status)
+            ? (int)OrbisGen2Result.ORBIS_GEN2_OK
+            : (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
     }
 
     [SysAbiExport(

@@ -235,6 +235,16 @@ public sealed class SelfLoader : ISelfLoader
             _moduleManager,
             tlsModuleId,
             out var importedRelocations);
+        // TLS relocations target the mapped PT_TLS image itself (for example,
+        // VshPng's per-thread function dispatch table). Registration must occur
+        // before relocation processing so DTPMOD/DTPOFF/TPOFF can use the final
+        // module layout, then the stored template must be refreshed so newly
+        // created threads receive relocated pointers rather than ELF addends.
+        RefreshModuleTlsTemplate(
+            programHeaders,
+            virtualMemory,
+            imageBase,
+            tlsModuleId);
         var effectiveImportStubs = importStubs.Count == 0
             ? new Dictionary<ulong, string>()
             : new Dictionary<ulong, string>(importStubs);
@@ -538,6 +548,35 @@ public sealed class SelfLoader : ISelfLoader
             $"filesz=0x{tlsHeader.FileSize:X} align=0x{tlsHeader.Alignment:X} " +
             $"static_offset=0x{staticOffset:X} total_static=0x{GuestTlsTemplate.StaticTlsSize:X}");
         return new ModuleTlsInfo(tlsHeader.MemorySize, staticOffset);
+    }
+
+    private static void RefreshModuleTlsTemplate(
+        IReadOnlyList<ProgramHeader> programHeaders,
+        IVirtualMemory virtualMemory,
+        ulong imageBase,
+        uint tlsModuleId)
+    {
+        if (tlsModuleId == 0 ||
+            !TryGetProgramHeader(programHeaders, ProgramHeaderType.Tls, out var tlsHeader, out _) ||
+            tlsHeader.MemorySize == 0)
+        {
+            return;
+        }
+
+        var fileSize = (int)Math.Min(tlsHeader.FileSize, tlsHeader.MemorySize);
+        var relocatedInitImage = fileSize > 0 ? new byte[fileSize] : [];
+        if (fileSize > 0 &&
+            !virtualMemory.TryRead(imageBase + tlsHeader.VirtualAddress, relocatedInitImage))
+        {
+            Console.Error.WriteLine(
+                $"[LOADER][TLS] Failed to refresh relocated TLS init image for module {tlsModuleId} " +
+                $"at 0x{imageBase + tlsHeader.VirtualAddress:X}; retaining the original image.");
+            return;
+        }
+
+        GuestTlsTemplate.UpdateModuleInitImage(tlsModuleId, relocatedInitImage);
+        Console.Error.WriteLine(
+            $"[LOADER][TLS] Module {tlsModuleId} refreshed relocated TLS template: filesz=0x{fileSize:X}");
     }
 
     private static IReadOnlyDictionary<ulong, string> ResolveAndPatchImportStubs(

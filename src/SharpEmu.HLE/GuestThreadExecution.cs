@@ -74,6 +74,26 @@ public interface IGuestThreadScheduler
     /// </summary>
     bool TrySetGuestThreadAffinity(ulong guestThreadHandle, ulong affinityMask);
 
+    /// <summary>
+    /// Cooperatively parks a guest pthread at an import boundary. Threads that
+    /// are already blocked or ready are considered parked immediately.
+    /// </summary>
+    bool TrySuspendGuestThread(ulong guestThreadHandle, out string? error);
+
+    /// <summary>
+    /// Releases a matching user-context suspension and makes a thread parked by
+    /// <see cref="TrySuspendGuestThread"/> runnable again.
+    /// </summary>
+    bool TryResumeGuestThread(ulong guestThreadHandle, out string? error);
+
+    /// <summary>
+    /// Returns the register state captured for a suspended guest pthread.
+    /// </summary>
+    bool TryGetSuspendedGuestThreadContext(
+        ulong guestThreadHandle,
+        out GuestCpuContinuation continuation,
+        out string? error);
+
     IReadOnlyList<GuestThreadSnapshot> SnapshotThreads();
 
     bool TryCallGuestFunction(

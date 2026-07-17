@@ -6,6 +6,7 @@ using SharpEmu.Libs.Fiber;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics.X86;
@@ -35,6 +36,9 @@ public static class KernelRuntimeCompatExports
     private const ulong ModuleInfoNameOffset = 0x08;
     private const ulong ModuleInfoExHandleOffset = 0x108;
     private const ulong ModuleInfoExInitProcOffset = 0x128;
+    private const ulong ModuleInfoExEhFrameHeaderOffset = 0x148;
+    private const ulong ModuleInfoExEhFrameOffset = 0x150;
+    private const ulong ModuleInfoExEhFrameSizeOffset = 0x15C;
     private const ulong ModuleInfoExSegmentsOffset = 0x160;
     private const ulong ModuleInfoExSegmentCountOffset = 0x1A0;
     private const int ModuleInfoSegmentSize = 16;
@@ -46,6 +50,9 @@ public static class KernelRuntimeCompatExports
     private const int AioInitParamSize = 0x3C;
     private const int Efault = 14;
     private const int Einval = 22;
+    // Orbis libc uses the POSIX nine-int tm layout. Unlike FreeBSD's host ABI,
+    // the guest structure does not append tm_gmtoff/tm_zone.
+    private const int PosixTmSize = 9 * sizeof(int);
     private const uint MemCommit = 0x1000;
     private const uint MemReserve = 0x2000;
     private const uint PageExecuteReadWrite = 0x40;
@@ -72,9 +79,20 @@ public static class KernelRuntimeCompatExports
         string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_USLEEP"), "1", StringComparison.Ordinal);
     private static readonly bool _traceGuestThreads =
         string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_GUEST_THREADS"), "1", StringComparison.Ordinal);
+    private static readonly bool _traceTimeCompat =
+        string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_TIME_COMPAT"), "1", StringComparison.Ordinal);
+    private static int _mktimeTraceCount;
+    private static int _localtimeTraceCount;
+    private static int _difftimeTraceCount;
 
     [ThreadStatic]
     private static int _shortUsleepCount;
+
+    [ThreadStatic]
+    private static nint _gmtimeStorage;
+
+    [ThreadStatic]
+    private static nint _localtimeStorage;
 
     private static readonly bool _stopwatchTicksAreNanoseconds =
         Stopwatch.Frequency == 1_000_000_000L;
@@ -335,6 +353,595 @@ public static class KernelRuntimeCompatExports
         ctx[CpuRegister.Rax] = 0;
         return 0;
     }
+
+    [SysAbiExport(
+        Nid = "n7AepwR0s34",
+        ExportName = "mktime",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcMktime(CpuContext ctx)
+    {
+        var tmAddress = ctx[CpuRegister.Rdi];
+        if (!TryReadPosixTm(ctx, tmAddress, out var tm) ||
+            !TryNormalizeLocalTm(tm, out var localTime, out var utcOffset))
+        {
+            ctx[CpuRegister.Rax] = ulong.MaxValue;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        long unixSeconds;
+        try
+        {
+            unixSeconds = new DateTimeOffset(localTime, utcOffset).ToUnixTimeSeconds();
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            ctx[CpuRegister.Rax] = ulong.MaxValue;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        var normalized = ToPosixTm(
+            localTime,
+            isDaylightSavingTime: TimeZoneInfo.Local.IsDaylightSavingTime(localTime),
+            gmtOffsetSeconds: unchecked((long)utcOffset.TotalSeconds),
+            zoneAddress: tm.ZoneAddress);
+        if (!TryWritePosixTm(ctx, tmAddress, normalized))
+        {
+            ctx[CpuRegister.Rax] = ulong.MaxValue;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        ctx[CpuRegister.Rax] = unchecked((ulong)unixSeconds);
+        if (_traceTimeCompat && Interlocked.Increment(ref _mktimeTraceCount) <= 24)
+        {
+            Console.Error.WriteLine(
+                $"[TIME][MKTIME] {tm.Year + 1900:D4}-{tm.Month + 1:D2}-{tm.MonthDay:D2} " +
+                $"{tm.Hour:D2}:{tm.Minute:D2}:{tm.Second:D2} isdst={tm.IsDaylightSavingTime} " +
+                $"offset={utcOffset.TotalSeconds:0} -> {unixSeconds}");
+        }
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "1mecP7RgI2A",
+        ExportName = "gmtime",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcGmtime(CpuContext ctx)
+    {
+        var timeAddress = ctx[CpuRegister.Rdi];
+        if (timeAddress == 0 || !ctx.TryReadUInt64(timeAddress, out var rawSeconds))
+        {
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        DateTime utcTime;
+        try
+        {
+            utcTime = DateTimeOffset.FromUnixTimeSeconds(unchecked((long)rawSeconds)).UtcDateTime;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        if (_gmtimeStorage == 0)
+        {
+            _gmtimeStorage = Marshal.AllocHGlobal(PosixTmSize);
+        }
+
+        var tm = ToPosixTm(utcTime, isDaylightSavingTime: false, gmtOffsetSeconds: 0, zoneAddress: 0);
+        WritePosixTm(_gmtimeStorage, tm);
+        ctx[CpuRegister.Rax] = unchecked((ulong)_gmtimeStorage);
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "efhK-YSUYYQ",
+        ExportName = "localtime",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcLocaltime(CpuContext ctx)
+    {
+        var timeAddress = ctx[CpuRegister.Rdi];
+        if (timeAddress == 0 || !ctx.TryReadUInt64(timeAddress, out var rawSeconds))
+        {
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        DateTimeOffset localTime;
+        try
+        {
+            var instant = DateTimeOffset.FromUnixTimeSeconds(unchecked((long)rawSeconds));
+            localTime = TimeZoneInfo.ConvertTime(instant, TimeZoneInfo.Local);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        if (_localtimeStorage == 0)
+        {
+            _localtimeStorage = Marshal.AllocHGlobal(PosixTmSize);
+        }
+
+        var wallClock = localTime.DateTime;
+        var tm = ToPosixTm(
+            wallClock,
+            isDaylightSavingTime: TimeZoneInfo.Local.IsDaylightSavingTime(wallClock),
+            gmtOffsetSeconds: unchecked((long)localTime.Offset.TotalSeconds),
+            zoneAddress: 0);
+        WritePosixTm(_localtimeStorage, tm);
+        ctx[CpuRegister.Rax] = unchecked((ulong)_localtimeStorage);
+        if (_traceTimeCompat && Interlocked.Increment(ref _localtimeTraceCount) <= 16)
+        {
+            Console.Error.WriteLine(
+                $"[TIME][LOCALTIME] {unchecked((long)rawSeconds)} -> " +
+                $"{tm.Year + 1900:D4}-{tm.Month + 1:D2}-{tm.MonthDay:D2} " +
+                $"{tm.Hour:D2}:{tm.Minute:D2}:{tm.Second:D2} isdst={tm.IsDaylightSavingTime} " +
+                $"gmtoff={tm.GmtOffsetSeconds}");
+        }
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "-VVn74ZyhEs",
+        ExportName = "difftime",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcDifftime(CpuContext ctx)
+    {
+        var later = (double)unchecked((long)ctx[CpuRegister.Rdi]);
+        var earlier = (double)unchecked((long)ctx[CpuRegister.Rsi]);
+        var difference = later - earlier;
+        ctx.SetXmmRegister(
+            0,
+            unchecked((ulong)BitConverter.DoubleToInt64Bits(difference)),
+            0);
+        ctx[CpuRegister.Rax] = 0;
+        var traceIndex = _traceTimeCompat
+            ? Interlocked.Increment(ref _difftimeTraceCount)
+            : 0;
+        if (_traceTimeCompat && traceIndex <= 64)
+        {
+            Console.Error.WriteLine(
+                $"[TIME][DIFFTIME] later={later:R} earlier={earlier:R} " +
+                $"difference={difference:R} suspicious={Math.Abs(difference) > 14d * 60 * 60} " +
+                $"bits=0x{BitConverter.DoubleToInt64Bits(difference):X16}");
+        }
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "9LCjpWyQ5Zc",
+        ExportName = "pow",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcPow(CpuContext ctx)
+    {
+        ctx.GetXmmRegister(0, out var baseBits, out _);
+        ctx.GetXmmRegister(1, out var exponentBits, out _);
+        var value = BitConverter.Int64BitsToDouble(unchecked((long)baseBits));
+        var exponent = BitConverter.Int64BitsToDouble(unchecked((long)exponentBits));
+        var result = Math.Pow(value, exponent);
+        ctx.SetXmmRegister(
+            0,
+            unchecked((ulong)BitConverter.DoubleToInt64Bits(result)),
+            0);
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "QI-x0SL8jhw",
+        ExportName = "acosf",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcAcosf(CpuContext ctx)
+    {
+        ctx.GetXmmRegister(0, out var inputBits, out _);
+        var input = BitConverter.Int32BitsToSingle(unchecked((int)(uint)inputBits));
+        var result = MathF.Acos(input);
+        ctx.SetXmmRegister(
+            0,
+            unchecked((uint)BitConverter.SingleToInt32Bits(result)),
+            0);
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "pztV4AF18iI",
+        ExportName = "sincosf",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcSincosf(CpuContext ctx)
+    {
+        ctx.GetXmmRegister(0, out var inputBits, out _);
+        var input = BitConverter.Int32BitsToSingle(unchecked((int)(uint)inputBits));
+        var sinAddress = ctx[CpuRegister.Rdi];
+        var cosAddress = ctx[CpuRegister.Rsi];
+        if (sinAddress == 0 || cosAddress == 0 ||
+            !KernelMemoryCompatExports.TryWriteUInt32Compat(
+                ctx,
+                sinAddress,
+                unchecked((uint)BitConverter.SingleToInt32Bits(MathF.Sin(input)))) ||
+            !KernelMemoryCompatExports.TryWriteUInt32Compat(
+                ctx,
+                cosAddress,
+                unchecked((uint)BitConverter.SingleToInt32Bits(MathF.Cos(input)))))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "Cj+Fw5q1tUo",
+        ExportName = "_Xtime_get_ticks",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcXtimeGetTicks(CpuContext ctx)
+    {
+        // Microsoft STL's clock helper uses 100-nanosecond intervals since the
+        // Unix epoch. DateTime ticks use the same interval but a different epoch.
+        var ticks = DateTime.UtcNow.Ticks - DateTime.UnixEpoch.Ticks;
+        ctx[CpuRegister.Rax] = unchecked((ulong)ticks);
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "Av3zjWi64Kw",
+        ExportName = "strftime",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcStrftime(CpuContext ctx)
+    {
+        var destinationAddress = ctx[CpuRegister.Rdi];
+        var destinationSize = ctx[CpuRegister.Rsi];
+        var formatAddress = ctx[CpuRegister.Rdx];
+        var tmAddress = ctx[CpuRegister.Rcx];
+        if (destinationAddress == 0 || destinationSize == 0 || destinationSize > int.MaxValue ||
+            !TryReadUtf8CString(ctx, formatAddress, 256, out var format) ||
+            !TryReadPosixTm(ctx, tmAddress, out var tm))
+        {
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        var rendered = FormatPosixTime(format, tm);
+        var encoded = Encoding.UTF8.GetBytes(rendered);
+        if ((ulong)encoded.Length + 1 > destinationSize)
+        {
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        var terminated = new byte[encoded.Length + 1];
+        encoded.CopyTo(terminated, 0);
+        if (!ctx.Memory.TryWrite(destinationAddress, terminated))
+        {
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        ctx[CpuRegister.Rax] = (ulong)encoded.Length;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    private static string FormatPosixTime(string format, PosixTm tm)
+    {
+        string[] abbreviatedWeekDays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+        string[] weekDays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+        string[] abbreviatedMonths = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        string[] months = [
+            "January", "February", "March", "April", "May", "June",
+            "July", "August", "September", "October", "November", "December"
+        ];
+
+        var weekDay = PositiveModulo(tm.WeekDay, abbreviatedWeekDays.Length);
+        var month = tm.Month is >= 0 and < 12 ? tm.Month : 0;
+        var year = tm.Year + 1900;
+        var hour12 = tm.Hour % 12;
+        if (hour12 <= 0)
+        {
+            hour12 += 12;
+        }
+
+        var builder = new StringBuilder(format.Length + 32);
+        for (var index = 0; index < format.Length; index++)
+        {
+            var character = format[index];
+            if (character != '%' || index + 1 >= format.Length)
+            {
+                builder.Append(character);
+                continue;
+            }
+
+            var specifier = format[++index];
+            if ((specifier == 'E' || specifier == 'O') && index + 1 < format.Length)
+            {
+                specifier = format[++index];
+            }
+
+            switch (specifier)
+            {
+                case '%': builder.Append('%'); break;
+                case 'a': builder.Append(abbreviatedWeekDays[weekDay]); break;
+                case 'A': builder.Append(weekDays[weekDay]); break;
+                case 'b':
+                case 'h': builder.Append(abbreviatedMonths[month]); break;
+                case 'B': builder.Append(months[month]); break;
+                case 'c':
+                    builder.Append(abbreviatedWeekDays[weekDay]).Append(' ')
+                        .Append(abbreviatedMonths[month]).Append(' ')
+                        .Append(tm.MonthDay.ToString("D2", CultureInfo.InvariantCulture)).Append(' ')
+                        .Append(FormatClock(tm)).Append(' ')
+                        .Append(year.ToString("D4", CultureInfo.InvariantCulture));
+                    break;
+                case 'C': builder.Append(Math.DivRem(year, 100, out _).ToString("D2", CultureInfo.InvariantCulture)); break;
+                case 'd': builder.Append(tm.MonthDay.ToString("D2", CultureInfo.InvariantCulture)); break;
+                case 'D':
+                    builder.Append((tm.Month + 1).ToString("D2", CultureInfo.InvariantCulture)).Append('/')
+                        .Append(tm.MonthDay.ToString("D2", CultureInfo.InvariantCulture)).Append('/')
+                        .Append(PositiveModulo(year, 100).ToString("D2", CultureInfo.InvariantCulture));
+                    break;
+                case 'e':
+                    builder.Append(tm.MonthDay < 10 ? " " : string.Empty)
+                        .Append(tm.MonthDay.ToString(CultureInfo.InvariantCulture));
+                    break;
+                case 'F':
+                    builder.Append(year.ToString("D4", CultureInfo.InvariantCulture)).Append('-')
+                        .Append((tm.Month + 1).ToString("D2", CultureInfo.InvariantCulture)).Append('-')
+                        .Append(tm.MonthDay.ToString("D2", CultureInfo.InvariantCulture));
+                    break;
+                case 'H': builder.Append(tm.Hour.ToString("D2", CultureInfo.InvariantCulture)); break;
+                case 'I': builder.Append(hour12.ToString("D2", CultureInfo.InvariantCulture)); break;
+                case 'j': builder.Append((tm.YearDay + 1).ToString("D3", CultureInfo.InvariantCulture)); break;
+                case 'm': builder.Append((tm.Month + 1).ToString("D2", CultureInfo.InvariantCulture)); break;
+                case 'M': builder.Append(tm.Minute.ToString("D2", CultureInfo.InvariantCulture)); break;
+                case 'n': builder.Append('\n'); break;
+                case 'p': builder.Append(tm.Hour < 12 ? "AM" : "PM"); break;
+                case 'r':
+                    builder.Append(hour12.ToString("D2", CultureInfo.InvariantCulture)).Append(':')
+                        .Append(tm.Minute.ToString("D2", CultureInfo.InvariantCulture)).Append(':')
+                        .Append(tm.Second.ToString("D2", CultureInfo.InvariantCulture)).Append(' ')
+                        .Append(tm.Hour < 12 ? "AM" : "PM");
+                    break;
+                case 'R':
+                    builder.Append(tm.Hour.ToString("D2", CultureInfo.InvariantCulture)).Append(':')
+                        .Append(tm.Minute.ToString("D2", CultureInfo.InvariantCulture));
+                    break;
+                case 'S': builder.Append(tm.Second.ToString("D2", CultureInfo.InvariantCulture)); break;
+                case 't': builder.Append('\t'); break;
+                case 'T': builder.Append(FormatClock(tm)); break;
+                case 'u': builder.Append(weekDay == 0 ? 7 : weekDay); break;
+                case 'U': builder.Append(((tm.YearDay + 7 - weekDay) / 7).ToString("D2", CultureInfo.InvariantCulture)); break;
+                case 'w': builder.Append(weekDay); break;
+                case 'W':
+                    builder.Append(((tm.YearDay + 7 - PositiveModulo(weekDay - 1, 7)) / 7)
+                        .ToString("D2", CultureInfo.InvariantCulture));
+                    break;
+                case 'x':
+                    builder.Append((tm.Month + 1).ToString("D2", CultureInfo.InvariantCulture)).Append('/')
+                        .Append(tm.MonthDay.ToString("D2", CultureInfo.InvariantCulture)).Append('/')
+                        .Append(PositiveModulo(year, 100).ToString("D2", CultureInfo.InvariantCulture));
+                    break;
+                case 'X': builder.Append(FormatClock(tm)); break;
+                case 'y': builder.Append(PositiveModulo(year, 100).ToString("D2", CultureInfo.InvariantCulture)); break;
+                case 'Y': builder.Append(year.ToString("D4", CultureInfo.InvariantCulture)); break;
+                case 'z': builder.Append(FormatPosixUtcOffset(ResolvePosixUtcOffsetSeconds(tm))); break;
+                case 'Z': builder.Append(ResolvePosixZoneName(tm)); break;
+                default: builder.Append('%').Append(specifier); break;
+            }
+        }
+
+        return builder.ToString();
+    }
+
+    private static string FormatClock(PosixTm tm) => string.Create(
+        CultureInfo.InvariantCulture,
+        $"{tm.Hour:D2}:{tm.Minute:D2}:{tm.Second:D2}");
+
+    private static string FormatPosixUtcOffset(long offsetSeconds)
+    {
+        var clamped = Math.Clamp(offsetSeconds, -7L * 24 * 60 * 60, 7L * 24 * 60 * 60);
+        var sign = clamped < 0 ? '-' : '+';
+        var absolute = Math.Abs(clamped);
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"{sign}{absolute / 3600:D2}{absolute % 3600 / 60:D2}");
+    }
+
+    private static long ResolvePosixUtcOffsetSeconds(PosixTm tm)
+    {
+        if (TryNormalizeLocalTm(tm, out _, out var utcOffset))
+        {
+            return unchecked((long)utcOffset.TotalSeconds);
+        }
+
+        return tm.GmtOffsetSeconds;
+    }
+
+    private static string ResolvePosixZoneName(PosixTm tm)
+    {
+        var timeZone = TimeZoneInfo.Local;
+        var name = tm.IsDaylightSavingTime > 0 ? timeZone.DaylightName : timeZone.StandardName;
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return tm.GmtOffsetSeconds == 0 ? "UTC" : FormatPosixUtcOffset(tm.GmtOffsetSeconds);
+        }
+
+        if (name.Length <= 8 && name.All(char.IsLetter))
+        {
+            return name;
+        }
+
+        var initials = new string(name
+            .Split([' ', '-', '_'], StringSplitOptions.RemoveEmptyEntries)
+            .Where(static part => part.Length != 0)
+            .Select(static part => char.ToUpperInvariant(part[0]))
+            .ToArray());
+        if (initials == "CUT" && tm.GmtOffsetSeconds == 0)
+        {
+            return "UTC";
+        }
+
+        return initials.Length is >= 2 and <= 8 ? initials : name;
+    }
+
+    private static int PositiveModulo(int value, int divisor)
+    {
+        var remainder = value % divisor;
+        return remainder < 0 ? remainder + divisor : remainder;
+    }
+
+    private static bool TryNormalizeLocalTm(PosixTm tm, out DateTime localTime, out TimeSpan utcOffset)
+    {
+        localTime = default;
+        utcOffset = default;
+        var year = (long)tm.Year + 1900;
+        if (year is < 1 or > 9999)
+        {
+            return false;
+        }
+
+        try
+        {
+            localTime = new DateTime((int)year, 1, 1, 0, 0, 0, DateTimeKind.Unspecified)
+                .AddMonths(tm.Month)
+                .AddDays(tm.MonthDay - 1L)
+                .AddHours(tm.Hour)
+                .AddMinutes(tm.Minute)
+                .AddSeconds(tm.Second);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return false;
+        }
+
+        var timeZone = TimeZoneInfo.Local;
+        if (timeZone.IsInvalidTime(localTime))
+        {
+            return false;
+        }
+
+        if (timeZone.IsAmbiguousTime(localTime) && tm.IsDaylightSavingTime >= 0)
+        {
+            var offsets = timeZone.GetAmbiguousTimeOffsets(localTime);
+            utcOffset = tm.IsDaylightSavingTime > 0
+                ? offsets.Max()
+                : offsets.Min();
+        }
+        else
+        {
+            utcOffset = timeZone.GetUtcOffset(localTime);
+        }
+
+        return true;
+    }
+
+    private static PosixTm ToPosixTm(
+        DateTime time,
+        bool isDaylightSavingTime,
+        long gmtOffsetSeconds,
+        ulong zoneAddress)
+    {
+        return new PosixTm(
+            time.Second,
+            time.Minute,
+            time.Hour,
+            time.Day,
+            time.Month - 1,
+            time.Year - 1900,
+            (int)time.DayOfWeek,
+            time.DayOfYear - 1,
+            isDaylightSavingTime ? 1 : 0,
+            gmtOffsetSeconds,
+            zoneAddress);
+    }
+
+    private static bool TryReadPosixTm(CpuContext ctx, ulong address, out PosixTm tm)
+    {
+        tm = default;
+        if (address == 0)
+        {
+            return false;
+        }
+
+        Span<byte> bytes = stackalloc byte[PosixTmSize];
+        if (!ctx.Memory.TryRead(address, bytes))
+        {
+            return false;
+        }
+
+        tm = new PosixTm(
+            BinaryPrimitives.ReadInt32LittleEndian(bytes[0..]),
+            BinaryPrimitives.ReadInt32LittleEndian(bytes[4..]),
+            BinaryPrimitives.ReadInt32LittleEndian(bytes[8..]),
+            BinaryPrimitives.ReadInt32LittleEndian(bytes[12..]),
+            BinaryPrimitives.ReadInt32LittleEndian(bytes[16..]),
+            BinaryPrimitives.ReadInt32LittleEndian(bytes[20..]),
+            BinaryPrimitives.ReadInt32LittleEndian(bytes[24..]),
+            BinaryPrimitives.ReadInt32LittleEndian(bytes[28..]),
+            BinaryPrimitives.ReadInt32LittleEndian(bytes[32..]),
+            0,
+            0);
+        return true;
+    }
+
+    private static bool TryWritePosixTm(CpuContext ctx, ulong address, PosixTm tm)
+    {
+        Span<byte> bytes = stackalloc byte[PosixTmSize];
+        WritePosixTm(bytes, tm);
+        return ctx.Memory.TryWrite(address, bytes);
+    }
+
+    private static void WritePosixTm(nint address, PosixTm tm)
+    {
+        Marshal.WriteInt32(address, 0, tm.Second);
+        Marshal.WriteInt32(address, 4, tm.Minute);
+        Marshal.WriteInt32(address, 8, tm.Hour);
+        Marshal.WriteInt32(address, 12, tm.MonthDay);
+        Marshal.WriteInt32(address, 16, tm.Month);
+        Marshal.WriteInt32(address, 20, tm.Year);
+        Marshal.WriteInt32(address, 24, tm.WeekDay);
+        Marshal.WriteInt32(address, 28, tm.YearDay);
+        Marshal.WriteInt32(address, 32, tm.IsDaylightSavingTime);
+    }
+
+    private static void WritePosixTm(Span<byte> bytes, PosixTm tm)
+    {
+        bytes.Clear();
+        BinaryPrimitives.WriteInt32LittleEndian(bytes[0..], tm.Second);
+        BinaryPrimitives.WriteInt32LittleEndian(bytes[4..], tm.Minute);
+        BinaryPrimitives.WriteInt32LittleEndian(bytes[8..], tm.Hour);
+        BinaryPrimitives.WriteInt32LittleEndian(bytes[12..], tm.MonthDay);
+        BinaryPrimitives.WriteInt32LittleEndian(bytes[16..], tm.Month);
+        BinaryPrimitives.WriteInt32LittleEndian(bytes[20..], tm.Year);
+        BinaryPrimitives.WriteInt32LittleEndian(bytes[24..], tm.WeekDay);
+        BinaryPrimitives.WriteInt32LittleEndian(bytes[28..], tm.YearDay);
+        BinaryPrimitives.WriteInt32LittleEndian(bytes[32..], tm.IsDaylightSavingTime);
+    }
+
+    private readonly record struct PosixTm(
+        int Second,
+        int Minute,
+        int Hour,
+        int MonthDay,
+        int Month,
+        int Year,
+        int WeekDay,
+        int YearDay,
+        int IsDaylightSavingTime,
+        long GmtOffsetSeconds,
+        ulong ZoneAddress);
 
     [SysAbiExport(
         Nid = "-2IRUCO--PM",
@@ -982,29 +1589,36 @@ public static class KernelRuntimeCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
 
-        if (flags is < 0 or >= 3)
-        {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
-        }
-
-        if (!ctx.TryReadUInt64(outInfoAddress, out var callerSize))
-        {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
-        }
-
-        if (callerSize != ModuleInfoExSize)
+        // The 12.70 libkernel wrapper accepts the executable/data lookup modes
+        // (1 and 2), initializes the complete 0x1A8-byte output itself, and
+        // does not inspect a caller-provided size. Mono deliberately passes an
+        // uninitialized stack buffer here while discovering AOT unwind data.
+        if (flags is < 1 or > 2)
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
 
         if (!KernelModuleRegistry.TryGetModuleByAddress(queriedAddress, out var module))
         {
+            if (string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_MODULE_LOAD"), "1", StringComparison.Ordinal))
+            {
+                Console.Error.WriteLine(
+                    $"[LOADER][TRACE] sceKernelGetModuleInfoFromAddr address=0x{queriedAddress:X16} flags={flags} -> not_found");
+            }
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
         }
 
         if (!TryWriteModuleInfoEx(ctx, outInfoAddress, module))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        if (string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_MODULE_LOAD"), "1", StringComparison.Ordinal))
+        {
+            Console.Error.WriteLine(
+                $"[LOADER][TRACE] sceKernelGetModuleInfoFromAddr address=0x{queriedAddress:X16} flags={flags} " +
+                $"-> handle=0x{module.Handle:X} name='{module.Name}' eh_frame_hdr=0x{module.EhFrameHeaderAddress:X16} " +
+                $"eh_frame=0x{module.EhFrameAddress:X16} eh_frame_size=0x{module.EhFrameSize:X}");
         }
 
         ctx[CpuRegister.Rax] = 0;
@@ -1826,6 +2440,19 @@ public static class KernelRuntimeCompatExports
     }
 
     [SysAbiExport(
+        Nid = "VOBg+iNwB-4",
+        ExportName = "strtoll",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcStrtoll(CpuContext ctx)
+    {
+        // The Gen5 userspace ABI is LP64, so both strtol and strtoll return a
+        // signed 64-bit value and have identical parsing/end-pointer behavior.
+        // 12.70 libScePsm uses strtoll while parsing PUI numeric resources.
+        return LibcStrtol(ctx);
+    }
+
+    [SysAbiExport(
         Nid = "m5wN+SwZOR4",
         ExportName = "putchar",
         Target = Generation.Gen5,
@@ -2366,6 +2993,15 @@ public static class KernelRuntimeCompatExports
         BinaryPrimitives.WriteUInt64LittleEndian(
             payload.AsSpan((int)ModuleInfoExInitProcOffset),
             module.EntryPoint);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            payload.AsSpan((int)ModuleInfoExEhFrameHeaderOffset),
+            module.EhFrameHeaderAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            payload.AsSpan((int)ModuleInfoExEhFrameOffset),
+            module.EhFrameAddress);
+        BinaryPrimitives.WriteUInt32LittleEndian(
+            payload.AsSpan((int)ModuleInfoExEhFrameSizeOffset),
+            (uint)Math.Min(module.EhFrameSize, uint.MaxValue));
         WriteModuleSegment(payload, (int)ModuleInfoExSegmentsOffset, module);
         BinaryPrimitives.WriteUInt32LittleEndian(
             payload.AsSpan((int)ModuleInfoExSegmentCountOffset),

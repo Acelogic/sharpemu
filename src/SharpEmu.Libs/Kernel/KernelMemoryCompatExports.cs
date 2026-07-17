@@ -67,7 +67,9 @@ public static partial class KernelMemoryCompatExports
     private const uint HostPageExecuteReadWrite = 0x40;
     private const uint HostPageExecuteWriteCopy = 0x80;
     private const uint HostPageGuard = 0x100;
+    private const int Enoent = 2;
     private const int Enomem = 12;
+    private const int Eacces = 13;
     private const int Efault = 14;
     private const int Einval = 22;
     private const int Erange = 34;
@@ -1404,6 +1406,41 @@ public static partial class KernelMemoryCompatExports
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
+    [SysAbiExport(
+        Nid = "g7zzzLDYGw0",
+        ExportName = "strdup",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libc")]
+    public static int Strdup(CpuContext ctx)
+    {
+        var source = ctx[CpuRegister.Rdi];
+        if (!TryReadCString(ctx, source, MaxGuestStringLength, out var bytes))
+        {
+            KernelRuntimeCompatExports.TrySetErrno(ctx, Efault);
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        var allocationSize = checked((ulong)bytes.Length + 1);
+        if (!TryAllocateLibcHeap(allocationSize, DefaultLibcHeapAlignment, zeroFill: true, out var duplicate))
+        {
+            KernelRuntimeCompatExports.TrySetErrno(ctx, Enomem);
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        if (!TryWriteCompat(ctx, duplicate, bytes))
+        {
+            FreeLibcHeap(duplicate);
+            KernelRuntimeCompatExports.TrySetErrno(ctx, Efault);
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        ctx[CpuRegister.Rax] = duplicate;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
     // ShellCore uses the libc-internal mspace allocator after attempting to load
     // optional system modules. The mspace handle is opaque to callers; until the
     // module loader can instantiate the native allocator, keep allocations on the
@@ -1842,6 +1879,494 @@ public static partial class KernelMemoryCompatExports
     }
 
     [SysAbiExport(
+        Nid = "5TjaJwkLWxE",
+        ExportName = "bcmp",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libc")]
+    public static int Bcmp(CpuContext ctx) => Memcmp(ctx);
+
+    [SysAbiExport(
+        Nid = "AEJdIVZTEmo",
+        ExportName = "qsort",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libc")]
+    public static int Qsort(CpuContext ctx)
+    {
+        var baseAddress = ctx[CpuRegister.Rdi];
+        var elementCount = ctx[CpuRegister.Rsi];
+        var elementSize = ctx[CpuRegister.Rdx];
+        var comparator = ctx[CpuRegister.Rcx];
+        ctx[CpuRegister.Rax] = 0;
+
+        if (elementCount <= 1)
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        const ulong maxCompatElementSize = 16 * 1024 * 1024;
+        if (baseAddress == 0 || comparator == 0 || elementSize == 0 ||
+            elementSize > maxCompatElementSize || elementCount > int.MaxValue)
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
+        ulong lastElementOffset;
+        try
+        {
+            lastElementOffset = checked((elementCount - 1) * elementSize);
+            _ = checked(baseAddress + lastElementOffset + elementSize);
+        }
+        catch (OverflowException)
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
+        var scheduler = GuestThreadExecution.Scheduler;
+        if (scheduler is null)
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_CPU_TRAP;
+        }
+
+        var leftBytes = GC.AllocateUninitializedArray<byte>(checked((int)elementSize));
+        var rightBytes = GC.AllocateUninitializedArray<byte>(checked((int)elementSize));
+
+        // The firmware users seen during ShellCore startup sort only two to five
+        // pointer-sized entries. Insertion sort minimizes guest callback traffic
+        // for those arrays and preserves libc qsort's comparator ABI exactly.
+        for (ulong index = 1; index < elementCount; index++)
+        {
+            var current = index;
+            while (current > 0)
+            {
+                var leftAddress = baseAddress + ((current - 1) * elementSize);
+                var rightAddress = baseAddress + (current * elementSize);
+                if (!scheduler.TryCallGuestFunction(
+                        ctx,
+                        comparator,
+                        leftAddress,
+                        rightAddress,
+                        0,
+                        0,
+                        0,
+                        "qsort",
+                        out var rawComparison,
+                        out var callbackError))
+                {
+                    Console.Error.WriteLine(
+                        $"[LOADER][WARN] qsort comparator 0x{comparator:X16} failed: " +
+                        (callbackError ?? "guest callback failed"));
+                    return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_CPU_TRAP;
+                }
+
+                var comparison = unchecked((int)(uint)rawComparison);
+                if (comparison <= 0)
+                {
+                    break;
+                }
+
+                if (!TryReadCompat(ctx, leftAddress, leftBytes) ||
+                    !TryReadCompat(ctx, rightAddress, rightBytes) ||
+                    !TryWriteCompat(ctx, leftAddress, rightBytes) ||
+                    !TryWriteCompat(ctx, rightAddress, leftBytes))
+                {
+                    return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+                }
+
+                current--;
+            }
+        }
+
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "1Pk0qZQGeWo",
+        ExportName = "sscanf",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libc")]
+    public static int Sscanf(CpuContext ctx)
+    {
+        if (!TryReadNullTerminatedUtf8(ctx, ctx[CpuRegister.Rdi], MaxGuestStringLength, out var input) ||
+            !TryReadNullTerminatedUtf8(ctx, ctx[CpuRegister.Rsi], MaxGuestStringLength, out var format))
+        {
+            ctx[CpuRegister.Rax] = ulong.MaxValue;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        var inputIndex = 0;
+        var formatIndex = 0;
+        var outputIndex = 0;
+        var assignments = 0;
+
+        while (formatIndex < format.Length)
+        {
+            if (char.IsWhiteSpace(format[formatIndex]))
+            {
+                while (formatIndex < format.Length && char.IsWhiteSpace(format[formatIndex]))
+                {
+                    formatIndex++;
+                }
+
+                SkipSscanfWhitespace(input, ref inputIndex);
+                continue;
+            }
+
+            if (format[formatIndex] != '%')
+            {
+                if (inputIndex >= input.Length || input[inputIndex] != format[formatIndex])
+                {
+                    break;
+                }
+
+                inputIndex++;
+                formatIndex++;
+                continue;
+            }
+
+            formatIndex++;
+            if (formatIndex >= format.Length)
+            {
+                break;
+            }
+
+            if (format[formatIndex] == '%')
+            {
+                if (inputIndex >= input.Length || input[inputIndex] != '%')
+                {
+                    break;
+                }
+
+                inputIndex++;
+                formatIndex++;
+                continue;
+            }
+
+            var suppressAssignment = false;
+            if (format[formatIndex] == '*')
+            {
+                suppressAssignment = true;
+                formatIndex++;
+            }
+
+            var width = 0;
+            while (formatIndex < format.Length && char.IsAsciiDigit(format[formatIndex]))
+            {
+                width = checked((width * 10) + (format[formatIndex] - '0'));
+                formatIndex++;
+            }
+
+            if (formatIndex >= format.Length)
+            {
+                break;
+            }
+
+            if (format[formatIndex] == '[')
+            {
+                formatIndex++;
+                var negate = false;
+                if (formatIndex < format.Length && format[formatIndex] == '^')
+                {
+                    negate = true;
+                    formatIndex++;
+                }
+
+                var setStart = formatIndex;
+                if (formatIndex < format.Length && format[formatIndex] == ']')
+                {
+                    formatIndex++;
+                }
+
+                while (formatIndex < format.Length && format[formatIndex] != ']')
+                {
+                    formatIndex++;
+                }
+
+                if (formatIndex >= format.Length)
+                {
+                    break;
+                }
+
+                var scanSet = format[setStart..formatIndex];
+                formatIndex++;
+                var scanStart = inputIndex;
+                var scanLimit = width > 0 ? width : int.MaxValue;
+                while (inputIndex < input.Length &&
+                       inputIndex - scanStart < scanLimit &&
+                       IsSscanfScansetMatch(input[inputIndex], scanSet, negate))
+                {
+                    inputIndex++;
+                }
+
+                if (inputIndex == scanStart)
+                {
+                    break;
+                }
+
+                if (!suppressAssignment)
+                {
+                    var destination = GetSscanfOutputAddress(ctx, outputIndex++);
+                    if (destination == 0 ||
+                        !TryWriteSscanfString(ctx, destination, input[scanStart..inputIndex]))
+                    {
+                        break;
+                    }
+
+                    assignments++;
+                }
+
+                continue;
+            }
+
+            var conversion = format[formatIndex++];
+            if (conversion is 'f' or 'x' or 's')
+            {
+                SkipSscanfWhitespace(input, ref inputIndex);
+            }
+
+            if (conversion == 'f')
+            {
+                if (!TryScanSscanfFloat(input, ref inputIndex, width, out var value))
+                {
+                    break;
+                }
+
+                if (!suppressAssignment)
+                {
+                    var destination = GetSscanfOutputAddress(ctx, outputIndex++);
+                    if (destination == 0 ||
+                        !TryWriteUInt32Compat(
+                            ctx,
+                            destination,
+                            unchecked((uint)BitConverter.SingleToInt32Bits(value))))
+                    {
+                        break;
+                    }
+
+                    assignments++;
+                }
+
+                continue;
+            }
+
+            if (conversion == 'x')
+            {
+                if (!TryScanSscanfHex(input, ref inputIndex, width, out var value))
+                {
+                    break;
+                }
+
+                if (!suppressAssignment)
+                {
+                    var destination = GetSscanfOutputAddress(ctx, outputIndex++);
+                    if (destination == 0 || !TryWriteUInt32Compat(ctx, destination, value))
+                    {
+                        break;
+                    }
+
+                    assignments++;
+                }
+
+                continue;
+            }
+
+            if (conversion == 's')
+            {
+                var stringStart = inputIndex;
+                var stringLimit = width > 0 ? width : int.MaxValue;
+                while (inputIndex < input.Length &&
+                       inputIndex - stringStart < stringLimit &&
+                       !char.IsWhiteSpace(input[inputIndex]))
+                {
+                    inputIndex++;
+                }
+
+                if (inputIndex == stringStart)
+                {
+                    break;
+                }
+
+                if (!suppressAssignment)
+                {
+                    var destination = GetSscanfOutputAddress(ctx, outputIndex++);
+                    if (destination == 0 ||
+                        !TryWriteSscanfString(ctx, destination, input[stringStart..inputIndex]))
+                    {
+                        break;
+                    }
+
+                    assignments++;
+                }
+
+                continue;
+            }
+
+            break;
+        }
+
+        ctx[CpuRegister.Rax] = unchecked((ulong)assignments);
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    private static ulong GetSscanfOutputAddress(CpuContext ctx, int index) => index switch
+    {
+        0 => ctx[CpuRegister.Rdx],
+        1 => ctx[CpuRegister.Rcx],
+        2 => ctx[CpuRegister.R8],
+        3 => ctx[CpuRegister.R9],
+        _ => 0,
+    };
+
+    private static void SkipSscanfWhitespace(string input, ref int index)
+    {
+        while (index < input.Length && char.IsWhiteSpace(input[index]))
+        {
+            index++;
+        }
+    }
+
+    private static bool IsSscanfScansetMatch(char value, string scanSet, bool negate)
+    {
+        var matches = false;
+        for (var index = 0; index < scanSet.Length; index++)
+        {
+            if (index + 2 < scanSet.Length && scanSet[index + 1] == '-')
+            {
+                if (value >= scanSet[index] && value <= scanSet[index + 2])
+                {
+                    matches = true;
+                    break;
+                }
+
+                index += 2;
+                continue;
+            }
+
+            if (scanSet[index] == value)
+            {
+                matches = true;
+                break;
+            }
+        }
+
+        return negate ? !matches : matches;
+    }
+
+    private static bool TryScanSscanfFloat(string input, ref int index, int width, out float value)
+    {
+        value = 0;
+        var start = index;
+        var limit = width > 0 ? Math.Min(input.Length, start + width) : input.Length;
+        if (index < limit && input[index] is '+' or '-')
+        {
+            index++;
+        }
+
+        var digitCount = 0;
+        while (index < limit && char.IsAsciiDigit(input[index]))
+        {
+            digitCount++;
+            index++;
+        }
+
+        if (index < limit && input[index] == '.')
+        {
+            index++;
+            while (index < limit && char.IsAsciiDigit(input[index]))
+            {
+                digitCount++;
+                index++;
+            }
+        }
+
+        if (digitCount == 0)
+        {
+            index = start;
+            return false;
+        }
+
+        if (index < limit && input[index] is 'e' or 'E')
+        {
+            var exponentStart = index;
+            index++;
+            if (index < limit && input[index] is '+' or '-')
+            {
+                index++;
+            }
+
+            var exponentDigits = index;
+            while (index < limit && char.IsAsciiDigit(input[index]))
+            {
+                index++;
+            }
+
+            if (index == exponentDigits)
+            {
+                index = exponentStart;
+            }
+        }
+
+        if (float.TryParse(
+                input.AsSpan(start, index - start),
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out value))
+        {
+            return true;
+        }
+
+        index = start;
+        return false;
+    }
+
+    private static bool TryScanSscanfHex(string input, ref int index, int width, out uint value)
+    {
+        value = 0;
+        var start = index;
+        var limit = width > 0 ? Math.Min(input.Length, start + width) : input.Length;
+        var negative = false;
+        if (index < limit && input[index] is '+' or '-')
+        {
+            negative = input[index] == '-';
+            index++;
+        }
+
+        if (index + 1 < limit && input[index] == '0' && input[index + 1] is 'x' or 'X')
+        {
+            index += 2;
+        }
+
+        var digitsStart = index;
+        while (index < limit && Uri.IsHexDigit(input[index]))
+        {
+            index++;
+        }
+
+        if (index == digitsStart ||
+            !uint.TryParse(
+                input.AsSpan(digitsStart, index - digitsStart),
+                NumberStyles.AllowHexSpecifier,
+                CultureInfo.InvariantCulture,
+                out value))
+        {
+            index = start;
+            return false;
+        }
+
+        if (negative)
+        {
+            value = unchecked(0u - value);
+        }
+
+        return true;
+    }
+
+    private static bool TryWriteSscanfString(CpuContext ctx, ulong destination, string value)
+    {
+        var bytes = Encoding.UTF8.GetBytes(value + '\0');
+        return TryWriteCompat(ctx, destination, bytes);
+    }
+
+    [SysAbiExport(
         Nid = "QrZZdJ8XsX0",
         ExportName = "fputs",
         Target = Generation.Gen4 | Generation.Gen5,
@@ -1874,6 +2399,26 @@ public static partial class KernelMemoryCompatExports
         }
 
         ctx[CpuRegister.Rax] = unchecked((ulong)text.Length);
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "YQ0navp+YIc",
+        ExportName = "puts",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libc")]
+    public static int Puts(CpuContext ctx)
+    {
+        if (!TryReadNullTerminatedUtf8(ctx, ctx[CpuRegister.Rdi], MaxGuestStringLength, out var text))
+        {
+            ctx[CpuRegister.Rax] = ulong.MaxValue;
+            KernelRuntimeCompatExports.TrySetErrno(ctx, Efault);
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        Console.Out.WriteLine(text);
+        Console.Out.Flush();
+        ctx[CpuRegister.Rax] = unchecked((ulong)text.Length + 1);
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
@@ -2198,6 +2743,49 @@ public static partial class KernelMemoryCompatExports
         KernelRuntimeCompatExports.TrySetErrno(ctx, errno);
         ctx[CpuRegister.Rax] = ulong.MaxValue;
         return -1;
+    }
+
+    [SysAbiExport(
+        Nid = "8vE6Z6VEYyk",
+        ExportName = "access",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libc")]
+    public static int PosixAccess(CpuContext ctx)
+    {
+        var pathAddress = ctx[CpuRegister.Rdi];
+        var mode = unchecked((int)ctx[CpuRegister.Rsi]);
+        if (pathAddress == 0 || (mode & ~7) != 0)
+        {
+            KernelRuntimeCompatExports.TrySetErrno(ctx, pathAddress == 0 ? Efault : Einval);
+            ctx[CpuRegister.Rax] = ulong.MaxValue;
+            return -1;
+        }
+
+        if (!TryReadNullTerminatedUtf8(ctx, pathAddress, MaxGuestStringLength, out var guestPath))
+        {
+            KernelRuntimeCompatExports.TrySetErrno(ctx, Efault);
+            ctx[CpuRegister.Rax] = ulong.MaxValue;
+            return -1;
+        }
+
+        var hostPath = ResolveGuestPath(guestPath);
+        if (!File.Exists(hostPath) && !Directory.Exists(hostPath))
+        {
+            KernelRuntimeCompatExports.TrySetErrno(ctx, Enoent);
+            ctx[CpuRegister.Rax] = ulong.MaxValue;
+            return -1;
+        }
+
+        const int writeOk = 2;
+        if ((mode & writeOk) != 0 && IsReadOnlyGuestMutationPath(guestPath))
+        {
+            KernelRuntimeCompatExports.TrySetErrno(ctx, Eacces);
+            ctx[CpuRegister.Rax] = ulong.MaxValue;
+            return -1;
+        }
+
+        ctx[CpuRegister.Rax] = 0;
+        return 0;
     }
 
     [SysAbiExport(
@@ -7635,6 +8223,38 @@ public static partial class KernelMemoryCompatExports
         }
 
         if (!TryCompareStringsCaseInsensitive(ctx, left, right, limit: ulong.MaxValue, out var compare))
+        {
+            ctx[CpuRegister.Rax] = 1;
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        ctx[CpuRegister.Rax] = unchecked((ulong)compare);
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "pXvbDfchu6k",
+        ExportName = "strncasecmp",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libc")]
+    public static int Strncasecmp(CpuContext ctx)
+    {
+        var left = ctx[CpuRegister.Rdi];
+        var right = ctx[CpuRegister.Rsi];
+        var limit = ctx[CpuRegister.Rdx];
+        if (limit == 0)
+        {
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        if (left == 0 || right == 0)
+        {
+            ctx[CpuRegister.Rax] = left == right ? 0uL : 1uL;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        if (!TryCompareStringsCaseInsensitive(ctx, left, right, limit, out var compare))
         {
             ctx[CpuRegister.Rax] = 1;
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;

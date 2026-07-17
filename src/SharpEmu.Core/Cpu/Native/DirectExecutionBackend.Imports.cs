@@ -709,6 +709,15 @@ public sealed partial class DirectExecutionBackend
 
 				cpuContext[CpuRegister.Rax] = 0uL;
 			}
+			if (TryYieldGuestThreadForUserSuspend(
+					cpuContext,
+					argPackPtr,
+					num,
+					num7,
+					importStubEntry.Nid))
+			{
+				cpuContext[CpuRegister.Rax] = 0uL;
+			}
 			if (flag || flag2 || flag3)
 			{
 				Console.Error.WriteLine($"[LOADER][TRACE] ImportRet#{num}: nid={importStubEntry.Nid} result={orbisGen2Result} rax=0x{cpuContext[CpuRegister.Rax]:X16}");
@@ -1453,6 +1462,15 @@ public sealed partial class DirectExecutionBackend
 
 			cpuContext[CpuRegister.Rax] = 0uL;
 		}
+		if (TryYieldGuestThreadForUserSuspend(
+				cpuContext,
+				argPackPtr,
+				dispatchIndex,
+				returnRip,
+				importStubEntry.Nid))
+		{
+			cpuContext[CpuRegister.Rax] = 0uL;
+		}
 		if (probeLeafReturn)
 		{
 			Console.Error.WriteLine(
@@ -1802,6 +1820,56 @@ public sealed partial class DirectExecutionBackend
 			Console.Error.WriteLine(
 				$"[LOADER][INFO] Guest thread yield at import#{dispatchIndex}: nid={nid} ret=0x{returnRip:X16} reason={ActiveGuestThreadYieldReason}");
 		}
+		return true;
+	}
+
+	private unsafe bool TryYieldGuestThreadForUserSuspend(
+		CpuContext cpuContext,
+		nint argPackPtr,
+		long dispatchIndex,
+		ulong returnRip,
+		string nid)
+	{
+		if (ActiveGuestThreadYieldRequested || _activeGuestThreadState is not { } thread)
+		{
+			return false;
+		}
+
+		using (LockGate("TryYieldGuestThreadForUserSuspend.check"))
+		{
+			if (!thread.UserSuspendRequested ||
+				thread.UserSuspendAcknowledged ||
+				thread.UserSuspendYieldedAtImport)
+			{
+				return false;
+			}
+		}
+
+		var continuation = CaptureImportBoundaryContinuation(cpuContext, argPackPtr, returnRip);
+		if (!TryYieldGuestThreadToHostStub(
+				argPackPtr,
+				dispatchIndex,
+				returnRip,
+				nid,
+				"pthread_suspend_user_context_np"))
+		{
+			return false;
+		}
+
+		using (LockGate("TryYieldGuestThreadForUserSuspend.capture"))
+		{
+			// Resume cannot race this assignment: the suspending caller waits for
+			// UserSuspendAcknowledged, which RunGuestThread sets only after this
+			// executor has returned to the host stub.
+			thread.UserSuspendContinuation = continuation;
+			thread.UserSuspendYieldedAtImport = true;
+		}
+		RegisterBlockedGuestThreadContinuation(
+			thread.ThreadHandle,
+			continuation,
+			$"pthread_user_context_suspend:{thread.ThreadHandle:X16}",
+			waiter: null,
+			blockDeadlineTimestamp: 0);
 		return true;
 	}
 
