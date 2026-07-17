@@ -8,6 +8,7 @@ using Xunit;
 
 namespace SharpEmu.Libs.Tests.Agc;
 
+[Collection("GuestImageWriteTracker")]
 public sealed unsafe class AgcGuestImageDirtyRefreshTests
 {
     private const nuint PageSize = 4096;
