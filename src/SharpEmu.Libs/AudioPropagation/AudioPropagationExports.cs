@@ -210,7 +210,7 @@ public static class AudioPropagationExports
     public static int SystemGetRays(CpuContext ctx)
     {
         var systemHandle = ctx[CpuRegister.Rdi];
-        if (!TryGetSystem(ctx, systemHandle, out var system))
+        if (!TryGetSystem(systemHandle, out var system))
         {
             return SetReturn(ctx, ErrorInvalidHandle);
         }
@@ -303,7 +303,7 @@ public static class AudioPropagationExports
     public static int SystemSetAttributes(CpuContext ctx)
     {
         var systemHandle = ctx[CpuRegister.Rdi];
-        if (!TryGetSystem(ctx, systemHandle, out var system))
+        if (!TryGetSystem(systemHandle, out var system))
         {
             return SetReturn(ctx, ErrorInvalidHandle);
         }
@@ -404,7 +404,7 @@ public static class AudioPropagationExports
     public static int SystemRegisterMaterial(CpuContext ctx)
     {
         var systemHandle = ctx[CpuRegister.Rdi];
-        if (!TryGetSystem(ctx, systemHandle, out var system))
+        if (!TryGetSystem(systemHandle, out var system))
         {
             return SetReturn(ctx, ErrorInvalidHandle);
         }
@@ -463,7 +463,7 @@ public static class AudioPropagationExports
     public static int RoomCreate(CpuContext ctx)
     {
         var systemHandle = ctx[CpuRegister.Rdi];
-        if (!TryGetSystem(ctx, systemHandle, out var system))
+        if (!TryGetSystem(systemHandle, out var system))
         {
             return SetReturn(ctx, ErrorInvalidHandle);
         }
@@ -681,40 +681,13 @@ public static class AudioPropagationExports
     }
 
     private static bool TryGetSystem(
-        CpuContext ctx,
         ulong handle,
         out AudioPropagationSystemState system)
     {
         lock (RegistryGate)
         {
-            if (!Systems.TryGetValue(handle, out system!))
-            {
-                return false;
-            }
+            return Systems.TryGetValue(handle, out system!);
         }
-
-        if (!ReferenceEquals(ctx.Memory, system.Memory))
-        {
-            return false;
-        }
-
-        Span<byte> header = stackalloc byte[0x10];
-        if (!system.Memory.TryRead(system.MemoryInfo.PrimaryAddress, header) ||
-            BinaryPrimitives.ReadUInt64LittleEndian(header) != PrimaryBackingMagic ||
-            BinaryPrimitives.ReadUInt64LittleEndian(header[0x08..]) != handle)
-        {
-            return false;
-        }
-
-        if (system.MemoryInfo.SecondarySize != 0 &&
-            (!system.Memory.TryRead(system.MemoryInfo.SecondaryAddress, header) ||
-             BinaryPrimitives.ReadUInt64LittleEndian(header) != SecondaryBackingMagic ||
-             BinaryPrimitives.ReadUInt64LittleEndian(header[0x08..]) != handle))
-        {
-            return false;
-        }
-
-        return true;
     }
 
     private static byte[] BuildPrimaryBackingHeader(

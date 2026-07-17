@@ -157,16 +157,33 @@ public sealed class AudioPropagationExportsTests
     }
 
     [Fact]
-    public void CallerBackingLifetimeInvalidatesSystemHandleWhenBackingIsLost()
+    public void StatefulExportsAcceptDistinctMemoryFacadeForSameGuestAddressSpace()
     {
-        var system = CreateSystem();
-        WriteUInt64(PrimaryBackingAddress, 0);
-        WriteUInt64(RoomOutputAddress, 0xCAFE);
-        _ctx[CpuRegister.Rdi] = system;
-        _ctx[CpuRegister.Rsi] = RoomOutputAddress;
+        var system = CreateSystem(materialCapacity: 2, flags: 4);
+        var material = RegisterMaterial(system);
+        var facadeContext = new CpuContext(
+            new ForwardingCpuMemory(_memory),
+            Generation.Gen5);
 
-        Assert.Equal(ErrorInvalidHandle, AudioPropagationExports.RoomCreate(_ctx));
-        Assert.Equal(0xCAFEUL, ReadUInt64(RoomOutputAddress));
+        facadeContext[CpuRegister.Rdi] = system;
+        facadeContext[CpuRegister.Rsi] = RoomOutputAddress;
+        Assert.Equal(0, AudioPropagationExports.RoomCreate(facadeContext));
+        var room = ReadUInt64(RoomOutputAddress);
+
+        WriteAttribute(0x20000, AttributePayloadAddress, 8);
+        WriteUInt64(AttributePayloadAddress, material);
+        facadeContext[CpuRegister.Rsi] = AttributesAddress;
+        facadeContext[CpuRegister.Rdx] = 1;
+        Assert.Equal(0, AudioPropagationExports.SystemSetAttributes(facadeContext));
+
+        InitializeRayBuffer();
+        WriteUInt32(RayCountAddress, RayCapacity);
+        facadeContext[CpuRegister.Rsi] = RaysAddress;
+        facadeContext[CpuRegister.Rdx] = RayCountAddress;
+        Assert.Equal(0, AudioPropagationExports.SystemGetRays(facadeContext));
+        Assert.Equal(1U, ReadUInt32(RayCountAddress));
+        Assert.Equal(room, ReadUInt64(RaysAddress + 0x10));
+        Assert.Equal(material, ReadUInt64(RaysAddress + 0x18));
     }
 
     [Fact]
@@ -512,5 +529,14 @@ public sealed class AudioPropagationExportsTests
         var bytes = new byte[size];
         bytes.AsSpan().Fill(value);
         Assert.True(_memory.TryWrite(address, bytes));
+    }
+
+    private sealed class ForwardingCpuMemory(ICpuMemory inner) : ICpuMemory
+    {
+        public bool TryRead(ulong virtualAddress, Span<byte> destination) =>
+            inner.TryRead(virtualAddress, destination);
+
+        public bool TryWrite(ulong virtualAddress, ReadOnlySpan<byte> source) =>
+            inner.TryWrite(virtualAddress, source);
     }
 }
