@@ -54,6 +54,7 @@ public sealed class AudioPropagationExportsTests
         { "7xyAxrusLko", "sceAudioPropagationSystemQueryMemory" },
         { "aNEqtSHdUSo", "sceAudioPropagationSystemCreate" },
         { "ht-QXT3zGxo", "sceAudioPropagationSystemGetRays" },
+        { "VlBT16890mA", "sceAudioPropagationSystemSetRays" },
         { "kIdb+iQUzCs", "sceAudioPropagationSystemSetAttributes" },
         { "CPLV6G-eXmk", "sceAudioPropagationSystemRegisterMaterial" },
         { "8bI5h8req30", "sceAudioPropagationRoomCreate" },
@@ -69,6 +70,22 @@ public sealed class AudioPropagationExportsTests
         Assert.True(manager.TryGetExport(nid, out var export));
         Assert.Equal(exportName, export.Name);
         Assert.Equal("libSceAudioPropagation", export.LibraryName);
+    }
+
+    [Fact]
+    public void SetRaysHasOneGen5Registration()
+    {
+        var registrations = typeof(AudioPropagationExports)
+            .GetMethods()
+            .SelectMany(method => method.GetCustomAttributes(inherit: false))
+            .OfType<SysAbiExportAttribute>()
+            .Where(attribute => attribute.Nid == "VlBT16890mA")
+            .ToArray();
+
+        var registration = Assert.Single(registrations);
+        Assert.Equal("sceAudioPropagationSystemSetRays", registration.ExportName);
+        Assert.Equal("libSceAudioPropagation", registration.LibraryName);
+        Assert.Equal(Generation.Gen5, registration.Target);
     }
 
     [Fact]
@@ -184,6 +201,12 @@ public sealed class AudioPropagationExportsTests
         Assert.Equal(1U, ReadUInt32(RayCountAddress));
         Assert.Equal(room, ReadUInt64(RaysAddress + 0x10));
         Assert.Equal(material, ReadUInt64(RaysAddress + 0x18));
+
+        var raysBeforeSet = Read(RaysAddress, RayCapacity * RaySize);
+        facadeContext[CpuRegister.Rdx] = ReadUInt32(RayCountAddress);
+        Assert.Equal(0, AudioPropagationExports.SystemSetRays(facadeContext));
+        Assert.Equal(0UL, facadeContext[CpuRegister.Rax]);
+        Assert.Equal(raysBeforeSet, Read(RaysAddress, RayCapacity * RaySize));
     }
 
     [Fact]
@@ -358,6 +381,66 @@ public sealed class AudioPropagationExportsTests
         Assert.Equal(ErrorInvalidStructure, AudioPropagationExports.SystemGetRays(_ctx));
         Assert.Equal((uint)RayCapacity, ReadUInt32(RayCountAddress));
         Assert.Equal(invalidRays, Read(RaysAddress, RayCapacity * RaySize));
+    }
+
+    [Fact]
+    public void SetRaysValidatesHandlePointerAndCountInFirmwareOrder()
+    {
+        _ctx[CpuRegister.Rdi] = 0xDEADBEEF;
+        _ctx[CpuRegister.Rsi] = 0;
+        _ctx[CpuRegister.Rdx] = 0;
+        Assert.Equal(ErrorInvalidHandle, AudioPropagationExports.SystemSetRays(_ctx));
+        Assert.Equal(0x0000_0000_8A70_0002UL, _ctx[CpuRegister.Rax]);
+
+        var system = CreateSystem();
+        _ctx[CpuRegister.Rdi] = system;
+        _ctx[CpuRegister.Rsi] = 0;
+        _ctx[CpuRegister.Rdx] = 0;
+        Assert.Equal(ErrorInvalidPointer, AudioPropagationExports.SystemSetRays(_ctx));
+        Assert.Equal(0x0000_0000_8A70_0003UL, _ctx[CpuRegister.Rax]);
+
+        _ctx[CpuRegister.Rsi] = Base + 0x50_0000;
+        _ctx[CpuRegister.Rdx] = 0;
+        Assert.Equal(ErrorInvalidValue, AudioPropagationExports.SystemSetRays(_ctx));
+        Assert.Equal(0x0000_0000_8A70_0001UL, _ctx[CpuRegister.Rax]);
+
+        _ctx[CpuRegister.Rsi] = ulong.MaxValue - 0x10;
+        _ctx[CpuRegister.Rdx] = 1;
+        Assert.Equal(ErrorInvalidPointer, AudioPropagationExports.SystemSetRays(_ctx));
+        Assert.Equal(0x0000_0000_8A70_0003UL, _ctx[CpuRegister.Rax]);
+    }
+
+    [Fact]
+    public void SetRaysValidatesEverySubmittedRecordBeforeNoOpSuccess()
+    {
+        var system = CreateSystem();
+        Fill(RaysAddress, 3 * RaySize, 0);
+        for (var index = 0; index < 3; index++)
+        {
+            var address = RaysAddress + (ulong)(index * RaySize);
+            WriteUInt32(address, RayTag);
+            WriteUInt64(address + 0x08, RaySize);
+        }
+
+        _ctx[CpuRegister.Rdi] = system;
+        _ctx[CpuRegister.Rsi] = RaysAddress;
+        _ctx[CpuRegister.Rdx] = 3;
+        var validRecords = Read(RaysAddress, 3 * RaySize);
+        Assert.Equal(0, AudioPropagationExports.SystemSetRays(_ctx));
+        Assert.Equal(validRecords, Read(RaysAddress, 3 * RaySize));
+
+        WriteUInt32(RaysAddress + (2 * RaySize), 0xDEADBEEF);
+        var invalidRecords = Read(RaysAddress, 3 * RaySize);
+        Assert.True(AudioPropagationExports.TryGetDebugSnapshot(system, out var before));
+        Assert.Equal(ErrorInvalidStructure, AudioPropagationExports.SystemSetRays(_ctx));
+        Assert.Equal(0x0000_0000_8A70_0007UL, _ctx[CpuRegister.Rax]);
+        Assert.Equal(invalidRecords, Read(RaysAddress, 3 * RaySize));
+        Assert.True(AudioPropagationExports.TryGetDebugSnapshot(system, out var after));
+        Assert.Equal(before, after);
+
+        _ctx[CpuRegister.Rdx] = 2;
+        Assert.Equal(0, AudioPropagationExports.SystemSetRays(_ctx));
+        Assert.Equal(invalidRecords, Read(RaysAddress, 3 * RaySize));
     }
 
     [Fact]

@@ -296,6 +296,68 @@ public static class AudioPropagationExports
     }
 
     [SysAbiExport(
+        Nid = "VlBT16890mA",
+        ExportName = "sceAudioPropagationSystemSetRays",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAudioPropagation")]
+    public static int SystemSetRays(CpuContext ctx)
+    {
+        var systemHandle = ctx[CpuRegister.Rdi];
+        if (!TryGetSystem(systemHandle, out _))
+        {
+            return SetReturn(ctx, ErrorInvalidHandle);
+        }
+
+        var raysAddress = ctx[CpuRegister.Rsi];
+        if (raysAddress == 0)
+        {
+            return SetReturn(ctx, ErrorInvalidPointer);
+        }
+
+        var count = unchecked((uint)ctx[CpuRegister.Rdx]);
+        if (count == 0)
+        {
+            return SetReturn(ctx, ErrorInvalidValue);
+        }
+
+        ulong byteCount;
+        try
+        {
+            byteCount = checked((ulong)count * RaySize);
+        }
+        catch (OverflowException)
+        {
+            return SetReturn(ctx, ErrorInvalidPointer);
+        }
+
+        if (raysAddress > ulong.MaxValue - (byteCount - 1))
+        {
+            return SetReturn(ctx, ErrorInvalidPointer);
+        }
+
+        Span<byte> record = stackalloc byte[(int)RaySize];
+        for (var index = 0U; index < count; index++)
+        {
+            var recordAddress = raysAddress + ((ulong)index * RaySize);
+            if (!ctx.Memory.TryRead(recordAddress, record))
+            {
+                return SetReturn(ctx, ErrorInvalidPointer);
+            }
+
+            if (BinaryPrimitives.ReadUInt32LittleEndian(record) != RayTag ||
+                BinaryPrimitives.ReadUInt64LittleEndian(record[0x08..]) != RaySize)
+            {
+                return SetReturn(ctx, ErrorInvalidStructure);
+            }
+        }
+
+        // Firmware consumes only records still associated with an outstanding
+        // GetRays source slot. The current HLE has no acoustic tracing backend,
+        // so validated matched and unmatched records are both an internal no-op.
+        return SetSuccess(ctx);
+    }
+
+    [SysAbiExport(
         Nid = "kIdb+iQUzCs",
         ExportName = "sceAudioPropagationSystemSetAttributes",
         Target = Generation.Gen5,
@@ -795,7 +857,7 @@ public static class AudioPropagationExports
 
     private static int SetReturn(CpuContext ctx, int result)
     {
-        ctx[CpuRegister.Rax] = unchecked((ulong)result);
+        ctx[CpuRegister.Rax] = unchecked((uint)result);
         return result;
     }
 }
