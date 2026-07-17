@@ -1,0 +1,893 @@
+{
+  "schema_version": 1,
+  "run": {
+    "source": "ASTRO_BOT_UNRESOLVED_NIDS.csv",
+    "created_at": "2026-07-17T08:26:57+00:00",
+    "base_sha": "2e00076b244442487b59d1cbbfe5f5b677b525ae",
+    "games": [
+      "ASTRO BOT"
+    ]
+  },
+  "items": [
+    {
+      "nid": "ZIXln2K3XMk",
+      "symbol": "sceAcmContextCreate",
+      "component": "ACM",
+      "library": null,
+      "generation": null,
+      "cluster": "acm",
+      "observations": [
+        {
+          "game": "ASTRO BOT",
+          "calls": 1,
+          "source": "ASTRO_BOT_UNRESOLVED_NIDS.csv",
+          "importing_image": null,
+          "call_sites": [],
+          "run_configuration": null
+        }
+      ],
+      "status": "named",
+      "priority": {
+        "calls": 1,
+        "criticality": "unknown",
+        "cross_game_fanout": 1,
+        "dependency_order": null,
+        "rationale": null
+      },
+      "evidence": {
+        "aerolib_name": "sceAcmContextCreate",
+        "binary_hash": null,
+        "reference_functions": [],
+        "call_sites": [],
+        "confidence": "unknown",
+        "conflicts": []
+      },
+      "contract": {
+        "signature": null,
+        "returns": [],
+        "output_writes": [],
+        "validation_rules": [],
+        "state_transitions": [],
+        "ownership": [],
+        "synchronization": []
+      },
+      "implementation": {
+        "worktree": null,
+        "branch": null,
+        "commit": null,
+        "files": []
+      },
+      "validation": {
+        "branch": null,
+        "integration": null,
+        "games": []
+      },
+      "blockers": []
+    },
+    {
+      "nid": "BfBDZGbti7A",
+      "symbol": "sceAgcGetIsTrinityMode",
+      "component": "AGC",
+      "library": null,
+      "generation": null,
+      "cluster": "agc",
+      "observations": [
+        {
+          "game": "ASTRO BOT",
+          "calls": 1,
+          "source": "ASTRO_BOT_UNRESOLVED_NIDS.csv",
+          "importing_image": null,
+          "call_sites": [],
+          "run_configuration": null
+        }
+      ],
+      "status": "named",
+      "priority": {
+        "calls": 1,
+        "criticality": "unknown",
+        "cross_game_fanout": 1,
+        "dependency_order": null,
+        "rationale": null
+      },
+      "evidence": {
+        "aerolib_name": "sceAgcGetIsTrinityMode",
+        "binary_hash": null,
+        "reference_functions": [],
+        "call_sites": [],
+        "confidence": "unknown",
+        "conflicts": []
+      },
+      "contract": {
+        "signature": null,
+        "returns": [],
+        "output_writes": [],
+        "validation_rules": [],
+        "state_transitions": [],
+        "ownership": [],
+        "synchronization": []
+      },
+      "implementation": {
+        "worktree": null,
+        "branch": null,
+        "commit": null,
+        "files": []
+      },
+      "validation": {
+        "branch": null,
+        "integration": null,
+        "games": []
+      },
+      "blockers": []
+    },
+    {
+      "nid": "7xyAxrusLko",
+      "symbol": "sceAudioPropagationSystemQueryMemory",
+      "component": "AudioPropagation",
+      "library": null,
+      "generation": null,
+      "cluster": "audiopropagation",
+      "observations": [
+        {
+          "game": "ASTRO BOT",
+          "calls": 5,
+          "source": "ASTRO_BOT_UNRESOLVED_NIDS.csv",
+          "importing_image": null,
+          "call_sites": [],
+          "run_configuration": null
+        }
+      ],
+      "status": "named",
+      "priority": {
+        "calls": 5,
+        "criticality": "unknown",
+        "cross_game_fanout": 1,
+        "dependency_order": null,
+        "rationale": null
+      },
+      "evidence": {
+        "aerolib_name": "sceAudioPropagationSystemQueryMemory",
+        "binary_hash": null,
+        "reference_functions": [],
+        "call_sites": [],
+        "confidence": "unknown",
+        "conflicts": []
+      },
+      "contract": {
+        "signature": null,
+        "returns": [],
+        "output_writes": [],
+        "validation_rules": [],
+        "state_transitions": [],
+        "ownership": [],
+        "synchronization": []
+      },
+      "implementation": {
+        "worktree": null,
+        "branch": null,
+        "commit": null,
+        "files": []
+      },
+      "validation": {
+        "branch": null,
+        "integration": null,
+        "games": []
+      },
+      "blockers": []
+    },
+    {
+      "nid": "8bI5h8req30",
+      "symbol": "sceAudioPropagationRoomCreate",
+      "component": "AudioPropagation",
+      "library": null,
+      "generation": null,
+      "cluster": "audiopropagation",
+      "observations": [
+        {
+          "game": "ASTRO BOT",
+          "calls": 5,
+          "source": "ASTRO_BOT_UNRESOLVED_NIDS.csv",
+          "importing_image": null,
+          "call_sites": [],
+          "run_configuration": null
+        }
+      ],
+      "status": "named",
+      "priority": {
+        "calls": 5,
+        "criticality": "unknown",
+        "cross_game_fanout": 1,
+        "dependency_order": null,
+        "rationale": null
+      },
+      "evidence": {
+        "aerolib_name": "sceAudioPropagationRoomCreate",
+        "binary_hash": null,
+        "reference_functions": [],
+        "call_sites": [],
+        "confidence": "unknown",
+        "conflicts": []
+      },
+      "contract": {
+        "signature": null,
+        "returns": [],
+        "output_writes": [],
+        "validation_rules": [],
+        "state_transitions": [],
+        "ownership": [],
+        "synchronization": []
+      },
+      "implementation": {
+        "worktree": null,
+        "branch": null,
+        "commit": null,
+        "files": []
+      },
+      "validation": {
+        "branch": null,
+        "integration": null,
+        "games": []
+      },
+      "blockers": []
+    },
+    {
+      "nid": "CPLV6G-eXmk",
+      "symbol": "sceAudioPropagationSystemRegisterMaterial",
+      "component": "AudioPropagation",
+      "library": null,
+      "generation": null,
+      "cluster": "audiopropagation",
+      "observations": [
+        {
+          "game": "ASTRO BOT",
+          "calls": 23,
+          "source": "ASTRO_BOT_UNRESOLVED_NIDS.csv",
+          "importing_image": null,
+          "call_sites": [],
+          "run_configuration": null
+        }
+      ],
+      "status": "named",
+      "priority": {
+        "calls": 23,
+        "criticality": "unknown",
+        "cross_game_fanout": 1,
+        "dependency_order": null,
+        "rationale": null
+      },
+      "evidence": {
+        "aerolib_name": "sceAudioPropagationSystemRegisterMaterial",
+        "binary_hash": null,
+        "reference_functions": [],
+        "call_sites": [],
+        "confidence": "unknown",
+        "conflicts": []
+      },
+      "contract": {
+        "signature": null,
+        "returns": [],
+        "output_writes": [],
+        "validation_rules": [],
+        "state_transitions": [],
+        "ownership": [],
+        "synchronization": []
+      },
+      "implementation": {
+        "worktree": null,
+        "branch": null,
+        "commit": null,
+        "files": []
+      },
+      "validation": {
+        "branch": null,
+        "integration": null,
+        "games": []
+      },
+      "blockers": []
+    },
+    {
+      "nid": "aNEqtSHdUSo",
+      "symbol": "sceAudioPropagationSystemCreate",
+      "component": "AudioPropagation",
+      "library": null,
+      "generation": null,
+      "cluster": "audiopropagation",
+      "observations": [
+        {
+          "game": "ASTRO BOT",
+          "calls": 5,
+          "source": "ASTRO_BOT_UNRESOLVED_NIDS.csv",
+          "importing_image": null,
+          "call_sites": [],
+          "run_configuration": null
+        }
+      ],
+      "status": "named",
+      "priority": {
+        "calls": 5,
+        "criticality": "unknown",
+        "cross_game_fanout": 1,
+        "dependency_order": null,
+        "rationale": null
+      },
+      "evidence": {
+        "aerolib_name": "sceAudioPropagationSystemCreate",
+        "binary_hash": null,
+        "reference_functions": [],
+        "call_sites": [],
+        "confidence": "unknown",
+        "conflicts": []
+      },
+      "contract": {
+        "signature": null,
+        "returns": [],
+        "output_writes": [],
+        "validation_rules": [],
+        "state_transitions": [],
+        "ownership": [],
+        "synchronization": []
+      },
+      "implementation": {
+        "worktree": null,
+        "branch": null,
+        "commit": null,
+        "files": []
+      },
+      "validation": {
+        "branch": null,
+        "integration": null,
+        "games": []
+      },
+      "blockers": []
+    },
+    {
+      "nid": "ht-QXT3zGxo",
+      "symbol": "sceAudioPropagationSystemGetRays",
+      "component": "AudioPropagation",
+      "library": null,
+      "generation": null,
+      "cluster": "audiopropagation",
+      "observations": [
+        {
+          "game": "ASTRO BOT",
+          "calls": 291,
+          "source": "ASTRO_BOT_UNRESOLVED_NIDS.csv",
+          "importing_image": null,
+          "call_sites": [],
+          "run_configuration": null
+        }
+      ],
+      "status": "named",
+      "priority": {
+        "calls": 291,
+        "criticality": "unknown",
+        "cross_game_fanout": 1,
+        "dependency_order": null,
+        "rationale": null
+      },
+      "evidence": {
+        "aerolib_name": "sceAudioPropagationSystemGetRays",
+        "binary_hash": null,
+        "reference_functions": [],
+        "call_sites": [],
+        "confidence": "unknown",
+        "conflicts": []
+      },
+      "contract": {
+        "signature": null,
+        "returns": [],
+        "output_writes": [],
+        "validation_rules": [],
+        "state_transitions": [],
+        "ownership": [],
+        "synchronization": []
+      },
+      "implementation": {
+        "worktree": null,
+        "branch": null,
+        "commit": null,
+        "files": []
+      },
+      "validation": {
+        "branch": null,
+        "integration": null,
+        "games": []
+      },
+      "blockers": []
+    },
+    {
+      "nid": "kIdb+iQUzCs",
+      "symbol": "sceAudioPropagationSystemSetAttributes",
+      "component": "AudioPropagation",
+      "library": null,
+      "generation": null,
+      "cluster": "audiopropagation",
+      "observations": [
+        {
+          "game": "ASTRO BOT",
+          "calls": 1,
+          "source": "ASTRO_BOT_UNRESOLVED_NIDS.csv",
+          "importing_image": null,
+          "call_sites": [],
+          "run_configuration": null
+        }
+      ],
+      "status": "named",
+      "priority": {
+        "calls": 1,
+        "criticality": "unknown",
+        "cross_game_fanout": 1,
+        "dependency_order": null,
+        "rationale": null
+      },
+      "evidence": {
+        "aerolib_name": "sceAudioPropagationSystemSetAttributes",
+        "binary_hash": null,
+        "reference_functions": [],
+        "call_sites": [],
+        "confidence": "unknown",
+        "conflicts": []
+      },
+      "contract": {
+        "signature": null,
+        "returns": [],
+        "output_writes": [],
+        "validation_rules": [],
+        "state_transitions": [],
+        "ownership": [],
+        "synchronization": []
+      },
+      "implementation": {
+        "worktree": null,
+        "branch": null,
+        "commit": null,
+        "files": []
+      },
+      "validation": {
+        "branch": null,
+        "integration": null,
+        "games": []
+      },
+      "blockers": []
+    },
+    {
+      "nid": "00oCq0RwSAY",
+      "symbol": "_ZN3sce4Json11Initializer27setGlobalNullAccessCallBackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_",
+      "component": "JSON",
+      "library": null,
+      "generation": null,
+      "cluster": "json",
+      "observations": [
+        {
+          "game": "ASTRO BOT",
+          "calls": 1,
+          "source": "ASTRO_BOT_UNRESOLVED_NIDS.csv",
+          "importing_image": null,
+          "call_sites": [],
+          "run_configuration": null
+        }
+      ],
+      "status": "named",
+      "priority": {
+        "calls": 1,
+        "criticality": "unknown",
+        "cross_game_fanout": 1,
+        "dependency_order": null,
+        "rationale": null
+      },
+      "evidence": {
+        "aerolib_name": "_ZN3sce4Json11Initializer27setGlobalNullAccessCallBackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_",
+        "binary_hash": null,
+        "reference_functions": [],
+        "call_sites": [],
+        "confidence": "unknown",
+        "conflicts": []
+      },
+      "contract": {
+        "signature": null,
+        "returns": [],
+        "output_writes": [],
+        "validation_rules": [],
+        "state_transitions": [],
+        "ownership": [],
+        "synchronization": []
+      },
+      "implementation": {
+        "worktree": null,
+        "branch": null,
+        "commit": null,
+        "files": []
+      },
+      "validation": {
+        "branch": null,
+        "integration": null,
+        "games": []
+      },
+      "blockers": []
+    },
+    {
+      "nid": "mkgXxsoxWHg",
+      "symbol": "sceKernelClearVirtualRangeName",
+      "component": "Kernel",
+      "library": null,
+      "generation": null,
+      "cluster": "kernel",
+      "observations": [
+        {
+          "game": "ASTRO BOT",
+          "calls": 2,
+          "source": "ASTRO_BOT_UNRESOLVED_NIDS.csv",
+          "importing_image": null,
+          "call_sites": [],
+          "run_configuration": null
+        }
+      ],
+      "status": "named",
+      "priority": {
+        "calls": 2,
+        "criticality": "unknown",
+        "cross_game_fanout": 1,
+        "dependency_order": null,
+        "rationale": null
+      },
+      "evidence": {
+        "aerolib_name": "sceKernelClearVirtualRangeName",
+        "binary_hash": null,
+        "reference_functions": [],
+        "call_sites": [],
+        "confidence": "unknown",
+        "conflicts": []
+      },
+      "contract": {
+        "signature": null,
+        "returns": [],
+        "output_writes": [],
+        "validation_rules": [],
+        "state_transitions": [],
+        "ownership": [],
+        "synchronization": []
+      },
+      "implementation": {
+        "worktree": null,
+        "branch": null,
+        "commit": null,
+        "files": []
+      },
+      "validation": {
+        "branch": null,
+        "integration": null,
+        "games": []
+      },
+      "blockers": []
+    },
+    {
+      "nid": "n1-v6FgU7MQ",
+      "symbol": "sceKernelConfiguredFlexibleMemorySize",
+      "component": "Kernel",
+      "library": null,
+      "generation": null,
+      "cluster": "kernel",
+      "observations": [
+        {
+          "game": "ASTRO BOT",
+          "calls": 1,
+          "source": "ASTRO_BOT_UNRESOLVED_NIDS.csv",
+          "importing_image": null,
+          "call_sites": [],
+          "run_configuration": null
+        }
+      ],
+      "status": "named",
+      "priority": {
+        "calls": 1,
+        "criticality": "unknown",
+        "cross_game_fanout": 1,
+        "dependency_order": null,
+        "rationale": null
+      },
+      "evidence": {
+        "aerolib_name": "sceKernelConfiguredFlexibleMemorySize",
+        "binary_hash": null,
+        "reference_functions": [],
+        "call_sites": [],
+        "confidence": "unknown",
+        "conflicts": []
+      },
+      "contract": {
+        "signature": null,
+        "returns": [],
+        "output_writes": [],
+        "validation_rules": [],
+        "state_transitions": [],
+        "ownership": [],
+        "synchronization": []
+      },
+      "implementation": {
+        "worktree": null,
+        "branch": null,
+        "commit": null,
+        "files": []
+      },
+      "validation": {
+        "branch": null,
+        "integration": null,
+        "games": []
+      },
+      "blockers": []
+    },
+    {
+      "nid": "4llLk7YJRTE",
+      "symbol": "sceNpUniversalDataSystemEventPropertyArraySetString",
+      "component": "NpUniversalDataSystem",
+      "library": null,
+      "generation": null,
+      "cluster": "npuniversaldatasystem",
+      "observations": [
+        {
+          "game": "ASTRO BOT",
+          "calls": 1,
+          "source": "ASTRO_BOT_UNRESOLVED_NIDS.csv",
+          "importing_image": null,
+          "call_sites": [],
+          "run_configuration": null
+        }
+      ],
+      "status": "named",
+      "priority": {
+        "calls": 1,
+        "criticality": "unknown",
+        "cross_game_fanout": 1,
+        "dependency_order": null,
+        "rationale": null
+      },
+      "evidence": {
+        "aerolib_name": "sceNpUniversalDataSystemEventPropertyArraySetString",
+        "binary_hash": null,
+        "reference_functions": [],
+        "call_sites": [],
+        "confidence": "unknown",
+        "conflicts": []
+      },
+      "contract": {
+        "signature": null,
+        "returns": [],
+        "output_writes": [],
+        "validation_rules": [],
+        "state_transitions": [],
+        "ownership": [],
+        "synchronization": []
+      },
+      "implementation": {
+        "worktree": null,
+        "branch": null,
+        "commit": null,
+        "files": []
+      },
+      "validation": {
+        "branch": null,
+        "integration": null,
+        "games": []
+      },
+      "blockers": []
+    },
+    {
+      "nid": "znaWI0gpuo8",
+      "symbol": "scePadGetTriggerEffectState",
+      "component": "Pad",
+      "library": null,
+      "generation": null,
+      "cluster": "pad",
+      "observations": [
+        {
+          "game": "ASTRO BOT",
+          "calls": 338,
+          "source": "ASTRO_BOT_UNRESOLVED_NIDS.csv",
+          "importing_image": null,
+          "call_sites": [],
+          "run_configuration": null
+        }
+      ],
+      "status": "named",
+      "priority": {
+        "calls": 338,
+        "criticality": "unknown",
+        "cross_game_fanout": 1,
+        "dependency_order": null,
+        "rationale": null
+      },
+      "evidence": {
+        "aerolib_name": "scePadGetTriggerEffectState",
+        "binary_hash": null,
+        "reference_functions": [],
+        "call_sites": [],
+        "confidence": "unknown",
+        "conflicts": []
+      },
+      "contract": {
+        "signature": null,
+        "returns": [],
+        "output_writes": [],
+        "validation_rules": [],
+        "state_transitions": [],
+        "ownership": [],
+        "synchronization": []
+      },
+      "implementation": {
+        "worktree": null,
+        "branch": null,
+        "commit": null,
+        "files": []
+      },
+      "validation": {
+        "branch": null,
+        "integration": null,
+        "games": []
+      },
+      "blockers": []
+    },
+    {
+      "nid": "amuBfI-AQc4",
+      "symbol": "sceRudpInit",
+      "component": "RUDP",
+      "library": null,
+      "generation": null,
+      "cluster": "rudp",
+      "observations": [
+        {
+          "game": "ASTRO BOT",
+          "calls": 1,
+          "source": "ASTRO_BOT_UNRESOLVED_NIDS.csv",
+          "importing_image": null,
+          "call_sites": [],
+          "run_configuration": null
+        }
+      ],
+      "status": "named",
+      "priority": {
+        "calls": 1,
+        "criticality": "unknown",
+        "cross_game_fanout": 1,
+        "dependency_order": null,
+        "rationale": null
+      },
+      "evidence": {
+        "aerolib_name": "sceRudpInit",
+        "binary_hash": null,
+        "reference_functions": [],
+        "call_sites": [],
+        "confidence": "unknown",
+        "conflicts": []
+      },
+      "contract": {
+        "signature": null,
+        "returns": [],
+        "output_writes": [],
+        "validation_rules": [],
+        "state_transitions": [],
+        "ownership": [],
+        "synchronization": []
+      },
+      "implementation": {
+        "worktree": null,
+        "branch": null,
+        "commit": null,
+        "files": []
+      },
+      "validation": {
+        "branch": null,
+        "integration": null,
+        "games": []
+      },
+      "blockers": []
+    },
+    {
+      "nid": "dolOmWH+huQ",
+      "symbol": null,
+      "component": "Unknown",
+      "library": null,
+      "generation": null,
+      "cluster": "unknown",
+      "observations": [
+        {
+          "game": "ASTRO BOT",
+          "calls": 33,
+          "source": "ASTRO_BOT_UNRESOLVED_NIDS.csv",
+          "importing_image": null,
+          "call_sites": [],
+          "run_configuration": null
+        }
+      ],
+      "status": "observed",
+      "priority": {
+        "calls": 33,
+        "criticality": "unknown",
+        "cross_game_fanout": 1,
+        "dependency_order": null,
+        "rationale": null
+      },
+      "evidence": {
+        "aerolib_name": null,
+        "binary_hash": null,
+        "reference_functions": [],
+        "call_sites": [],
+        "confidence": "unknown",
+        "conflicts": []
+      },
+      "contract": {
+        "signature": null,
+        "returns": [],
+        "output_writes": [],
+        "validation_rules": [],
+        "state_transitions": [],
+        "ownership": [],
+        "synchronization": []
+      },
+      "implementation": {
+        "worktree": null,
+        "branch": null,
+        "commit": null,
+        "files": []
+      },
+      "validation": {
+        "branch": null,
+        "integration": null,
+        "games": []
+      },
+      "blockers": []
+    },
+    {
+      "nid": "fd5Bp5tGTgo",
+      "symbol": null,
+      "component": "Unknown",
+      "library": null,
+      "generation": null,
+      "cluster": "unknown",
+      "observations": [
+        {
+          "game": "ASTRO BOT",
+          "calls": 33,
+          "source": "ASTRO_BOT_UNRESOLVED_NIDS.csv",
+          "importing_image": null,
+          "call_sites": [],
+          "run_configuration": null
+        }
+      ],
+      "status": "observed",
+      "priority": {
+        "calls": 33,
+        "criticality": "unknown",
+        "cross_game_fanout": 1,
+        "dependency_order": null,
+        "rationale": null
+      },
+      "evidence": {
+        "aerolib_name": null,
+        "binary_hash": null,
+        "reference_functions": [],
+        "call_sites": [],
+        "confidence": "unknown",
+        "conflicts": []
+      },
+      "contract": {
+        "signature": null,
+        "returns": [],
+        "output_writes": [],
+        "validation_rules": [],
+        "state_transitions": [],
+        "ownership": [],
+        "synchronization": []
+      },
+      "implementation": {
+        "worktree": null,
+        "branch": null,
+        "commit": null,
+        "files": []
+      },
+      "validation": {
+        "branch": null,
+        "integration": null,
+        "games": []
+      },
+      "blockers": []
+    }
+  ]
+}
