@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using SharpEmu.HLE;
+using SharpEmu.Libs.Kernel;
 using System.Buffers.Binary;
 
 namespace SharpEmu.Libs.Np;
@@ -10,6 +11,158 @@ public static class NpManagerExports
 {
     private const int NpTitleIdSize = 16;
     private const int NpTitleSecretSize = 128;
+    private static ulong _managerAllocatorAddress;
+
+    [SysAbiExport(
+        Nid = "fHGhS3uP52k",
+        ExportName = "sceNpManagerGlobalInitializeCompat1270",
+        Target = Generation.Gen5,
+        LibraryName = "libSceNpManager")]
+    public static int NpManagerGlobalInitializeCompat1270(CpuContext ctx)
+    {
+        var poolSize = ctx[CpuRegister.Rdi];
+        var nameAddress = ctx[CpuRegister.Rsi];
+        if (poolSize == 0 || nameAddress == 0)
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        if (_managerAllocatorAddress == 0 &&
+            !NpCommonExports.TryCreateHleAllocator(ctx, poolSize, out _managerAllocatorAddress))
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        // Firmware 12.70's implementation (libSceNpManager +0x14950)
+        // creates the module-private NP manager pool and callback table. The
+        // pool never crosses the ABI boundary, so boot only needs the observed
+        // validation and successful initialized result.
+        TraceNp($"manager_global_init pool=0x{poolSize:X} name=0x{nameAddress:X}");
+        return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    [SysAbiExport(
+        Nid = "ukEeOizCkIU",
+        ExportName = "sceNpManagerGetAllocatorCallbacksCompat1270",
+        Target = Generation.Gen5,
+        LibraryName = "libSceNpManager")]
+    public static int NpManagerGetAllocatorCallbacksCompat1270(CpuContext ctx)
+    {
+        if (_managerAllocatorAddress == 0)
+        {
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        // The firmware table contains malloc, realloc, free, and a null user
+        // pointer. Its address is consumed throughout ShellCore as allocator
+        // identity; the shared executable no-op entries keep indirect cleanup
+        // calls safe while the module-private pool remains HLE-owned.
+        ctx[CpuRegister.Rax] = _managerAllocatorAddress;
+        TraceNp($"manager_allocator_callbacks table=0x{_managerAllocatorAddress:X}");
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "4uhgVNAqiag",
+        ExportName = "sceNpManagerGlobalTerminateCompat1270",
+        Target = Generation.Gen5,
+        LibraryName = "libSceNpManager")]
+    public static int NpManagerGlobalTerminateCompat1270(CpuContext ctx)
+    {
+        NpCommonExports.ReleaseHleAllocator(_managerAllocatorAddress);
+        _managerAllocatorAddress = 0;
+        TraceNp("manager_global_term");
+        return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    [SysAbiExport(
+        Nid = "QvqOkNK5ThU",
+        ExportName = "sceNpExtNpHttpClientConstructorCompat1270",
+        Target = Generation.Gen5,
+        LibraryName = "libSceNpManager")]
+    public static int NpExtNpHttpClientConstructorCompat1270(CpuContext ctx)
+    {
+        var objectAddress = ctx[CpuRegister.Rdi];
+        var allocatorAddress = ctx[CpuRegister.Rsi];
+        if (objectAddress == 0 || allocatorAddress == 0)
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        var objectBytes = new byte[0x50];
+        BinaryPrimitives.WriteUInt64LittleEndian(objectBytes.AsSpan(0x08), allocatorAddress);
+        if (!ctx.Memory.TryWrite(objectAddress, objectBytes) ||
+            !KernelMemoryCompatExports.TryWriteDummyVtable(ctx, objectAddress))
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        // Firmware installs the ExtNpHttpClient vtable before initializing its
+        // embedded synchronization state. ShellCore calls virtual slot +8 when
+        // rolling this stage back, even when Initialize returned an error.
+        ctx[CpuRegister.Rax] = objectAddress;
+        TraceNp($"ext_http_client_ctor object=0x{objectAddress:X} allocator=0x{allocatorAddress:X}");
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "CvGog64+vCk",
+        ExportName = "sceNpExtNpHttpClientInitializeCompat1270",
+        Target = Generation.Gen5,
+        LibraryName = "libSceNpManager")]
+    public static int NpExtNpHttpClientInitializeCompat1270(CpuContext ctx)
+    {
+        var objectAddress = ctx[CpuRegister.Rdi];
+        var mode = unchecked((uint)ctx[CpuRegister.Rsi]);
+        if (objectAddress == 0 ||
+            !ctx.TryWriteUInt64(objectAddress + 0x18, objectAddress + 0x18) ||
+            !ctx.Memory.TryWrite(objectAddress + 0x20, new byte[] { 1 }) ||
+            !ctx.Memory.TryWrite(objectAddress + 0x28, BitConverter.GetBytes(mode)))
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        // The real object creates asynchronous HTTP workers here. Keep those
+        // workers quiescent for the boot path while preserving initialized
+        // mutex and mode fields used by ShellCore's state checks.
+        TraceNp($"ext_http_client_init object=0x{objectAddress:X} mode={mode}");
+        return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    [SysAbiExport(
+        Nid = "S7Afe0llsL8",
+        ExportName = "sceNpCallbackSlotConstructorCompat1270",
+        Target = Generation.Gen5,
+        LibraryName = "libSceNpManager")]
+    public static int NpCallbackSlotConstructorCompat1270(CpuContext ctx)
+    {
+        var objectAddress = ctx[CpuRegister.Rdi];
+        if (objectAddress == 0 ||
+            !ctx.Memory.TryWrite(objectAddress, new byte[0x10]) ||
+            !KernelMemoryCompatExports.TryWriteDummyVtable(ctx, objectAddress) ||
+            !ctx.TryWriteUInt32(objectAddress + 8, uint.MaxValue))
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        ctx[CpuRegister.Rax] = objectAddress;
+        TraceNp($"callback_slot_ctor object=0x{objectAddress:X} id=-1");
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "gQFyT9aIsOk",
+        ExportName = "sceNpCallbackSlotDestructorCompat1270",
+        Target = Generation.Gen5,
+        LibraryName = "libSceNpManager")]
+    public static int NpCallbackSlotDestructorCompat1270(CpuContext ctx)
+    {
+        var objectAddress = ctx[CpuRegister.Rdi];
+        ctx[CpuRegister.Rax] = objectAddress;
+        TraceNp($"callback_slot_dtor object=0x{objectAddress:X}");
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
     private const int NpErrorInvalidArgument = unchecked((int)0x80550003);
 
     [SysAbiExport(

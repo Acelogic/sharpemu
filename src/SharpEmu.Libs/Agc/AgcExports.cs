@@ -168,6 +168,7 @@ public static partial class AgcExports
     private const uint RegisterDefaultsVersion7 = 7;
     private const uint RegisterDefaultsVersion8 = 8;
     private const uint RegisterDefaultsVersion10 = 10;
+    private const uint RegisterDefaultsVersion11 = 11;
     private const uint RegisterDefaultsVersion13 = 13;
     private const int RegisterDefaultsSize = 0x40;
     private const int RegisterDefaultBlockSize = 16 * 8;
@@ -2405,6 +2406,58 @@ public static partial class AgcExports
         TraceAgc(
             $"agc.dcb_acquire_mem buf=0x{commandBufferAddress:X16} cmd=0x{commandAddress:X16} " +
             $"engine={engine} cbdb=0x{cbDbOp:X8} gcr=0x{gcrControl:X8} base=0x{baseAddress:X16} size=0x{sizeBytes:X16}");
+        return ReturnPointer(ctx, commandAddress);
+    }
+
+    [SysAbiExport(
+        Nid = "1rZSWUv1IRc",
+        ExportName = "sceAgcDcbCopyData",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int DcbCopyData(CpuContext ctx)
+    {
+        var commandBufferAddress = ctx[CpuRegister.Rdi];
+        var destinationSelector = (uint)(ctx[CpuRegister.Rsi] & 0xFF);
+        var destinationCachePolicy = (uint)(ctx[CpuRegister.Rdx] & 0xFF);
+        var destinationAddress = ctx[CpuRegister.Rcx];
+        var sourceAndEngineSelector = (uint)ctx[CpuRegister.R8];
+        var sourceCachePolicy = (uint)ctx[CpuRegister.R9];
+        var stackAddress = ctx[CpuRegister.Rsp];
+        if (!TryReadUInt64(ctx, stackAddress + sizeof(ulong), out var sourceAddress) ||
+            !TryReadUInt64(ctx, stackAddress + (2 * sizeof(ulong)), out var countSelectRaw) ||
+            !TryReadUInt64(ctx, stackAddress + (3 * sizeof(ulong)), out var writeConfirmRaw))
+        {
+            return ReturnPointer(ctx, 0);
+        }
+
+        if (commandBufferAddress == 0)
+        {
+            return ReturnPointer(ctx, 0);
+        }
+
+        var countSelect = (uint)(countSelectRaw & 0xFF);
+        var writeConfirm = (uint)(writeConfirmRaw & 0xFF);
+        var control =
+            ((sourceAndEngineSelector & 1u) << 30) |
+            ((destinationCachePolicy & 3u) << 25) |
+            ((writeConfirm & 1u) << 20) |
+            ((countSelect & 1u) << 16) |
+            ((sourceCachePolicy & 3u) << 13) |
+            (((destinationSelector >> 1) & 0xFu) << 8) |
+            ((sourceAndEngineSelector >> 1) & 0xFu);
+
+        if (!TryAllocateCommandDwords(ctx, commandBufferAddress, 6, out var commandAddress) ||
+            !TryWriteUInt32(ctx, commandAddress, Pm4(6, ItCopyData, 0)) ||
+            !TryWriteUInt32(ctx, commandAddress + 4, control) ||
+            !ctx.TryWriteUInt64(commandAddress + 8, sourceAddress) ||
+            !ctx.TryWriteUInt64(commandAddress + 16, destinationAddress))
+        {
+            return ReturnPointer(ctx, 0);
+        }
+
+        TraceAgc(
+            $"agc.dcb_copy_data buf=0x{commandBufferAddress:X16} cmd=0x{commandAddress:X16} " +
+            $"src=0x{sourceAddress:X16} dst=0x{destinationAddress:X16} control=0x{control:X8}");
         return ReturnPointer(ctx, commandAddress);
     }
 
@@ -12790,6 +12843,7 @@ public static partial class AgcExports
             RegisterDefaultsVersion7 or
             RegisterDefaultsVersion8 or
             RegisterDefaultsVersion10 or
+            RegisterDefaultsVersion11 or
             RegisterDefaultsVersion13;
     }
 

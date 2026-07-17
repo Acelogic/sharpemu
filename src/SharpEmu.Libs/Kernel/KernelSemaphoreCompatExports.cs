@@ -429,6 +429,28 @@ public static class KernelSemaphoreCompatExports
     }
 
     [SysAbiExport(
+        Nid = "-wUggz2S5yk",
+        ExportName = "sem_setname",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixSemSetName(CpuContext ctx)
+    {
+        // The name is diagnostic metadata. Validate it without changing the
+        // immutable scheduler wake key while waiters may be blocked.
+        var semaphoreAddress = ctx[CpuRegister.Rdi];
+        var nameAddress = ctx[CpuRegister.Rsi];
+        if (!TryGetPosixSemaphoreHandle(ctx, semaphoreAddress, out var handle) ||
+            !_semaphores.ContainsKey(handle) ||
+            nameAddress == 0 ||
+            !ctx.TryReadNullTerminatedUtf8(nameAddress, MaxSemaphoreNameLength, out _))
+        {
+            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    [SysAbiExport(
         Nid = "YCV5dGGBcCo",
         ExportName = "sem_wait",
         Target = Generation.Gen4 | Generation.Gen5,

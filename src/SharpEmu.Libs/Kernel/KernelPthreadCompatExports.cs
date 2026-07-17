@@ -108,6 +108,13 @@ public static class KernelPthreadCompatExports
     public static int PosixPthreadSelf(CpuContext ctx) => PthreadSelf(ctx);
 
     [SysAbiExport(
+        Nid = "2ozFS9GCs+A",
+        ExportName = "__sharpemu_gen5_thrd_current",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int Gen5ThrdCurrent(CpuContext ctx) => PthreadSelf(ctx);
+
+    [SysAbiExport(
         Nid = "3PtV6p3QNX4",
         ExportName = "scePthreadEqual",
         Target = Generation.Gen4 | Generation.Gen5,
@@ -238,7 +245,11 @@ public static class KernelPthreadCompatExports
         ExportName = "pthread_mutex_trylock",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int PosixPthreadMutexTrylock(CpuContext ctx) => PthreadMutexLockCore(ctx, ctx[CpuRegister.Rdi], tryOnly: true);
+    public static int PosixPthreadMutexTrylock(CpuContext ctx)
+    {
+        var result = PthreadMutexLockCore(ctx, ctx[CpuRegister.Rdi], tryOnly: true);
+        return result == (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY ? 16 : result;
+    }
 
     [SysAbiExport(
         Nid = "2Z+PpY6CaJg",
@@ -246,6 +257,23 @@ public static class KernelPthreadCompatExports
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
     public static int PosixPthreadMutexUnlock(CpuContext ctx) => PthreadMutexUnlockCore(ctx, ctx[CpuRegister.Rdi], requireOwner: true);
+
+    // Gen5 libc++ uses private mutex entry points for std::mutex. ShellCore's
+    // vector/registry initialization calls these instead of libKernel's public
+    // pthread symbols, but the object and return conventions are identical.
+    [SysAbiExport(
+        Nid = "5qXct3c1skg",
+        ExportName = "__libcpp_mutex_lock",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcppMutexLock(CpuContext ctx) => PthreadMutexLockCore(ctx, ctx[CpuRegister.Rdi], tryOnly: false);
+
+    [SysAbiExport(
+        Nid = "4bp9gcNLwMI",
+        ExportName = "__libcpp_mutex_unlock",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcppMutexUnlock(CpuContext ctx) => PthreadMutexUnlockCore(ctx, ctx[CpuRegister.Rdi], requireOwner: true);
 
     private static int PthreadGetthreadidCore(CpuContext ctx)
     {
@@ -335,7 +363,8 @@ public static class KernelPthreadCompatExports
         ExportName = "pthread_cond_destroy",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int PosixPthreadCondDestroy(CpuContext ctx) => PthreadCondDestroyCore(ctx, ctx[CpuRegister.Rdi]);
+    public static int PosixPthreadCondDestroy(CpuContext ctx) =>
+        PthreadCondDestroyCore(ctx, ctx[CpuRegister.Rdi]);
 
     [SysAbiExport(
         Nid = "WKAXJ4XBPQ4",
@@ -371,6 +400,14 @@ public static class KernelPthreadCompatExports
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
     public static int PosixPthreadCondWait(CpuContext ctx) => PthreadCondWaitCore(ctx, ctx[CpuRegister.Rdi], ctx[CpuRegister.Rsi], timed: false);
+
+    [SysAbiExport(
+        Nid = "fUs4X3mpTi4",
+        ExportName = "__sharpemu_gen5_cond_wait",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int Gen5CondWait(CpuContext ctx) =>
+        PthreadCondWaitCore(ctx, ctx[CpuRegister.Rdi], ctx[CpuRegister.Rsi], timed: false);
 
     [SysAbiExport(
         Nid = "27bAgiJmOh0",
@@ -429,11 +466,32 @@ public static class KernelPthreadCompatExports
     }
 
     [SysAbiExport(
+        Nid = "K953PF5u6Pc",
+        ExportName = "pthread_cond_reltimedwait_np",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadCondRelativeTimedwait(CpuContext ctx) =>
+        PthreadCondWaitCore(
+            ctx,
+            ctx[CpuRegister.Rdi],
+            ctx[CpuRegister.Rsi],
+            timed: true,
+            timeoutUsec: unchecked((uint)ctx[CpuRegister.Rdx]),
+            posixErrors: true);
+
+    [SysAbiExport(
         Nid = "mkx2fVhNMsg",
         ExportName = "pthread_cond_broadcast",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
     public static int PosixPthreadCondBroadcast(CpuContext ctx) => PthreadCondSignalCore(ctx, ctx[CpuRegister.Rdi], broadcast: true);
+
+    [SysAbiExport(
+        Nid = "enG9-gUJp70",
+        ExportName = "__libcpp_condvar_broadcast",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcppCondvarBroadcast(CpuContext ctx) => PthreadCondSignalCore(ctx, ctx[CpuRegister.Rdi], broadcast: true);
 
     [SysAbiExport(
         Nid = "2MOy+rUfuhQ",
@@ -483,6 +541,37 @@ public static class KernelPthreadCompatExports
 
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
+
+    [SysAbiExport(
+        Nid = "mKoTx03HRWA",
+        ExportName = "pthread_condattr_init",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadCondattrInit(CpuContext ctx) => PthreadCondattrInit(ctx);
+
+    [SysAbiExport(
+        Nid = "EjllaAqAPZo",
+        ExportName = "pthread_condattr_setclock",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadCondattrSetClock(CpuContext ctx)
+    {
+        var attrAddress = ctx[CpuRegister.Rdi];
+        if (attrAddress == 0)
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "dJcuQVn6-Iw",
+        ExportName = "pthread_condattr_destroy",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadCondattrDestroy(CpuContext ctx) => PthreadCondattrDestroy(ctx);
 
     [SysAbiExport(
         Nid = "14bOACANTBo",
@@ -957,7 +1046,10 @@ public static class KernelPthreadCompatExports
             return false;
         }
 
-        return CreateImplicitMutexState(ctx, mutexAddress, MutexTypeErrorCheck, out resolvedAddress, out state);
+        // A zero-filled static std::mutex uses the platform's normal mutex
+        // initializer. Treating it as error-checking turns nested execution in
+        // the cooperative guest scheduler into EDEADLK and libc++ throws.
+        return CreateImplicitMutexState(ctx, mutexAddress, MutexTypeNormal, out resolvedAddress, out state);
     }
 
     private static ulong ResolveMutexAttrHandle(CpuContext ctx, ulong attrAddress)
@@ -1373,7 +1465,6 @@ public static class KernelPthreadCompatExports
 
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
-
     private static PthreadMutexWaiter EnqueueMutexWaiterLocked(
         PthreadMutexState state,
         ulong threadId,
