@@ -26,6 +26,7 @@ public static class KernelPthreadExtendedCompatExports
     private static readonly Dictionary<ulong, ThreadState> _threadStates = new();
     private static readonly Dictionary<ulong, PthreadAttrState> _attrStates = new();
     private static readonly Dictionary<ulong, PthreadRwlockState> _rwlockStates = new();
+    private static readonly ConcurrentDictionary<ulong, PthreadSpinState> _spinStates = new();
     private static readonly ConcurrentDictionary<int, TlsKeyState> _tlsKeys = new();
     private static int _nextTlsKey = 1;
     private static long _nextSyntheticRwlockHandleId = 1;
@@ -33,6 +34,56 @@ public static class KernelPthreadExtendedCompatExports
     private static long _nextSyntheticRwlockAttrHandleId = 1;
 
     private static readonly ConcurrentDictionary<ulong, ConcurrentDictionary<int, ulong>> _threadLocalSpecific = new();
+
+    [SysAbiExport(
+        Nid = "cfjAjVTFG6A",
+        ExportName = "pthread_suspend_user_context_np",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadSuspendUserContext(CpuContext ctx)
+    {
+        ctx[CpuRegister.Rax] = 0;
+        return 0;
+    }
+
+    [SysAbiExport(
+        Nid = "QRdE7dBfNks",
+        ExportName = "pthread_resume_user_context_np",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadResumeUserContext(CpuContext ctx)
+    {
+        ctx[CpuRegister.Rax] = 0;
+        return 0;
+    }
+
+    [SysAbiExport(
+        Nid = "YkGOXpJEtO8",
+        ExportName = "pthread_get_user_context_np",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadGetUserContext(CpuContext ctx)
+    {
+        var contextAddress = ctx[CpuRegister.Rsi];
+        if (contextAddress == 0 || !ctx.Memory.TryWrite(contextAddress, new byte[0x500]))
+        {
+            return 22;
+        }
+
+        ctx[CpuRegister.Rax] = 0;
+        return 0;
+    }
+
+    [SysAbiExport(
+        Nid = "el9stmu6290",
+        ExportName = "pthread_set_user_context_np",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadSetUserContext(CpuContext ctx)
+    {
+        ctx[CpuRegister.Rax] = 0;
+        return 0;
+    }
 
     internal static void GetThreadStartScheduling(
         CpuContext ctx,
@@ -126,6 +177,116 @@ public static class KernelPthreadExtendedCompatExports
         }
     }
 
+    private sealed class PthreadSpinState
+    {
+        public int Locked;
+        public ulong OwnerThreadId;
+    }
+
+    [SysAbiExport(
+        Nid = "ZMn3clnAGBA",
+        ExportName = "pthread_spin_init",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadSpinInit(CpuContext ctx)
+    {
+        var address = ctx[CpuRegister.Rdi];
+        if (address == 0 || !ctx.TryWriteUInt64(address, 0))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
+        _spinStates[address] = new PthreadSpinState();
+        ctx[CpuRegister.Rax] = 0;
+        return 0;
+    }
+
+    [SysAbiExport(
+        Nid = "IJIggoPZExk",
+        ExportName = "pthread_spin_destroy",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadSpinDestroy(CpuContext ctx)
+    {
+        var address = ctx[CpuRegister.Rdi];
+        _spinStates.TryRemove(address, out _);
+        if (address != 0)
+        {
+            _ = ctx.TryWriteUInt64(address, 0);
+        }
+
+        ctx[CpuRegister.Rax] = 0;
+        return 0;
+    }
+
+    [SysAbiExport(
+        Nid = "pw+70ClLYlY",
+        ExportName = "pthread_spin_lock",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadSpinLock(CpuContext ctx)
+    {
+        var address = ctx[CpuRegister.Rdi];
+        if (address == 0)
+        {
+            return 22;
+        }
+
+        var state = _spinStates.GetOrAdd(address, _ => new PthreadSpinState());
+        var spinner = new SpinWait();
+        while (Interlocked.CompareExchange(ref state.Locked, 1, 0) != 0)
+        {
+            spinner.SpinOnce();
+        }
+
+        state.OwnerThreadId = KernelPthreadState.GetCurrentThreadHandle();
+        ctx[CpuRegister.Rax] = 0;
+        return 0;
+    }
+
+    [SysAbiExport(
+        Nid = "rCTGkBIHfPY",
+        ExportName = "pthread_spin_trylock",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadSpinTrylock(CpuContext ctx)
+    {
+        var address = ctx[CpuRegister.Rdi];
+        if (address == 0)
+        {
+            return 22;
+        }
+
+        var state = _spinStates.GetOrAdd(address, _ => new PthreadSpinState());
+        if (Interlocked.CompareExchange(ref state.Locked, 1, 0) != 0)
+        {
+            return 16;
+        }
+
+        state.OwnerThreadId = KernelPthreadState.GetCurrentThreadHandle();
+        ctx[CpuRegister.Rax] = 0;
+        return 0;
+    }
+
+    [SysAbiExport(
+        Nid = "LEfMMCT+SlM",
+        ExportName = "pthread_spin_unlock",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadSpinUnlock(CpuContext ctx)
+    {
+        var address = ctx[CpuRegister.Rdi];
+        if (address == 0 || !_spinStates.TryGetValue(address, out var state))
+        {
+            return 22;
+        }
+
+        state.OwnerThreadId = 0;
+        Volatile.Write(ref state.Locked, 0);
+        ctx[CpuRegister.Rax] = 0;
+        return 0;
+    }
+
     private readonly record struct TlsKeyState(ulong Destructor);
 
     private readonly record struct PthreadAttrState(
@@ -180,6 +341,13 @@ public static class KernelPthreadExtendedCompatExports
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
     public static int PosixPthreadDetach(CpuContext ctx) => PthreadDetach(ctx);
+
+    [SysAbiExport(
+        Nid = "CfO+zWMbJJQ",
+        ExportName = "__sharpemu_gen5_thrd_detach",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int Gen5ThrdDetach(CpuContext ctx) => PthreadDetach(ctx);
 
     [SysAbiExport(
         Nid = "How7B8Oet6k",
@@ -352,6 +520,40 @@ public static class KernelPthreadExtendedCompatExports
     }
 
     [SysAbiExport(
+        Nid = "FIs3-UQT9sg",
+        ExportName = "pthread_getschedparam",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadGetschedparam(CpuContext ctx)
+    {
+        var thread = ctx[CpuRegister.Rdi];
+        var outPolicyAddress = ctx[CpuRegister.Rsi];
+        var outSchedParamAddress = ctx[CpuRegister.Rdx];
+        if (thread == 0 || outPolicyAddress == 0 || outSchedParamAddress == 0)
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
+        int policy;
+        int priority;
+        lock (_stateGate)
+        {
+            var state = GetOrCreateThreadStateLocked(thread);
+            policy = state.Attributes.SchedPolicy;
+            priority = state.Attributes.SchedPriority;
+        }
+
+        if (!ctx.TryWriteInt32(outPolicyAddress, policy) ||
+            !ctx.TryWriteInt32(outSchedParamAddress, priority))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
         Nid = "nsYoNRywwNg",
         ExportName = "scePthreadAttrInit",
         Target = Generation.Gen4 | Generation.Gen5,
@@ -388,6 +590,42 @@ public static class KernelPthreadExtendedCompatExports
     public static int PosixPthreadAttrInit(CpuContext ctx)
     {
         return PthreadAttrInit(ctx);
+    }
+
+    [SysAbiExport(
+        Nid = "Ucsu-OK+els",
+        ExportName = "pthread_attr_get_np",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadAttrGetNp(CpuContext ctx)
+    {
+        const ulong guestStackSize = 0x0020_0000UL;
+        var attrAddress = ctx[CpuRegister.Rsi];
+        if (attrAddress == 0)
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
+        // CpuDispatcher and the native guest-thread bridge both allocate 2 MiB
+        // aligned guest stacks. Report the actual range containing this call's
+        // RSP so Mono can safely establish its conservative stack scan bounds.
+        var stackPointer = ctx[CpuRegister.Rsp];
+        var stackTop = (stackPointer + guestStackSize - 1) & ~(guestStackSize - 1);
+        var stackAddress = stackTop - guestStackSize;
+        var resolvedAddress = ResolvePthreadAttrHandle(ctx, attrAddress);
+        lock (_stateGate)
+        {
+            var updated = GetOrCreateAttrStateLocked(attrAddress) with
+            {
+                StackAddress = stackAddress,
+                StackSize = guestStackSize,
+            };
+            _attrStates[attrAddress] = updated;
+            _attrStates[resolvedAddress] = updated;
+        }
+
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
     [SysAbiExport(
@@ -600,6 +838,16 @@ public static class KernelPthreadExtendedCompatExports
     }
 
     [SysAbiExport(
+        Nid = "vQm4fDEsWi8",
+        ExportName = "pthread_attr_getstack",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadAttrGetstack(CpuContext ctx)
+    {
+        return PthreadAttrGetstack(ctx);
+    }
+
+    [SysAbiExport(
         Nid = "-fA+7ZlGDQs",
         ExportName = "scePthreadAttrGetstacksize",
         Target = Generation.Gen4 | Generation.Gen5,
@@ -624,8 +872,18 @@ public static class KernelPthreadExtendedCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
-        ctx[CpuRegister.Rax] = state.StackSize;
+        ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "0qOtCR-ZHck",
+        ExportName = "pthread_attr_getstacksize",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadAttrGetstacksize(CpuContext ctx)
+    {
+        return PthreadAttrGetstacksize(ctx);
     }
 
     [SysAbiExport(
@@ -674,6 +932,29 @@ public static class KernelPthreadExtendedCompatExports
 
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "E+tyo3lp5Lw",
+        ExportName = "pthread_attr_setdetachstate",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadAttrSetdetachstate(CpuContext ctx)
+    {
+        return PthreadAttrSetdetachstate(ctx);
+    }
+
+    [SysAbiExport(
+        Nid = "oxMp8uPqa+U",
+        ExportName = "pthread_set_name_np",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadSetNameNp(CpuContext ctx)
+    {
+        // Thread names are diagnostic metadata; scheduling already recorded the
+        // entry point and host handle, so naming failure must not stop startup.
+        ctx[CpuRegister.Rax] = 0;
+        return 0;
     }
 
     [SysAbiExport(

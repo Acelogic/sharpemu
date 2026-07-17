@@ -24,6 +24,16 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private const int DefaultImportLoopGuardSeconds = 5;
 
+	private static readonly HashSet<string> PsmLleNids = new(StringComparer.Ordinal)
+	{
+		"FqHN0elWA6E", // PsmInitParam::PsmInitParam
+		"lWlBrUu77Kg", // PsmFramework::Initialize
+		"MEuF5zm-r4o", // PsmFramework::RegisterPInvokeCallTable
+		"vNcLSBfLtbk", // PsmFramework::RegisterInternalCall
+		"co1TwYJ2ybU", // PsmFramework::Run
+		"6hSAbrbC3sE", // PsmFramework::Finalize
+	};
+
 	private readonly struct ImportStubEntry
 	{
 		public ulong Address { get; }
@@ -122,6 +132,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	private static readonly ulong GuestThreadTlsPrefixSize = OperatingSystem.IsWindows() ? 0x0000_1000UL : 0x0001_0000UL;
 
 	private const ulong GuestThreadRegionStride = 0x0100_0000UL;
+	private const int MaxGuestThreadRegions = 256;
 
 	[ThreadStatic]
 	private static List<(IVirtualMemory Memory, ulong Base)>? _nestedGuestCallbackStacks;
@@ -228,6 +239,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private readonly List<nint> _importHandlerTrampolines = new List<nint>();
 
+	private readonly object _dynamicHleTrampolineGate = new();
+
+	private readonly Dictionary<string, ulong> _dynamicHleTrampolines = new(StringComparer.Ordinal);
+
 	private const int GuestContextTransferFrameQwords = 15;
 
 	private readonly object _guestContextTransferStubGate = new();
@@ -285,6 +300,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private bool _logAllImports;
 
+	private bool _logImportReturns;
+
 	private bool _logImportFrames;
 
 	private bool _logImportRecent;
@@ -293,7 +310,11 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private string? _probeImportReturn;
 
+	private string? _probeImportArguments;
+
 	private string? _importFilter;
+
+	private ulong _importReturnRipFilter;
 
 	private bool _disableImportLoopGuard;
 
@@ -514,6 +535,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	private readonly Dictionary<ulong, GuestThreadState> _guestThreads = new Dictionary<ulong, GuestThreadState>();
 
 	private int _guestThreadPumpDepth;
+	private bool _traceShellCoreLogger;
+	private int _traceShellCoreLoggerCount;
 
 	private bool _guestThreadYieldRequested;
 
@@ -886,6 +909,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		Console.Error.WriteLine(_moduleManager.TryGetExport("L-Q3LEjIbgA", out ExportedFunction export2) ? ("[LOADER][INFO] ExportCheck map_direct: " + export2.LibraryName + ":" + export2.Name) : "[LOADER][INFO] ExportCheck map_direct: MISSING");
 		_entryPoint = entryPoint;
 		_cpuContext = context;
+		TraceConfiguredMemoryProbe(context, "execute-start");
 		_returnFallbackTarget = context[CpuRegister.Rsi];
 		Volatile.Write(ref _globalFallbackTarget, _returnFallbackTarget);
 		Volatile.Write(ref _globalUnresolvedReturnStub, (ulong)_unresolvedReturnStub);
@@ -909,11 +933,30 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		_logUsleep = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_USLEEP"), "1", StringComparison.Ordinal);
 		_logBootstrap = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_BOOTSTRAP"), "1", StringComparison.Ordinal);
 		_logAllImports = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_ALL_IMPORTS"), "1", StringComparison.Ordinal);
+		_logImportReturns = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORT_RETURNS"), "1", StringComparison.Ordinal);
 		_logImportFrames = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORT_FRAMES"), "1", StringComparison.Ordinal);
 		_logImportRecent = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORT_RECENT"), "1", StringComparison.Ordinal);
+		_traceShellCoreLogger = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_TRACE_SHELLCORE_LOGGER"), "1", StringComparison.Ordinal);
+		_traceShellCoreLoggerCount = 0;
 		_logStackCheck = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_STACK_CHK"), "1", StringComparison.Ordinal);
 		_probeImportReturn = Environment.GetEnvironmentVariable("SHARPEMU_PROBE_IMPORT_RET");
+		_probeImportArguments = Environment.GetEnvironmentVariable("SHARPEMU_PROBE_IMPORT_ARGS");
 		_importFilter = Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORT_FILTER");
+		_importReturnRipFilter = 0;
+		var importReturnRipFilterText = Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORT_RETURN_RIP")?.Trim();
+		if (!string.IsNullOrWhiteSpace(importReturnRipFilterText))
+		{
+			if (importReturnRipFilterText.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+			{
+				importReturnRipFilterText = importReturnRipFilterText[2..];
+			}
+
+			_ = ulong.TryParse(
+				importReturnRipFilterText,
+				System.Globalization.NumberStyles.HexNumber,
+				System.Globalization.CultureInfo.InvariantCulture,
+				out _importReturnRipFilter);
+		}
 		_disableImportLoopGuard = string.Equals(
 			Environment.GetEnvironmentVariable("SHARPEMU_DISABLE_IMPORT_LOOP_GUARD"),
 			"1",
@@ -943,7 +986,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		MarkExecutionProgress();
 		BindTlsBase(context);
 		var previousGuestThreadScheduler = GuestThreadExecution.Scheduler;
+		var previousQuiesceNewGuestThreads = GuestThreadExecution.QuiesceNewGuestThreads;
 		GuestThreadExecution.Scheduler = this;
+		GuestThreadExecution.QuiesceNewGuestThreads = executionOptions.QuiesceNewGuestThreads;
 		try
 		{
 			if (!SetupImportStubs(importStubs))
@@ -969,6 +1014,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 		finally
 		{
+			GuestThreadExecution.QuiesceNewGuestThreads = previousQuiesceNewGuestThreads;
 			GuestThreadExecution.Scheduler = previousGuestThreadScheduler;
 			Console.Error.WriteLine("[LOADER][INFO] === Execute END (LastError: " + (LastError ?? "null") + ") ===");
 		}
@@ -1334,6 +1380,16 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		if (string.IsNullOrWhiteSpace(nid) || string.Equals(nid, RuntimeStubNids.KernelDynlibDlsym, StringComparison.Ordinal))
 		{
 			return false;
+		}
+		if (string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_PREFER_LLE_PSM"), "1", StringComparison.Ordinal) &&
+			PsmLleNids.Contains(nid) &&
+			TryResolveRuntimeSymbolAddress(nid, out var psmTarget) &&
+			IsDirectImportTargetUsable(psmTarget))
+		{
+			targetAddress = psmTarget;
+			resolvedSymbol = nid;
+			Console.Error.WriteLine($"[LOADER][DEBUG] TryResolveDirectImportTarget: {nid} -> LLE PSM 0x{targetAddress:X16}");
+			return true;
 		}
 		if (IsHlePreferredNid(nid))
 		{
@@ -1904,6 +1960,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			}
 		}
 		_importHandlerTrampolines.Clear();
+		lock (_dynamicHleTrampolineGate)
+		{
+			_dynamicHleTrampolines.Clear();
+		}
 	}
 
 	private unsafe void CreateTlsHandler()
@@ -2762,7 +2822,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			}
 
 			if (hostThread is not null &&
-				!ReferenceEquals(hostThread, Thread.CurrentThread))
+				!ReferenceEquals(hostThread, Thread.CurrentThread) &&
+				(hostThread.ThreadState & System.Threading.ThreadState.Unstarted) == 0)
 			{
 				hostThread.Join(1);
 			}
@@ -3508,7 +3569,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		out ulong mappedBase,
 		out string? error)
 	{
-		for (int i = 0; i < 64; i++)
+		for (int i = 0; i < MaxGuestThreadRegions; i++)
 		{
 			var candidateBase = baseAddress - ((ulong)i * GuestThreadRegionStride);
 			if (!IsGuestThreadRegionFree(virtualMemory, candidateBase, size))
@@ -3542,7 +3603,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		out ulong tlsBase,
 		out string? error)
 	{
-		for (int i = 0; i < 64; i++)
+		for (int i = 0; i < MaxGuestThreadRegions; i++)
 		{
 			var candidateBase = GuestThreadTlsBaseAddress - ((ulong)i * GuestThreadRegionStride);
 			var mappedBase = candidateBase - GuestThreadTlsPrefixSize;
@@ -3781,6 +3842,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			GuestThreadExecution.RestoreGuestThread(previousGuestThreadHandle);
 			LastError = previousLastError;
 		}
+
+		// A completed or blocked worker can expose more ready work. Keep draining
+		// the queue so large system processes do not strand threads after a batch.
+		Pump(thread.Context, "thread_complete");
 	}
 
 	private GuestNativeCallExitReason ExecuteBlockedGuestThreadContinuation(
@@ -4484,6 +4549,16 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		return 20;
 	}
 
+	private static int GetThreadSnapshotSeconds()
+	{
+		if (int.TryParse(Environment.GetEnvironmentVariable("SHARPEMU_THREAD_SNAPSHOT_SECONDS"), out var result))
+		{
+			return Math.Max(0, result);
+		}
+
+		return 0;
+	}
+
 	private void StartStallWatchdog()
 	{
 		int stallWatchdogSeconds = GetStallWatchdogSeconds();
@@ -4493,6 +4568,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 		_stallWatchdogStop = false;
 		long num = (long)((double)stallWatchdogSeconds * Stopwatch.Frequency);
+		int threadSnapshotSeconds = GetThreadSnapshotSeconds();
+		long threadSnapshotInterval = (long)((double)threadSnapshotSeconds * Stopwatch.Frequency);
+		long lastThreadSnapshotTimestamp = Stopwatch.GetTimestamp();
 		_stallWatchdogThread = new Thread(new ThreadStart(delegate
 		{
 			while (!_stallWatchdogStop)
@@ -4501,6 +4579,14 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				if (_stallWatchdogStop)
 				{
 					break;
+				}
+				long timestamp = Stopwatch.GetTimestamp();
+				if (threadSnapshotInterval > 0 && timestamp - lastThreadSnapshotTimestamp >= threadSnapshotInterval)
+				{
+					Console.Error.WriteLine($"[LOADER][INFO] Periodic guest-thread snapshot ({threadSnapshotSeconds}s)");
+					LogStallWatchdogSnapshot();
+					Console.Error.Flush();
+					lastThreadSnapshotTimestamp = timestamp;
 				}
 				long num2 = Stopwatch.GetTimestamp() - Volatile.Read(ref _lastProgressTimestamp);
 				if (num2 < num)
@@ -4622,9 +4708,16 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			var threads = SnapshotGuestThreads();
 			if (threads.Length != 0)
 			{
+				var threadNameFilter = Environment.GetEnvironmentVariable("SHARPEMU_THREAD_SNAPSHOT_FILTER");
 				var logged = 0;
 				foreach (var thread in threads)
 				{
+					if (!string.IsNullOrWhiteSpace(threadNameFilter) &&
+						thread.Name.IndexOf(threadNameFilter, StringComparison.OrdinalIgnoreCase) < 0)
+					{
+						continue;
+					}
+
 					var hostThreadId = Volatile.Read(ref thread.HostThreadId);
 					var hostContextText = string.Empty;
 					if (TryCaptureHostThreadContext(hostThreadId, out var hostContext))

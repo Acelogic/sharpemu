@@ -41,6 +41,7 @@ public static class KernelRuntimeCompatExports
     private const int OrbisTimesecSize = sizeof(long) + sizeof(uint) + sizeof(uint);
     private const ulong ModuleInfoHandleOffset = 0x108;
     private const ulong ModuleInfoNameOffset = 0x10;
+    private const ulong ModuleInfoEhFrameHeaderOffset = 0x148;
     private const int ModuleInfoNameMaxBytes = 64;
     private const ulong DefaultKernelTscFrequency = 10_000_000UL;
     private const ulong PrtAreaStartAddress = 0x0000001000000000UL;
@@ -138,6 +139,26 @@ public static class KernelRuntimeCompatExports
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
+    [SysAbiExport(
+        Nid = "yS8U2TGCe1A",
+        ExportName = "nanosleep",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixNanosleep(CpuContext ctx) => KernelNanosleep(ctx);
+
+    [SysAbiExport(
+        Nid = "6XG4B33N09g",
+        ExportName = "sched_yield",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixSchedYield(CpuContext ctx)
+    {
+        GuestThreadExecution.Scheduler?.Pump(ctx, "sched_yield");
+        _ = Thread.Yield();
+        ctx[CpuRegister.Rax] = 0;
+        return 0;
+    }
+
     private static void WriteRemainingTime(CpuContext ctx, ulong remainAddress, long seconds, long nanoseconds)
     {
         if (remainAddress == 0)
@@ -149,6 +170,31 @@ public static class KernelRuntimeCompatExports
         BinaryPrimitives.WriteInt64LittleEndian(remainBuffer, seconds);
         BinaryPrimitives.WriteInt64LittleEndian(remainBuffer[sizeof(long)..], nanoseconds);
         ctx.Memory.TryWrite(remainAddress, remainBuffer);
+    }
+
+    [SysAbiExport(
+        Nid = "-ZR+hG7aDHw",
+        ExportName = "sceKernelSleep",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int KernelSleep(CpuContext ctx)
+    {
+        var seconds = ctx[CpuRegister.Rdi];
+        if (seconds == 0)
+        {
+            Thread.Yield();
+        }
+        else
+        {
+            GuestThreadExecution.Scheduler?.Pump(ctx, "sceKernelSleep");
+            var milliseconds = seconds > (ulong)int.MaxValue / 1000UL
+                ? (ulong)int.MaxValue
+                : seconds * 1000UL;
+            Thread.Sleep(unchecked((int)milliseconds));
+        }
+
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
     [SysAbiExport(
@@ -978,6 +1024,10 @@ public static class KernelRuntimeCompatExports
         if (KernelModuleRegistry.TryGetModuleByHandle(moduleHandle, out var module))
         {
             _ = TryWriteModuleName(ctx, outInfoAddress, module.Name);
+            if (!ctx.TryWriteUInt64(outInfoAddress + ModuleInfoEhFrameHeaderOffset, module.EhFrameHeaderAddress))
+            {
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            }
         }
 
         ctx[CpuRegister.Rax] = 0;
@@ -1008,6 +1058,10 @@ public static class KernelRuntimeCompatExports
         if (KernelModuleRegistry.TryGetModuleByHandle(moduleHandle, out var module))
         {
             _ = TryWriteModuleName(ctx, outInfoAddress, module.Name);
+            if (!ctx.TryWriteUInt64(outInfoAddress + ModuleInfoEhFrameHeaderOffset, module.EhFrameHeaderAddress))
+            {
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            }
         }
 
         ctx[CpuRegister.Rax] = 0;
@@ -1200,6 +1254,11 @@ public static class KernelRuntimeCompatExports
         LibraryName = "libKernel")]
     public static int KernelStopUnloadModule(CpuContext ctx)
     {
+        if (string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_MODULE_LOAD"), "1", StringComparison.Ordinal))
+        {
+            Console.Error.WriteLine(
+                $"[LOADER][TRACE] sceKernelStopUnloadModule handle=0x{ctx[CpuRegister.Rdi]:X}");
+        }
         var resultAddress = ctx[CpuRegister.R9];
         if (resultAddress != 0 && !ctx.TryWriteInt32(resultAddress, 0))
         {
@@ -1245,8 +1304,39 @@ public static class KernelRuntimeCompatExports
             handle = KernelModuleRegistry.RegisterSyntheticModule("module.sprx", isSystemModule: false);
         }
 
+        if (string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_MODULE_LOAD"), "1", StringComparison.Ordinal))
+        {
+            Console.Error.WriteLine(
+                $"[LOADER][TRACE] sceKernelLoadStartModule path='{modulePath}' -> handle=0x{handle:X}");
+            if (modulePath.Contains('\uFFFD'))
+            {
+                Span<byte> pathPreview = stackalloc byte[64];
+                var preview = ctx.Memory.TryRead(modulePathAddress, pathPreview)
+                    ? Convert.ToHexString(pathPreview)
+                    : "<unreadable>";
+                Console.Error.WriteLine(
+                    $"[LOADER][TRACE] malformed module path address=0x{modulePathAddress:X16} bytes={preview}");
+                Console.Error.WriteLine(
+                    $"[LOADER][TRACE] module args rsi=0x{ctx[CpuRegister.Rsi]:X16} rdx=0x{ctx[CpuRegister.Rdx]:X16} rcx=0x{ctx[CpuRegister.Rcx]:X16} r8=0x{ctx[CpuRegister.R8]:X16} r9=0x{ctx[CpuRegister.R9]:X16}");
+            }
+        }
+
         ctx[CpuRegister.Rax] = unchecked((uint)handle);
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "Y1nEpkCieOY",
+        ExportName = "sceKernelLoadStartModuleInternalForMono",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int KernelLoadStartModuleInternalForMono(CpuContext ctx)
+    {
+        // The PSM Mono loader uses the same six-argument ABI as
+        // sceKernelLoadStartModule, but requests an internal load mode. The
+        // firmware AOT assemblies are preloaded beside libScePsm so their
+        // exported dll_start/dll_size symbols are already available to dlsym.
+        return KernelLoadStartModule(ctx);
     }
 
     [SysAbiExport(
@@ -1261,6 +1351,678 @@ public static class KernelRuntimeCompatExports
         lock (_stateGate)
         {
             _loadedSysmodules.Add(moduleId);
+        }
+
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "39iV5E1HoCk",
+        ExportName = "sceSysmoduleLoadModuleInternal",
+        Target = Generation.Gen5,
+        LibraryName = "libSceSysmodule")]
+    public static int SysmoduleLoadModuleInternal(CpuContext ctx) => SysmoduleLoadModule(ctx);
+
+    [SysAbiExport(
+        Nid = "ynFKQ5bfGks",
+        ExportName = "sceSysmoduleIsLoadedInternal",
+        Target = Generation.Gen5,
+        LibraryName = "libSceSysmodule")]
+    public static int SysmoduleIsLoadedInternal(CpuContext ctx) => SysmoduleIsLoaded(ctx);
+
+    [SysAbiExport(
+        Nid = "k+AXqu2-eBc",
+        ExportName = "getpagesize",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int KernelGetPageSize(CpuContext ctx)
+    {
+        // Orbis/Prospero user processes use 16 KiB VM pages. Jemspace rejects
+        // larger values before it creates Mono's local heap.
+        ctx[CpuRegister.Rax] = 0x4000;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "mkawd0NA9ts",
+        ExportName = "sysconf",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixSysconf(CpuContext ctx)
+    {
+        // FreeBSD _SC_PAGESIZE is 47. Mono uses it to size the optional shared
+        // metadata area and expects Prospero's 16 KiB user page size.
+        if (unchecked((int)ctx[CpuRegister.Rdi]) == 47)
+        {
+            ctx[CpuRegister.Rax] = 0x4000;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        TrySetErrno(ctx, Einval);
+        ctx[CpuRegister.Rax] = ulong.MaxValue;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "DFmMT80xcNI",
+        ExportName = "sysctl",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixSysctl(CpuContext ctx)
+    {
+        var oldLengthAddress = ctx[CpuRegister.Rcx];
+        if (oldLengthAddress == 0 || !ctx.TryWriteUInt64(oldLengthAddress, 0))
+        {
+            TrySetErrno(ctx, Efault);
+            ctx[CpuRegister.Rax] = ulong.MaxValue;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        // The Mono startup query enumerates process records only to discover
+        // other runtimes sharing its optional metadata area. Returning an empty
+        // result preserves the ABI while keeping this emulated process isolated.
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "MhC53TKmjVA",
+        ExportName = "sysctlbyname",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixSysctlByName(CpuContext ctx)
+    {
+        const int enoent = 2;
+        var nameAddress = ctx[CpuRegister.Rdi];
+        var oldAddress = ctx[CpuRegister.Rsi];
+        var oldLengthAddress = ctx[CpuRegister.Rdx];
+
+        if (nameAddress == 0 ||
+            oldLengthAddress == 0 ||
+            !TryReadUtf8CString(ctx, nameAddress, 256, out var name) ||
+            !ctx.TryReadUInt64(oldLengthAddress, out var requestedLength))
+        {
+            TrySetErrno(ctx, Efault);
+            ctx[CpuRegister.Rax] = ulong.MaxValue;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        if (!string.Equals(name, "kern.rng_pseudo", StringComparison.Ordinal))
+        {
+            TrySetErrno(ctx, enoent);
+            ctx[CpuRegister.Rax] = ulong.MaxValue;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        if (oldAddress == 0)
+        {
+            // The random sysctl is caller-sized. A length-only query therefore
+            // preserves the requested size and succeeds.
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        if (requestedLength > 1024 * 1024)
+        {
+            TrySetErrno(ctx, Einval);
+            ctx[CpuRegister.Rax] = ulong.MaxValue;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        var randomBytes = new byte[(int)requestedLength];
+        RandomNumberGenerator.Fill(randomBytes);
+        if (!ctx.Memory.TryWrite(oldAddress, randomBytes) ||
+            !ctx.TryWriteUInt64(oldLengthAddress, requestedLength))
+        {
+            TrySetErrno(ctx, Efault);
+            ctx[CpuRegister.Rax] = ulong.MaxValue;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "QuJYZ2KVGGQ",
+        ExportName = "shm_open",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixSharedMemoryOpen(CpuContext ctx)
+    {
+        // POSIX shared objects are optional for Mono's shared metadata area. A
+        // normal ENOSYS response selects its fully supported private allocation
+        // path and avoids exposing host shared-memory namespaces to the guest.
+        const int enosys = 78;
+        TrySetErrno(ctx, enosys);
+        ctx[CpuRegister.Rax] = ulong.MaxValue;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "ih4CD9-gghM",
+        ExportName = "ftruncate",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixFileTruncate(CpuContext ctx)
+    {
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "tPWsbOUGO8k",
+        ExportName = "shm_unlink",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixSharedMemoryUnlink(CpuContext ctx)
+    {
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "BPE9s9vQQXo",
+        ExportName = "mmap",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcMmap(CpuContext ctx)
+    {
+        var requestedSize = ctx[CpuRegister.Rsi];
+        if (requestedSize == 0 ||
+            ctx.Memory is not IGuestMemoryAllocator allocator ||
+            !allocator.TryAllocateGuestMemory(requestedSize, alignment: 0x4000, out var mappedAddress))
+        {
+            ctx[CpuRegister.Rax] = ulong.MaxValue;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        ctx[CpuRegister.Rax] = mappedAddress;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "UqDGjXA5yUM",
+        ExportName = "munmap",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcMunmap(CpuContext ctx)
+    {
+        // Anonymous libc mappings come from SharpEmu's monotonic guest arena,
+        // which cannot currently release individual spans. The address becomes
+        // logically unmapped to the caller even though backing is retained for
+        // the lifetime of this emulation process.
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "SfQIZcqvvms",
+        ExportName = "strncpy",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcStrncpy(CpuContext ctx)
+    {
+        var destinationAddress = ctx[CpuRegister.Rdi];
+        var sourceAddress = ctx[CpuRegister.Rsi];
+        var count = ctx[CpuRegister.Rdx];
+        if (destinationAddress == 0 || sourceAddress == 0 || count > int.MaxValue)
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        var copied = new byte[(int)count];
+        if (count != 0)
+        {
+            var source = GC.AllocateUninitializedArray<byte>((int)count);
+            if (!ctx.Memory.TryRead(sourceAddress, source))
+            {
+                return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            var terminator = Array.IndexOf(source, (byte)0);
+            var copyLength = terminator < 0 ? source.Length : terminator;
+            source.AsSpan(0, copyLength).CopyTo(copied);
+            if (!ctx.Memory.TryWrite(destinationAddress, copied))
+            {
+                return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+        }
+
+        ctx[CpuRegister.Rax] = destinationAddress;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "YNzNkJzYqEg",
+        ExportName = "strncpy_s",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcStrncpySecure(CpuContext ctx)
+    {
+        var destinationAddress = ctx[CpuRegister.Rdi];
+        var destinationSize = ctx[CpuRegister.Rsi];
+        var sourceAddress = ctx[CpuRegister.Rdx];
+        var count = ctx[CpuRegister.Rcx];
+        if (destinationAddress == 0 || destinationSize == 0 || sourceAddress == 0 ||
+            destinationSize > int.MaxValue || count > int.MaxValue)
+        {
+            ctx[CpuRegister.Rax] = Einval;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        var capacity = checked((int)destinationSize);
+        var sourceLimit = checked((int)Math.Min(count, destinationSize - 1));
+        var source = GC.AllocateUninitializedArray<byte>(sourceLimit + 1);
+        if (!ctx.Memory.TryRead(sourceAddress, source))
+        {
+            ctx[CpuRegister.Rax] = Efault;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        var terminator = Array.IndexOf(source, (byte)0, 0, sourceLimit);
+        var copyLength = terminator < 0 ? sourceLimit : terminator;
+        var destination = new byte[capacity];
+        source.AsSpan(0, copyLength).CopyTo(destination);
+        if (!ctx.Memory.TryWrite(destinationAddress, destination))
+        {
+            ctx[CpuRegister.Rax] = Efault;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "enqPGLfmVNU",
+        ExportName = "strtok_r",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcStrtokReentrant(CpuContext ctx)
+    {
+        var currentAddress = ctx[CpuRegister.Rdi];
+        var delimiterAddress = ctx[CpuRegister.Rsi];
+        var savePointerAddress = ctx[CpuRegister.Rdx];
+        if (delimiterAddress == 0 || savePointerAddress == 0 ||
+            !TryReadUtf8CString(ctx, delimiterAddress, 64, out var delimiters))
+        {
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        if (currentAddress == 0 && !ctx.TryReadUInt64(savePointerAddress, out currentAddress))
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        Span<byte> value = stackalloc byte[1];
+        var examined = 0;
+        while (currentAddress != 0 && examined++ < 4096)
+        {
+            if (!ctx.Memory.TryRead(currentAddress, value))
+            {
+                return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            if (value[0] == 0)
+            {
+                _ = ctx.TryWriteUInt64(savePointerAddress, 0);
+                ctx[CpuRegister.Rax] = 0;
+                return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+            }
+
+            if (delimiters.IndexOf((char)value[0]) < 0)
+            {
+                break;
+            }
+
+            currentAddress++;
+        }
+
+        var tokenAddress = currentAddress;
+        while (examined++ < 4096)
+        {
+            if (!ctx.Memory.TryRead(currentAddress, value))
+            {
+                return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            if (value[0] == 0)
+            {
+                if (!ctx.TryWriteUInt64(savePointerAddress, 0))
+                {
+                    return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+                }
+
+                ctx[CpuRegister.Rax] = tokenAddress;
+                return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+            }
+
+            if (delimiters.IndexOf((char)value[0]) >= 0)
+            {
+                value[0] = 0;
+                if (!ctx.Memory.TryWrite(currentAddress, value) ||
+                    !ctx.TryWriteUInt64(savePointerAddress, currentAddress + 1))
+                {
+                    return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+                }
+
+                ctx[CpuRegister.Rax] = tokenAddress;
+                return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+            }
+
+            currentAddress++;
+        }
+
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "mXlxhmLNMPg",
+        ExportName = "strtol",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcStrtol(CpuContext ctx)
+    {
+        var inputAddress = ctx[CpuRegister.Rdi];
+        var endPointerAddress = ctx[CpuRegister.Rsi];
+        var numberBase = unchecked((int)ctx[CpuRegister.Rdx]);
+        if (inputAddress == 0 || (numberBase != 0 && (numberBase < 2 || numberBase > 36)))
+        {
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        var buffer = GC.AllocateUninitializedArray<byte>(256);
+        if (!ctx.Memory.TryRead(inputAddress, buffer))
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        var length = Array.IndexOf(buffer, (byte)0);
+        if (length < 0)
+        {
+            length = buffer.Length;
+        }
+
+        var index = 0;
+        while (index < length && buffer[index] is (byte)' ' or (byte)'\t' or (byte)'\n' or (byte)'\r' or (byte)'\v' or (byte)'\f')
+        {
+            index++;
+        }
+
+        var negative = false;
+        if (index < length && buffer[index] is (byte)'+' or (byte)'-')
+        {
+            negative = buffer[index] == (byte)'-';
+            index++;
+        }
+
+        if (numberBase == 0)
+        {
+            numberBase = index + 1 < length && buffer[index] == (byte)'0' &&
+                         buffer[index + 1] is (byte)'x' or (byte)'X'
+                ? 16
+                : index < length && buffer[index] == (byte)'0' ? 8 : 10;
+        }
+
+        if (numberBase == 16 && index + 1 < length && buffer[index] == (byte)'0' &&
+            buffer[index + 1] is (byte)'x' or (byte)'X')
+        {
+            index += 2;
+        }
+
+        var digitStart = index;
+        ulong magnitude = 0;
+        while (index < length)
+        {
+            var c = buffer[index];
+            var digit = c is >= (byte)'0' and <= (byte)'9'
+                ? c - (byte)'0'
+                : c is >= (byte)'a' and <= (byte)'z'
+                    ? c - (byte)'a' + 10
+                    : c is >= (byte)'A' and <= (byte)'Z'
+                        ? c - (byte)'A' + 10
+                        : 0xFF;
+            if (digit >= numberBase)
+            {
+                break;
+            }
+
+            magnitude = unchecked((magnitude * (uint)numberBase) + (uint)digit);
+            index++;
+        }
+
+        if (index == digitStart)
+        {
+            index = 0;
+            magnitude = 0;
+        }
+
+        if (endPointerAddress != 0 &&
+            !KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, endPointerAddress, inputAddress + (ulong)index))
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        var result = negative ? unchecked(0UL - magnitude) : magnitude;
+        ctx[CpuRegister.Rax] = result;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "MpxhMh8QFro",
+        ExportName = "fwrite",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcFwrite(CpuContext ctx)
+    {
+        // The guest owns FILE; returning the completed element count preserves
+        // stdio semantics without dereferencing its opaque stream structure.
+        ctx[CpuRegister.Rax] = ctx[CpuRegister.Rdx];
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "fffwELXNVFA",
+        ExportName = "fprintf",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcFprintf(CpuContext ctx)
+    {
+        if (string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_FPRINTF"), "1", StringComparison.Ordinal))
+        {
+            var formatAddress = ctx[CpuRegister.Rsi];
+            var arguments = new[]
+            {
+                ctx[CpuRegister.Rdx],
+                ctx[CpuRegister.Rcx],
+                ctx[CpuRegister.R8],
+                ctx[CpuRegister.R9],
+            };
+            var format = TryReadUtf8CString(ctx, formatAddress, 1024, out var formatText)
+                ? formatText.Replace("\r", "\\r", StringComparison.Ordinal).Replace("\n", "\\n", StringComparison.Ordinal)
+                : $"<unreadable@0x{formatAddress:X16}>";
+            var renderedArguments = arguments.Select(argument =>
+                argument >= 0x10000 && TryReadUtf8CString(ctx, argument, 4096, out var text)
+                    ? $"0x{argument:X16}=\"{text.Replace("\r", "\\r", StringComparison.Ordinal).Replace("\n", "\\n", StringComparison.Ordinal)}\""
+                    : $"0x{argument:X16}");
+            Console.Error.WriteLine($"[LOADER][TRACE] fprintf format=\"{format}\" args=[{string.Join(", ", renderedArguments)}]");
+        }
+
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "MUjC4lbHrK4",
+        ExportName = "fflush",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcFlushFile(CpuContext ctx)
+    {
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "m5wN+SwZOR4",
+        ExportName = "putchar",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcPutchar(CpuContext ctx)
+    {
+        var value = unchecked((byte)ctx[CpuRegister.Rdi]);
+        if (string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_FPRINTF"), "1", StringComparison.Ordinal))
+        {
+            Console.Error.Write((char)value);
+        }
+
+        ctx[CpuRegister.Rax] = value;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "m0iS6jNsXds",
+        ExportName = "sched_get_priority_min",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int SchedGetPriorityMin(CpuContext ctx)
+    {
+        ctx[CpuRegister.Rax] = 1;
+        return 1;
+    }
+
+    [SysAbiExport(
+        Nid = "CBNtXOoef-E",
+        ExportName = "sched_get_priority_max",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int SchedGetPriorityMax(CpuContext ctx)
+    {
+        ctx[CpuRegister.Rax] = 99;
+        return 99;
+    }
+
+    [SysAbiExport(
+        Nid = "nTxZBp8YNGc",
+        ExportName = "pthread_mutex_setname_np",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PthreadMutexSetName(CpuContext ctx)
+    {
+        // Mutex names are diagnostic metadata and do not affect synchronization.
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "EZ8h70dtFLg",
+        ExportName = "pthread_cond_setname_np",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PthreadCondSetName(CpuContext ctx)
+    {
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "smbQukfxYJM",
+        ExportName = "getenv",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcGetEnvironmentVariable(CpuContext ctx)
+    {
+        // Console environment variables are not inherited from the host.
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "UtO0OHMCgmI",
+        ExportName = "sceKernelIsDevelopmentMode",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int KernelIsDevelopmentMode(CpuContext ctx)
+    {
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "cHlIo6CoRTA",
+        ExportName = "sceKernelGetNamedMemoryDomainCompat1270",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int KernelGetNamedMemoryDomainCompat1270(CpuContext ctx)
+    {
+        // libmonosgen 12.70 queries the named "monoGc" memory domain and maps
+        // the returned selector to its flexible-memory call. SharpEmu's guest
+        // arena is not partitioned into domains, so the default selector is 0.
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "KiJEPEWRyUY",
+        ExportName = "sigaction",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int LibcSigaction(CpuContext ctx)
+    {
+        var previousActionAddress = ctx[CpuRegister.Rdx];
+        if (previousActionAddress != 0)
+        {
+            // The runtime first queries dispositions to select an unused
+            // realtime signal. Expose the default disposition; actual native
+            // fault delivery remains owned by SharpEmu's signal bridge.
+            Span<byte> defaultAction = stackalloc byte[0x20];
+            defaultAction.Clear();
+            if (!ctx.Memory.TryWrite(previousActionAddress, defaultAction))
+            {
+                return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+        }
+
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "CU8m+Qs+HN4",
+        ExportName = "sceSysmoduleLoadModuleByNameInternal",
+        Target = Generation.Gen5,
+        LibraryName = "libSceSysmodule")]
+    public static int SysmoduleLoadModuleByNameInternal(CpuContext ctx)
+    {
+        var nameAddress = ctx[CpuRegister.Rdi];
+        if (nameAddress == 0 || !TryReadUtf8CString(ctx, nameAddress, 512, out var moduleName))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
+        _ = KernelModuleRegistry.RegisterSyntheticModule(moduleName, isSystemModule: true);
+
+        // The internal-by-name form optionally returns a module initializer
+        // and a loader result through its third and fifth arguments. SharpEmu
+        // has no native system-module initializer to call, so expose an empty
+        // initializer and a successful loader result.
+        var initializerAddress = ctx[CpuRegister.Rdx];
+        if (initializerAddress != 0 &&
+            !KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, initializerAddress, 0))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        var resultAddress = ctx[CpuRegister.R8];
+        if (resultAddress != 0 &&
+            !KernelMemoryCompatExports.TryWriteUInt32Compat(ctx, resultAddress, 0))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
         ctx[CpuRegister.Rax] = 0;
@@ -1433,6 +2195,13 @@ public static class KernelRuntimeCompatExports
     }
 
     [SysAbiExport(
+        Nid = "vXZhrtJxkGc",
+        ExportName = "sceSysmoduleUnloadModuleInternal",
+        Target = Generation.Gen5,
+        LibraryName = "libSceSysmodule")]
+    public static int SysmoduleUnloadModuleInternal(CpuContext ctx) => SysmoduleUnloadModule(ctx);
+
+    [SysAbiExport(
         Nid = "hHrGoGoNf+s",
         ExportName = "sceSysmoduleLoadModuleInternalWithArg",
         Target = Generation.Gen4 | Generation.Gen5,
@@ -1543,6 +2312,10 @@ public static class KernelRuntimeCompatExports
         }
 
         _ = TryWriteModuleName(ctx, outInfoAddress, module.Name);
+        if (!ctx.TryWriteUInt64(outInfoAddress + ModuleInfoEhFrameHeaderOffset, module.EhFrameHeaderAddress))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }

@@ -21,7 +21,9 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
     private bool _disposed;
     private const ulong PageSize = 0x1000;
     private const ulong GuestAllocationArenaAddress = 0x00006000_0000_0000;
-    private const ulong GuestAllocationArenaSize = 0x0100_0000;
+    // ShellCore reserves a 16 MiB NP heap during startup. Keep enough room for
+    // that allocation plus the smaller opaque HLE objects sharing this arena.
+    private const ulong GuestAllocationArenaSize = 0x0400_0000;
     private const ulong GuestAllocationArenaStartOffset = PageSize;
     private const ulong LargeDataReserveThreshold = 0x4000_0000UL; // 1 GiB
     private const ulong FullCommitRegionLimit = 4UL << 30;

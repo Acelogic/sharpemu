@@ -39,6 +39,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
     private readonly ISymbolCatalog _symbolCatalog;
     private readonly CpuExecutionOptions _cpuExecutionOptions;
     private readonly IFileSystem _fileSystem;
+    private readonly string? _systemRoot;
     private bool _disposed;
 
     public string? LastExecutionDiagnostics { get; private set; }
@@ -58,7 +59,8 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         IModuleManager moduleManager,
         ISymbolCatalog? symbolCatalog = null,
         CpuExecutionOptions cpuExecutionOptions = default,
-        IFileSystem? fileSystem = null)
+        IFileSystem? fileSystem = null,
+        string? systemRoot = null)
     {
         _selfLoader = selfLoader ?? throw new ArgumentNullException(nameof(selfLoader));
         _virtualMemory = virtualMemory ?? throw new ArgumentNullException(nameof(virtualMemory));
@@ -67,11 +69,14 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         _symbolCatalog = symbolCatalog ?? Aerolib.Empty;
         _cpuExecutionOptions = new CpuExecutionOptions
         {
+            EnableDisasmDiagnostics = cpuExecutionOptions.EnableDisasmDiagnostics,
             CpuEngine = cpuExecutionOptions.CpuEngine,
             StrictDynlibResolution = cpuExecutionOptions.StrictDynlibResolution,
             ImportTraceLimit = Math.Max(0, cpuExecutionOptions.ImportTraceLimit),
+            QuiesceNewGuestThreads = cpuExecutionOptions.QuiesceNewGuestThreads,
         };
         _fileSystem = fileSystem ?? new PhysicalFileSystem();
+        _systemRoot = systemRoot;
     }
 
     public static ISharpEmuRuntime CreateDefault(SharpEmuRuntimeOptions options = default)
@@ -98,7 +103,8 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             moduleManager,
             Aerolib.Instance,
             cpuExecutionOptions,
-            fileSystem);
+            fileSystem,
+            options.SystemRoot);
     }
 
     public SelfImage LoadImage(string ebootPath)
@@ -131,6 +137,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
     public OrbisGen2Result Run(string ebootPath)
     {
         var normalizedEbootPath = Path.GetFullPath(ebootPath);
+        using var systemRootBinding = BindSystemRoot(_systemRoot);
         using var app0Binding = BindApp0Root(normalizedEbootPath);
         Log.Info($"Loading: {ebootPath}");
         LastExecutionDiagnostics = null;
@@ -158,6 +165,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         HleDataSymbols.ConfigureProcessImageName(processImageName);
         MergeKnownHleDataSymbols(activeRuntimeSymbols);
         var loadedModuleImages = LoadAdjacentSceModules(ebootPath, activeImportStubs, activeRuntimeSymbols);
+        MergeGen5LibcCompatDataSymbols(activeRuntimeSymbols, activeImportStubs);
         RebindImportedDataSymbols(image, loadedModuleImages, activeRuntimeSymbols);
         var initializerResult = RunAllInitializers(
             image,
@@ -419,6 +427,59 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         return null;
     }
 
+    private static SystemRootBindingScope? BindSystemRoot(string? systemRoot)
+    {
+        KernelMemoryCompatExports.ClearGuestPathMounts();
+        if (string.IsNullOrWhiteSpace(systemRoot))
+        {
+            return null;
+        }
+
+        var normalizedRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(systemRoot));
+        if (!Directory.Exists(normalizedRoot))
+        {
+            throw new DirectoryNotFoundException(
+                $"The extracted system-software root was not found: {normalizedRoot}");
+        }
+
+        const string systemRootVariableName = "SHARPEMU_SYSTEM_ROOT";
+        var previousSystemRoot = Environment.GetEnvironmentVariable(systemRootVariableName);
+        var mountCount = 0;
+        try
+        {
+            foreach (var hostDirectory in Directory.EnumerateDirectories(normalizedRoot))
+            {
+                var name = Path.GetFileName(hostDirectory);
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    continue;
+                }
+
+                KernelMemoryCompatExports.RegisterGuestPathMount(
+                    "/" + name,
+                    hostDirectory,
+                    readOnly: true);
+                mountCount++;
+            }
+
+            if (mountCount == 0)
+            {
+                throw new InvalidDataException(
+                    $"The extracted system-software root has no mountable directories: {normalizedRoot}");
+            }
+
+            Environment.SetEnvironmentVariable(systemRootVariableName, normalizedRoot);
+            Log.Info($"System software: {normalizedRoot} ({mountCount} read-only mount(s))");
+            return new SystemRootBindingScope(systemRootVariableName, previousSystemRoot);
+        }
+        catch
+        {
+            KernelMemoryCompatExports.ClearGuestPathMounts();
+            Environment.SetEnvironmentVariable(systemRootVariableName, previousSystemRoot);
+            throw;
+        }
+    }
+
     private static App0BindingScope? BindApp0Root(string normalizedEbootPath)
     {
         const string app0VariableName = "SHARPEMU_APP0_DIR";
@@ -454,6 +515,27 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         }
     }
 
+    private sealed class SystemRootBindingScope(
+        string variableName,
+        string? previousValue) : IDisposable
+    {
+        private readonly string _variableName = variableName;
+        private readonly string? _previousValue = previousValue;
+        private bool _disposed;
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            KernelMemoryCompatExports.ClearGuestPathMounts();
+            Environment.SetEnvironmentVariable(_variableName, _previousValue);
+            _disposed = true;
+        }
+    }
+
     private OrbisGen2Result? RunAllInitializers(
         SelfImage mainImage,
         IReadOnlyList<LoadedModuleImage> loadedModuleImages,
@@ -472,10 +554,191 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             return moduleStartResult;
         }
 
+        var configuredBootstrapResult = RunConfiguredBootstrapInitializers(
+            mainImage,
+            generation,
+            activeImportStubs,
+            activeRuntimeSymbols,
+            processImageName);
+        if (configuredBootstrapResult is not null)
+        {
+            return configuredBootstrapResult;
+        }
+
         // On current PS5 dumps DT_INIT commonly resolves to imageBase+0x10, which is inside
         // the mapped ELF header rather than a callable guest routine. Startup must remain
         // guest-driven until the PS5 init/module ABI is identified precisely.
         return null;
+    }
+
+    private OrbisGen2Result? RunConfiguredBootstrapInitializers(
+        SelfImage mainImage,
+        Generation generation,
+        IReadOnlyDictionary<ulong, string> activeImportStubs,
+        IReadOnlyDictionary<string, ulong> activeRuntimeSymbols,
+        string processImageName)
+    {
+        var configuredOffsets = Environment.GetEnvironmentVariable("SHARPEMU_BOOTSTRAP_INITIALIZERS");
+        if (string.IsNullOrWhiteSpace(configuredOffsets))
+        {
+            return null;
+        }
+
+        if (!TryComputeImageRange(mainImage, out var imageBase, out var imageSize))
+        {
+            Log.Warning("Unable to determine the main image range for configured bootstrap initializers.");
+            return null;
+        }
+
+        if (!ApplyConfiguredBootstrapWrites(imageBase, imageSize))
+        {
+            return OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        var tokens = configuredOffsets.Split(
+            [',', ';', ' ', '\t', '\r', '\n'],
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var bootstrapExecutionOptions = new CpuExecutionOptions
+        {
+            EnableDisasmDiagnostics = _cpuExecutionOptions.EnableDisasmDiagnostics,
+            CpuEngine = _cpuExecutionOptions.CpuEngine,
+            StrictDynlibResolution = _cpuExecutionOptions.StrictDynlibResolution,
+            ImportTraceLimit = _cpuExecutionOptions.ImportTraceLimit,
+            QuiesceNewGuestThreads = true,
+        };
+        for (var i = 0; i < tokens.Length; i++)
+        {
+            var valueText = tokens[i];
+            if (valueText.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            {
+                valueText = valueText[2..];
+            }
+
+            if (!ulong.TryParse(
+                    valueText,
+                    System.Globalization.NumberStyles.HexNumber,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out var configuredValue))
+            {
+                Log.Warning($"Ignoring invalid bootstrap initializer '{tokens[i]}'.");
+                continue;
+            }
+
+            var imageEnd = checked(imageBase + imageSize);
+            var entryPoint = configuredValue >= imageBase && configuredValue < imageEnd
+                ? configuredValue
+                : checked(imageBase + configuredValue);
+            if (entryPoint < imageBase || entryPoint >= imageEnd)
+            {
+                Log.Warning(
+                    $"Ignoring bootstrap initializer outside the main image: {tokens[i]} -> 0x{entryPoint:X16}.");
+                continue;
+            }
+
+            Log.Info(
+                $"Starting configured bootstrap initializer {i + 1}/{tokens.Length}: " +
+                $"{processImageName}+0x{entryPoint - imageBase:X} (0x{entryPoint:X16})");
+            var result = _cpuDispatcher.DispatchModuleInitializer(
+                entryPoint,
+                generation,
+                activeImportStubs,
+                activeRuntimeSymbols,
+                $"{processImageName}:bootstrap#{i + 1}",
+                bootstrapExecutionOptions);
+            if (result != OrbisGen2Result.ORBIS_GEN2_OK)
+            {
+                Log.Error(
+                    $"Configured bootstrap initializer failed at 0x{entryPoint:X16}: {result}");
+                return result;
+            }
+        }
+
+        return null;
+    }
+
+    private bool ApplyConfiguredBootstrapWrites(ulong imageBase, ulong imageSize)
+    {
+        var configuredWrites = Environment.GetEnvironmentVariable("SHARPEMU_BOOTSTRAP_WRITES");
+        if (string.IsNullOrWhiteSpace(configuredWrites))
+        {
+            return true;
+        }
+
+        var imageEnd = checked(imageBase + imageSize);
+        var entries = configuredWrites.Split(
+            [';', ','],
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (var entry in entries)
+        {
+            var separator = entry.IndexOf('=');
+            if (separator <= 0 || separator == entry.Length - 1)
+            {
+                Log.Warning($"Ignoring invalid bootstrap write '{entry}'. Expected address=hexbytes.");
+                continue;
+            }
+
+            var addressText = entry[..separator].Trim();
+            if (addressText.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            {
+                addressText = addressText[2..];
+            }
+
+            if (!ulong.TryParse(
+                    addressText,
+                    System.Globalization.NumberStyles.HexNumber,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out var configuredAddress))
+            {
+                Log.Warning($"Ignoring bootstrap write with invalid address '{entry}'.");
+                continue;
+            }
+
+            var bytesText = entry[(separator + 1)..]
+                .Replace("0x", string.Empty, StringComparison.OrdinalIgnoreCase)
+                .Replace(" ", string.Empty, StringComparison.Ordinal)
+                .Replace("_", string.Empty, StringComparison.Ordinal)
+                .Replace("-", string.Empty, StringComparison.Ordinal);
+            byte[] bytes;
+            try
+            {
+                bytes = Convert.FromHexString(bytesText);
+            }
+            catch (FormatException)
+            {
+                Log.Warning($"Ignoring bootstrap write with invalid hex bytes '{entry}'.");
+                continue;
+            }
+
+            if (bytes.Length == 0 || bytes.Length > 0x1000)
+            {
+                Log.Warning($"Ignoring bootstrap write with unsupported size {bytes.Length}: '{entry}'.");
+                continue;
+            }
+
+            var address = configuredAddress >= imageBase && configuredAddress < imageEnd
+                ? configuredAddress
+                : checked(imageBase + configuredAddress);
+            if (address < imageBase || address > imageEnd - (ulong)bytes.Length)
+            {
+                Log.Warning($"Ignoring bootstrap write outside the main image: '{entry}'.");
+                continue;
+            }
+
+            if (!_virtualMemory.TryWrite(address, bytes))
+            {
+                Log.Error($"Unable to apply bootstrap write at 0x{address:X16} ({bytes.Length} byte(s)).");
+                return false;
+            }
+
+            Log.Info(
+                $"Applied bootstrap write: {processImageOffset(address, imageBase)} " +
+                $"(0x{address:X16}) = {Convert.ToHexString(bytes)}");
+        }
+
+        return true;
+
+        static string processImageOffset(ulong address, ulong baseAddress) =>
+            $"main+0x{address - baseAddress:X}";
     }
 
     private OrbisGen2Result? RunPreloadedModuleInitializers(
@@ -622,7 +885,15 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         var allModulePaths = moduleDirectories
             .SelectMany(directory => Directory
                 .EnumerateFiles(directory)
-                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+                // PSM AOT applications export several generic runtime symbols
+                // that are also present in mscorlib. Runtime-symbol merging is
+                // intentionally first-wins, so load the application image only
+                // after Mono and its core assembly have claimed those symbols.
+                .OrderBy(path => string.Equals(
+                    Path.GetFileName(path),
+                    "app.exe.sprx",
+                    StringComparison.OrdinalIgnoreCase) ? 1 : 0)
+                .ThenBy(path => path, StringComparer.OrdinalIgnoreCase))
             .Where(path =>
             {
                 var extension = Path.GetExtension(path);
@@ -660,18 +931,24 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         {
             try
             {
-                var fileInfo = new FileInfo(modulePath);
-                if (!fileInfo.Exists || fileInfo.Length <= 0 || fileInfo.Length > int.MaxValue)
+                if (!File.Exists(modulePath))
                 {
                     failedModules++;
                     continue;
                 }
 
-                var moduleBytes = GC.AllocateUninitializedArray<byte>((int)fileInfo.Length);
-                using (var stream = File.OpenRead(modulePath))
+                // FileInfo.Length reports the directory-entry size for a
+                // symbolic link on macOS. Query the opened stream instead so
+                // adjacent firmware-module links are sized from their target.
+                using var stream = File.OpenRead(modulePath);
+                if (stream.Length <= 0 || stream.Length > int.MaxValue)
                 {
-                    stream.ReadExactly(moduleBytes);
+                    failedModules++;
+                    continue;
                 }
+
+                var moduleBytes = GC.AllocateUninitializedArray<byte>((int)stream.Length);
+                stream.ReadExactly(moduleBytes);
 
                 var moduleImage = _selfLoader.LoadAdditional(
                     moduleBytes.AsSpan(),
@@ -798,6 +1075,163 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         }
     }
 
+    private void MergeGen5LibcCompatDataSymbols(
+        IDictionary<string, ulong> runtimeSymbols,
+        IReadOnlyDictionary<ulong, string> importStubs)
+    {
+        const string polymorphicAnchorNid = "Mcrl2crhxu0";
+        const string gen5LocaleProviderNid = "Qoo175Ig+-k";
+        const string localeFacetIndexNid = "MmytiDdoGBA";
+        const string localeFacetCounterNid = "EIyErVBW9QI";
+        const string noOpFactoryNid = "Mt6co-yzyjg";
+        const string schedYieldNid = "6XG4B33N09g";
+        const ulong mapSize = 0x1000;
+        const int vtableOffset = 0x100;
+        const int objectOffset = 0x400;
+        const int symbolOffset = 0x800;
+        const int localeNameOffset = 0x900;
+        const int localeFacetIndexOffset = 0xA00;
+        const int localeFacetCounterOffset = 0xA10;
+        const int standardLibraryVtableOffset = 0xB00;
+        const int vtableSlotCount = 64;
+        string[] standardLibraryVtableNids =
+        [
+            "aK1Ymf-NhAs", // _ZTVSt7codecvtIDsc9_MbstatetE
+            "-L+-8F0+gBc", // _ZTVSt13messages_base
+            "1kZFcktOm+s", // _ZTVSt7num_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE
+            "6-LMlTS1nno", // _ZTVSt12domain_error
+            "Bq8m04PN1zw", // _ZTVSt12out_of_range
+            "EMNG6cHitlQ", // _ZTVSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE
+            "KfcTPbeaOqg", // _ZTVSt7collateIwE
+            "tVHE+C8vGXk", // _ZTVSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE
+            "udTM6Nxx-Ng", // _ZTVSt11_Facet_base
+            "yLE5H3058Ao", // _ZTVNSt6locale7_LocimpE
+        ];
+
+        static bool NeedsCompatibilitySymbol(
+            IDictionary<string, ulong> symbols,
+            IReadOnlyDictionary<ulong, string> stubs,
+            string nid)
+        {
+            return !symbols.TryGetValue(nid, out var address) || stubs.ContainsKey(address);
+        }
+
+        var needsPolymorphicAnchor = NeedsCompatibilitySymbol(runtimeSymbols, importStubs, polymorphicAnchorNid);
+        var needsGen5LocaleProvider = NeedsCompatibilitySymbol(runtimeSymbols, importStubs, gen5LocaleProviderNid);
+        var needsLocaleFacetIndex = NeedsCompatibilitySymbol(runtimeSymbols, importStubs, localeFacetIndexNid);
+        var needsLocaleFacetCounter = NeedsCompatibilitySymbol(runtimeSymbols, importStubs, localeFacetCounterNid);
+        var needsStandardLibraryVtables = standardLibraryVtableNids.Any(
+            nid => NeedsCompatibilitySymbol(runtimeSymbols, importStubs, nid));
+        if (!needsPolymorphicAnchor &&
+            !needsGen5LocaleProvider &&
+            !needsLocaleFacetIndex &&
+            !needsLocaleFacetCounter &&
+            !needsStandardLibraryVtables)
+        {
+            return;
+        }
+
+        var noOpStubAddress = importStubs
+            .FirstOrDefault(pair => string.Equals(pair.Value, noOpFactoryNid, StringComparison.Ordinal))
+            .Key;
+        if (noOpStubAddress == 0)
+        {
+            // ShellCore does not import the private compatibility factory, but
+            // it does import sched_yield. Its HLE implementation ignores the
+            // arguments and returns zero, which is exactly what the synthetic
+            // locale-provider vtable requires.
+            noOpStubAddress = importStubs
+                .FirstOrDefault(pair => string.Equals(pair.Value, schedYieldNid, StringComparison.Ordinal))
+                .Key;
+        }
+
+        if (noOpStubAddress == 0 ||
+            _virtualMemory is not IGuestMemoryAllocator allocator ||
+            !allocator.TryAllocateGuestMemory(mapSize, 0x1000, out var candidateBase) ||
+            candidateBase == 0)
+        {
+            Log.Warning($"Unable to allocate Gen5 libc compatibility data for {polymorphicAnchorNid}.");
+            return;
+        }
+
+        var mapData = new byte[checked((int)mapSize)];
+        // Every virtual entry targets an existing imported function whose HLE
+        // implementation returns zero. The compatibility data itself can stay
+        // read/write while the imported stub remains executable.
+        for (var slot = 0; slot < vtableSlotCount; slot++)
+        {
+            BinaryPrimitives.WriteUInt64LittleEndian(
+                mapData.AsSpan(vtableOffset + (slot * sizeof(ulong)), sizeof(ulong)),
+                noOpStubAddress);
+        }
+
+        // These `_ZTV...` imports are data symbols, not callable functions.
+        // ShellCore stores symbol+0x10 as an Itanium-ABI vptr and invokes the
+        // entries following its two-word offset/typeinfo header. If a vtable
+        // remains bound to a PLT stub, its `48 B8 ...` instruction bytes are
+        // interpreted as a function pointer. The locale facets can safely
+        // share one header plus benign virtual entries until their full libc++
+        // behavior is modeled.
+        for (var slot = 0; slot < vtableSlotCount; slot++)
+        {
+            BinaryPrimitives.WriteUInt64LittleEndian(
+                mapData.AsSpan(
+                    standardLibraryVtableOffset + 0x10 + (slot * sizeof(ulong)),
+                    sizeof(ulong)),
+                noOpStubAddress);
+        }
+
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            mapData.AsSpan(objectOffset, sizeof(ulong)),
+            candidateBase + vtableOffset);
+        // ShellCore's libc++ locale fallback reads the locale name from +0x28.
+        // A null name takes the throw/UD2 path before the standard facet exists.
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            mapData.AsSpan(objectOffset + 0x28, sizeof(ulong)),
+            candidateBase + localeNameOffset);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            mapData.AsSpan(symbolOffset, sizeof(ulong)),
+            candidateBase + objectOffset);
+        mapData[localeNameOffset] = (byte)'C';
+        mapData[localeNameOffset + 1] = 0;
+        if (!_virtualMemory.TryWrite(candidateBase, mapData))
+        {
+            Log.Warning($"Unable to initialize Gen5 libc compatibility data for {polymorphicAnchorNid}.");
+            return;
+        }
+
+        if (needsPolymorphicAnchor)
+        {
+            runtimeSymbols[polymorphicAnchorNid] = candidateBase + symbolOffset;
+        }
+
+        if (needsGen5LocaleProvider)
+        {
+            runtimeSymbols[gen5LocaleProviderNid] = candidateBase + symbolOffset;
+        }
+
+        if (needsLocaleFacetIndex)
+        {
+            runtimeSymbols[localeFacetIndexNid] = candidateBase + localeFacetIndexOffset;
+        }
+
+        if (needsLocaleFacetCounter)
+        {
+            runtimeSymbols[localeFacetCounterNid] = candidateBase + localeFacetCounterOffset;
+        }
+
+        foreach (var nid in standardLibraryVtableNids)
+        {
+            if (NeedsCompatibilitySymbol(runtimeSymbols, importStubs, nid))
+            {
+                runtimeSymbols[nid] = candidateBase + standardLibraryVtableOffset;
+            }
+        }
+
+        Log.Info(
+            $"Gen5 libc compatibility data ready: nids={polymorphicAnchorNid},{gen5LocaleProviderNid} symbol=0x{candidateBase + symbolOffset:X16} object=0x{candidateBase + objectOffset:X16} facetIndex=0x{candidateBase + localeFacetIndexOffset:X16} facetCounter=0x{candidateBase + localeFacetCounterOffset:X16} standardVtable=0x{candidateBase + standardLibraryVtableOffset:X16} standardVtableNids={standardLibraryVtableNids.Length}");
+    }
+
     private static int MergeImportStubs(
         IDictionary<ulong, string> destination,
         IReadOnlyDictionary<ulong, string> source,
@@ -919,9 +1353,28 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             size,
             image.EntryPoint,
             isMain,
-            isSystemModule);
+            isSystemModule,
+            ResolveEhFrameHeaderAddress(image),
+            image.RuntimeSymbols);
         Log.Info(
             $"Registered module handle={handle} name={Path.GetFileName(modulePath)} base=0x{baseAddress:X16} size=0x{size:X16}");
+    }
+
+    private static ulong ResolveEhFrameHeaderAddress(SelfImage image)
+    {
+        var imageBase = image.EntryPoint >= image.ElfHeader.EntryPoint
+            ? image.EntryPoint - image.ElfHeader.EntryPoint
+            : 0UL;
+        for (var i = 0; i < image.ProgramHeaders.Count; i++)
+        {
+            var header = image.ProgramHeaders[i];
+            if (header.HeaderType == ProgramHeaderType.GnuEhFrame)
+            {
+                return imageBase + header.VirtualAddress;
+            }
+        }
+
+        return 0;
     }
 
     private static bool TryComputeImageRange(SelfImage image, out ulong baseAddress, out ulong size)

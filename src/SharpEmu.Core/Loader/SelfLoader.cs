@@ -637,6 +637,22 @@ public sealed class SelfLoader : ISelfLoader
         var nidNames = Aerolib.Instance.GetAllNidNames();
 
         var nidCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+        ulong relocationTraceTarget = 0;
+        var relocationTraceTargetText = Environment.GetEnvironmentVariable("SHARPEMU_LOG_RELOCATION_TARGET")?.Trim();
+        if (!string.IsNullOrWhiteSpace(relocationTraceTargetText))
+        {
+            if (relocationTraceTargetText.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            {
+                relocationTraceTargetText = relocationTraceTargetText[2..];
+            }
+
+            _ = ulong.TryParse(
+                relocationTraceTargetText,
+                System.Globalization.NumberStyles.HexNumber,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out relocationTraceTarget);
+        }
+
         foreach (var descriptor in descriptors)
         {
             if (descriptor.ImportNid is not null)
@@ -686,6 +702,13 @@ public sealed class SelfLoader : ISelfLoader
             if (!TryWriteUInt64(virtualMemory, descriptor.TargetAddress, targetValue))
             {
                 throw new InvalidDataException($"Failed to patch relocation at 0x{descriptor.TargetAddress:X16}.");
+            }
+
+            if (relocationTraceTarget != 0 && descriptor.TargetAddress == relocationTraceTarget)
+            {
+                Console.Error.WriteLine(
+                    $"[LOADER][TRACE] relocation-target=0x{descriptor.TargetAddress:X16} value=0x{targetValue:X16} " +
+                    $"addend=0x{descriptor.Addend:X} nid={(descriptor.ImportNid ?? "<sym>")}");
             }
 
             if (descriptor.TargetAddress >= 0x00000008030FC300UL &&

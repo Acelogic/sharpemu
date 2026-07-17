@@ -16,6 +16,65 @@ public sealed partial class DirectExecutionBackend
 {
 	private static readonly ConcurrentDictionary<ulong, byte> _knownExecutablePages = new();
 
+	private static void TraceConfiguredMemoryProbe(CpuContext context, string stage)
+	{
+		var probeText = Environment.GetEnvironmentVariable("SHARPEMU_MEMORY_PROBE")?.Trim();
+		if (string.IsNullOrWhiteSpace(probeText))
+		{
+			return;
+		}
+
+		var parts = probeText.Split(':', 2, StringSplitOptions.TrimEntries);
+		var addressText = parts[0];
+		if (addressText.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+		{
+			addressText = addressText[2..];
+		}
+
+		if (!ulong.TryParse(
+				addressText,
+				System.Globalization.NumberStyles.HexNumber,
+				System.Globalization.CultureInfo.InvariantCulture,
+				out var address))
+		{
+			Console.Error.WriteLine($"[LOADER][WARN] memory-probe.{stage}: invalid address '{parts[0]}'");
+			return;
+		}
+
+		var length = 64;
+		if (parts.Length == 2)
+		{
+			var lengthText = parts[1];
+			var styles = System.Globalization.NumberStyles.Integer;
+			if (lengthText.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+			{
+				lengthText = lengthText[2..];
+				styles = System.Globalization.NumberStyles.HexNumber;
+			}
+
+			if (!int.TryParse(
+					lengthText,
+					styles,
+					System.Globalization.CultureInfo.InvariantCulture,
+					out length))
+			{
+				length = 64;
+			}
+		}
+
+		length = Math.Clamp(length, 1, 256);
+		Span<byte> bytes = stackalloc byte[length];
+		if (!context.Memory.TryRead(address, bytes))
+		{
+			Console.Error.WriteLine($"[LOADER][TRACE] memory-probe.{stage}: unreadable @0x{address:X16}");
+			return;
+		}
+
+		Console.Error.WriteLine(
+			$"[LOADER][TRACE] memory-probe.{stage}: @0x{address:X16} len=0x{length:X} " +
+			Convert.ToHexString(bytes));
+	}
+
 	private void RecordRecentImportTrace(
 		long dispatchIndex,
 		string nid,
@@ -234,6 +293,36 @@ public sealed partial class DirectExecutionBackend
 		}
 	}
 
+	private static void ProbeImportArguments(CpuContext cpuContext, string nid, long dispatchIndex)
+	{
+		foreach (var (name, address) in new[]
+		{
+			("rdi", cpuContext[CpuRegister.Rdi]),
+			("rsi", cpuContext[CpuRegister.Rsi]),
+			("rdx", cpuContext[CpuRegister.Rdx]),
+			("rcx", cpuContext[CpuRegister.Rcx]),
+		})
+		{
+			var bytes = new byte[64];
+			if (address < 0x10000 || !cpuContext.Memory.TryRead(address, bytes))
+			{
+				Console.Error.WriteLine(
+					$"[LOADER][TRACE] import-args#{dispatchIndex} nid={nid} {name}=0x{address:X16} unreadable");
+				continue;
+			}
+
+			var printable = new char[bytes.Length];
+			for (var i = 0; i < bytes.Length; i++)
+			{
+				printable[i] = bytes[i] is >= 0x20 and <= 0x7E ? (char)bytes[i] : '.';
+			}
+
+			Console.Error.WriteLine(
+				$"[LOADER][TRACE] import-args#{dispatchIndex} nid={nid} {name}=0x{address:X16} " +
+				$"hex={Convert.ToHexString(bytes)} ascii='{new string(printable)}'");
+		}
+	}
+
 	private static bool IsUnresolvedSentinel(ulong value)
 	{
 		return value == 65534 || value == 4294967294u || value == 18446744073709551614uL;
@@ -241,7 +330,13 @@ public sealed partial class DirectExecutionBackend
 
 	private static bool IsPlausibleReturnAddress(ulong address)
 	{
-		return address >= 12884901888L && address < 17592186044416L && !IsUnresolvedSentinel(address);
+		// Gen5 firmware modules can be mapped in the 0x1Axxxxxxx range. The old
+		// 0x300000000 floor rejected their valid saved return addresses and let a
+		// mapped launcher sentinel win the fallback stack scan instead.
+		return address >= 0x100000000UL &&
+			address < 0x100000000000UL &&
+			address != 0x0000000800000001UL &&
+			!IsUnresolvedSentinel(address);
 	}
 
 	private static bool TryGetPlausibleReturnFromStack(ulong rsp, out ulong returnRip, out ulong nextRsp)

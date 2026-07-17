@@ -191,6 +191,10 @@ public sealed partial class DirectExecutionBackend
 			Console.Error.WriteLine($"[LOADER][INFO]   R13: 0x{r13:X16}");
 			Console.Error.WriteLine($"[LOADER][INFO]   R14: 0x{r14:X16}");
 			Console.Error.WriteLine($"[LOADER][INFO]   R15: 0x{r15:X16}");
+			if (_cpuContext is { } faultContext)
+			{
+				TraceConfiguredMemoryProbe(faultContext, "exception");
+			}
 			Console.Error.WriteLine($"[LOADER][INFO]   Flags: 0x{exceptionFlags:X8}");
 
 			ulong accessType = 0;

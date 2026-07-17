@@ -5,6 +5,7 @@ using SharpEmu.Core.Runtime;
 using SharpEmu.Core.Cpu;
 using SharpEmu.GUI;
 using SharpEmu.HLE;
+using SharpEmu.Libs.VideoOut;
 using SharpEmu.Logging;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -92,6 +93,16 @@ internal static partial class Program
                 }
                 finally
                 {
+                    if (string.Equals(
+                            Environment.GetEnvironmentVariable("SHARPEMU_KEEP_VIDEOOUT_ON_EXIT"),
+                            "1",
+                            StringComparison.Ordinal))
+                    {
+                        Console.Error.WriteLine(
+                            "[LOADER][INFO] Guest execution stopped; keeping VideoOut open until its window is closed.");
+                        HostMainThread.WaitForIdle();
+                    }
+
                     HostMainThread.Shutdown();
                 }
             }, 32 * 1024 * 1024)
@@ -206,6 +217,25 @@ internal static partial class Program
         Console.Error.WriteLine("[DEBUG] Creating runtime...");
 
         using var runtime = SharpEmuRuntime.CreateDefault(runtimeOptions);
+
+        // ShellCore's cold-boot display comes up before it opens a normal
+        // application VideoOut port. Explicit boot-screen runs ask the video
+        // library to post the firmware-derived splash to the host main thread
+        // before guest execution begins.
+        var bootSplashStarted = VideoOutExports.TryStartBootSplash();
+        if (bootSplashStarted &&
+            HostMainThread.IsAvailable &&
+            string.Equals(
+                Environment.GetEnvironmentVariable("SHARPEMU_HOLD_BOOT_BEFORE_GUEST"),
+                "1",
+                StringComparison.Ordinal))
+        {
+            Console.Error.WriteLine(
+                "[LOADER][INFO] PS5 cold-boot frame is active; deferring ShellCore entry until the window is closed.");
+            HostMainThread.WaitForIdle();
+            Console.Error.WriteLine(
+                "[LOADER][INFO] Cold-boot window closed; continuing into ShellCore guest entry.");
+        }
 
         OrbisGen2Result result;
         try
@@ -618,7 +648,7 @@ internal static partial class Program
 
     private static void PrintUsage()
     {
-        Log.Info("Usage: SharpEmu.CLI [--strict] [--trace-imports[=N]] [--cpu-engine=<native>] [--log-level=<level>] <path-to-eboot.bin>");
+        Log.Info("Usage: SharpEmu.CLI [--strict] [--trace-imports[=N]] [--cpu-engine=<native>] [--log-level=<level>] [--system-root=<extracted-root>] <path-to-eboot.bin>");
         Log.Info(@"Example: SharpEmu.CLI --cpu-engine=native --trace-imports=64 --log-level=debug ""E:\Games\...\eboot.bin""");
     }
 
@@ -639,6 +669,7 @@ internal static partial class Program
         var strictDynlibResolution = false;
         var importTraceLimit = 0;
         var cpuEngine = CpuExecutionEngine.NativeOnly;
+        string? systemRoot = null;
         logLevel = SharpEmuLog.MinimumLevel;
         var pathTokens = new List<string>(args.Length);
         for (var i = 0; i < args.Length; i++)
@@ -688,6 +719,19 @@ internal static partial class Program
                 continue;
             }
 
+            if (string.Equals(argument, "--system-root", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 >= args.Length || string.IsNullOrWhiteSpace(args[i + 1]))
+                {
+                    ebootPath = string.Empty;
+                    runtimeOptions = default;
+                    return false;
+                }
+
+                systemRoot = args[++i];
+                continue;
+            }
+
             const string logLevelPrefix = "--log-level=";
             if (argument.StartsWith(logLevelPrefix, StringComparison.OrdinalIgnoreCase))
             {
@@ -733,6 +777,21 @@ internal static partial class Program
                 continue;
             }
 
+            const string systemRootPrefix = "--system-root=";
+            if (argument.StartsWith(systemRootPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                systemRoot = argument[systemRootPrefix.Length..];
+                if (string.IsNullOrWhiteSpace(systemRoot))
+                {
+                    ebootPath = string.Empty;
+                    runtimeOptions = default;
+                    logLevel = SharpEmuLog.MinimumLevel;
+                    return false;
+                }
+
+                continue;
+            }
+
             if (argument.StartsWith("--", StringComparison.Ordinal))
             {
                 ebootPath = string.Empty;
@@ -758,6 +817,7 @@ internal static partial class Program
             CpuEngine = cpuEngine,
             StrictDynlibResolution = strictDynlibResolution,
             ImportTraceLimit = importTraceLimit,
+            SystemRoot = systemRoot,
         };
         return true;
     }
