@@ -14,15 +14,22 @@ public static class NpUniversalDataSystemExports
     private const int NpUniversalDataSystemErrorSetTargetInvalid = unchecked((int)0x8055311A);
     private const int NpUniversalDataSystemErrorInvalidProperty = unchecked((int)0x80553115);
     private const int NpUniversalDataSystemErrorNotInitialized = unchecked((int)0x80553117);
+    private const int NpUniversalDataSystemErrorPropertyReplacement = unchecked((int)0x80553101);
+    private const int NpUniversalDataSystemInternalErrorPropertyReplacement = unchecked((int)0x8055BB02);
     private const int MaximumEventPropertyStringLength = 16 * 1024;
     private const int ValidPrimitivePropertyTypeMask = 0x799;
+    private const ushort EventPropertyStringType = 0x2001;
+    private const ushort EventPropertyArrayType = 0x2002;
     private static readonly UTF8Encoding _strictUtf8 = new(false, true);
     private static readonly object _eventGate = new();
     private static readonly HashSet<int> _createdEvents = [];
-    private static readonly ConcurrentDictionary<ulong, string> _eventPropertyArrayStrings = new();
+    private static readonly ConcurrentDictionary<ulong, EventPropertyArrayStringShadow> _eventPropertyArrayStrings = new();
     private static int _nextHandle = 1;
     private static int _nextEvent = 1;
     private static int _isInitialized;
+    private static int _eventPropertyArraySetterResultForTests;
+
+    private sealed record EventPropertyArrayStringShadow(ushort TemporaryType, string Value);
 
     [SysAbiExport(
         Nid = "sjaobBgqeB4",
@@ -201,8 +208,13 @@ public static class NpUniversalDataSystemExports
         }
 
         Span<byte> propertyTypeBytes = stackalloc byte[sizeof(ushort)];
-        if (!ctx.Memory.TryRead(propertyArrayAddress, propertyTypeBytes) ||
-            !IsValidEventPropertyType(BinaryPrimitives.ReadUInt16LittleEndian(propertyTypeBytes)))
+        if (!ctx.Memory.TryRead(propertyArrayAddress, propertyTypeBytes))
+        {
+            return ctx.SetReturn(NpUniversalDataSystemErrorInvalidProperty, typeof(long));
+        }
+
+        var propertyType = BinaryPrimitives.ReadUInt16LittleEndian(propertyTypeBytes);
+        if (!IsValidEventPropertyType(propertyType))
         {
             return ctx.SetReturn(NpUniversalDataSystemErrorInvalidProperty, typeof(long));
         }
@@ -212,8 +224,8 @@ public static class NpUniversalDataSystemExports
             return ctx.SetReturn(NpUniversalDataSystemErrorInvalidProperty, typeof(long));
         }
 
-        _eventPropertyArrayStrings[propertyArrayAddress] = value;
-        return ctx.SetReturn(0, typeof(long));
+        var setterResult = ApplyEventPropertyArrayString(propertyArrayAddress, propertyType, value);
+        return ctx.SetReturn(setterResult, typeof(long));
     }
 
     [SysAbiExport(
@@ -246,12 +258,42 @@ public static class NpUniversalDataSystemExports
         return ctx.SetReturn(0, typeof(long));
     }
 
-    internal static bool TryGetEventPropertyArrayStringForTests(ulong address, out string value) =>
-        _eventPropertyArrayStrings.TryGetValue(address, out value!);
+    internal static bool TryGetEventPropertyArrayStringForTests(ulong address, out string value)
+    {
+        if (_eventPropertyArrayStrings.TryGetValue(address, out var state))
+        {
+            value = state.Value;
+            return true;
+        }
+
+        value = string.Empty;
+        return false;
+    }
+
+    internal static bool TryGetEventPropertyArrayStringStateForTests(
+        ulong address,
+        out ushort temporaryType,
+        out string value)
+    {
+        if (_eventPropertyArrayStrings.TryGetValue(address, out var state))
+        {
+            temporaryType = state.TemporaryType;
+            value = state.Value;
+            return true;
+        }
+
+        temporaryType = 0;
+        value = string.Empty;
+        return false;
+    }
+
+    internal static void SetEventPropertyArraySetterResultForTests(int result) =>
+        Volatile.Write(ref _eventPropertyArraySetterResultForTests, result);
 
     internal static void ResetForTests()
     {
         Volatile.Write(ref _isInitialized, 0);
+        Volatile.Write(ref _eventPropertyArraySetterResultForTests, 0);
         _eventPropertyArrayStrings.Clear();
         lock (_eventGate)
         {
@@ -271,6 +313,44 @@ public static class NpUniversalDataSystemExports
         }
 
         return type is >= 0x2001 and <= 0x2004;
+    }
+
+    private static int ApplyEventPropertyArrayString(ulong address, ushort propertyType, string value)
+    {
+        // The firmware wrapper accepts any recursively-valid property, then its
+        // replacement helper rejects targets that are not the array container.
+        if (propertyType != EventPropertyArrayType)
+        {
+            return NpUniversalDataSystemErrorInvalidProperty;
+        }
+
+        var setterResult = NormalizeEventPropertyArraySetterResult(
+            Volatile.Read(ref _eventPropertyArraySetterResultForTests));
+        if (setterResult < 0)
+        {
+            return setterResult;
+        }
+
+        // Firmware constructs a temporary type-0x2001 string value, replaces
+        // the array entry from that temporary, then destroys it. The nested
+        // list layout is not yet proven, so the HLE keeps the deep-copied value
+        // in a typed shadow instead of inventing guest list pointers.
+        _eventPropertyArrayStrings[address] = new EventPropertyArrayStringShadow(
+            EventPropertyStringType,
+            value);
+        return 0;
+    }
+
+    private static int NormalizeEventPropertyArraySetterResult(int result)
+    {
+        if (result >= 0)
+        {
+            return 0;
+        }
+
+        return result == NpUniversalDataSystemInternalErrorPropertyReplacement
+            ? NpUniversalDataSystemErrorPropertyReplacement
+            : result;
     }
 
     private static bool TryReadStrictUtf8CString(CpuContext ctx, ulong address, out string value)

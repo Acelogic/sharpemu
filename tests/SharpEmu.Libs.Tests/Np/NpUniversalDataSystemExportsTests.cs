@@ -69,7 +69,11 @@ public sealed class NpUniversalDataSystemExportsTests
         _ctx[CpuRegister.Rsi] = StringAddress;
 
         Assert.Equal(0, NpUniversalDataSystemExports.NpUniversalDataSystemEventPropertyArraySetString(_ctx));
-        Assert.True(NpUniversalDataSystemExports.TryGetEventPropertyArrayStringForTests(ArrayAddress, out var value));
+        Assert.True(NpUniversalDataSystemExports.TryGetEventPropertyArrayStringStateForTests(
+            ArrayAddress,
+            out var temporaryType,
+            out var value));
+        Assert.Equal(0x2001, temporaryType);
         Assert.Equal("astro-🌟", value);
     }
 
@@ -102,6 +106,58 @@ public sealed class NpUniversalDataSystemExportsTests
 
         Assert.Equal(
             unchecked((int)0x80553115),
+            NpUniversalDataSystemExports.NpUniversalDataSystemEventPropertyArraySetString(_ctx));
+        Assert.False(NpUniversalDataSystemExports.TryGetEventPropertyArrayStringForTests(ArrayAddress, out _));
+    }
+
+    [Fact]
+    public void EventPropertyArraySetString_TagValidPrimitiveIsRejectedByArraySetter()
+    {
+        Initialize();
+        WritePropertyType(0x1001);
+        _memory.WriteCString(StringAddress, "not-an-array");
+        _ctx[CpuRegister.Rdi] = ArrayAddress;
+        _ctx[CpuRegister.Rsi] = StringAddress;
+
+        Assert.Equal(
+            unchecked((int)0x80553115),
+            NpUniversalDataSystemExports.NpUniversalDataSystemEventPropertyArraySetString(_ctx));
+        Assert.False(NpUniversalDataSystemExports.TryGetEventPropertyArrayStringForTests(ArrayAddress, out _));
+    }
+
+    [Fact]
+    public void EventPropertyArraySetString_NormalizesInternalSetterFailureWithoutMutation()
+    {
+        Initialize();
+        WritePropertyType(0x2002);
+        _memory.WriteCString(StringAddress, "existing");
+        _ctx[CpuRegister.Rdi] = ArrayAddress;
+        _ctx[CpuRegister.Rsi] = StringAddress;
+        Assert.Equal(0, NpUniversalDataSystemExports.NpUniversalDataSystemEventPropertyArraySetString(_ctx));
+
+        _memory.WriteCString(StringAddress, "replacement");
+        NpUniversalDataSystemExports.SetEventPropertyArraySetterResultForTests(
+            unchecked((int)0x8055BB02));
+        Assert.Equal(
+            unchecked((int)0x80553101),
+            NpUniversalDataSystemExports.NpUniversalDataSystemEventPropertyArraySetString(_ctx));
+        Assert.True(NpUniversalDataSystemExports.TryGetEventPropertyArrayStringForTests(ArrayAddress, out var value));
+        Assert.Equal("existing", value);
+    }
+
+    [Fact]
+    public void EventPropertyArraySetString_PropagatesOtherSetterFailuresWithoutMutation()
+    {
+        Initialize();
+        WritePropertyType(0x2002);
+        _memory.WriteCString(StringAddress, "not-stored");
+        _ctx[CpuRegister.Rdi] = ArrayAddress;
+        _ctx[CpuRegister.Rsi] = StringAddress;
+        const int setterFailure = unchecked((int)0x80553142);
+        NpUniversalDataSystemExports.SetEventPropertyArraySetterResultForTests(setterFailure);
+
+        Assert.Equal(
+            setterFailure,
             NpUniversalDataSystemExports.NpUniversalDataSystemEventPropertyArraySetString(_ctx));
         Assert.False(NpUniversalDataSystemExports.TryGetEventPropertyArrayStringForTests(ArrayAddress, out _));
     }

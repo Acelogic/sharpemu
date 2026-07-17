@@ -33,8 +33,11 @@ public static class JsonExports
     private static readonly ConcurrentDictionary<JsonReferenceKey, ulong> _valueReferences = new();
     private static readonly JsonElement _nullElement = CreateNullElement();
     private static readonly object _globalNullAccessCallbackGate = new();
+    private static bool _json2GlobalInitialized;
 
+    private const int SceJsonErrorInitializationFailed = unchecked((int)0x80848102);
     private const int SceJsonErrorNotInitialized = unchecked((int)0x80848110);
+    private const int SceJsonErrorAlreadyInitialized = unchecked((int)0x80848111);
     private const int SceJsonErrorCallbackAlreadySet = unchecked((int)0x80848112);
     private const int SceJsonErrorInvalidCallback = unchecked((int)0x80848120);
 
@@ -71,6 +74,11 @@ public static class JsonExports
     public static int InitializerConstructor(CpuContext ctx)
     {
         var thisAddress = ctx[CpuRegister.Rdi];
+        if (thisAddress == 0 || !ctx.Memory.TryWrite(thisAddress, new byte[] { 0 }))
+        {
+            return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
         TraceJson("Initializer.ctor", thisAddress, 0);
         ctx[CpuRegister.Rax] = thisAddress;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
@@ -97,15 +105,41 @@ public static class JsonExports
     {
         var thisAddress = ctx[CpuRegister.Rdi];
         var initParameterAddress = ctx[CpuRegister.Rsi];
-        if (thisAddress == 0)
+        Span<byte> initialized = stackalloc byte[1];
+        if (thisAddress == 0 || !ctx.Memory.TryRead(thisAddress, initialized))
         {
-            ctx[CpuRegister.Rax] = unchecked((ulong)(int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+            return SetReturn(ctx, SceJsonErrorAlreadyInitialized);
+        }
+
+        lock (_globalNullAccessCallbackGate)
+        {
+            if (_json2GlobalInitialized || initialized[0] != 0)
+            {
+                return SetReturn(ctx, SceJsonErrorAlreadyInitialized);
+            }
+
+            if (initParameterAddress == 0)
+            {
+                return SetReturn(ctx, SceJsonErrorInvalidCallback);
+            }
+
+            Span<byte> initParameters = stackalloc byte[0x18];
+            if (!ctx.Memory.TryRead(initParameterAddress, initParameters) ||
+                BinaryPrimitives.ReadUInt64LittleEndian(initParameters) == 0)
+            {
+                return SetReturn(ctx, SceJsonErrorInitializationFailed);
+            }
+
+            if (!ctx.Memory.TryWrite(thisAddress, new byte[] { 1 }))
+            {
+                return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            _json2GlobalInitialized = true;
         }
 
         TraceJson("Initializer.initialize", thisAddress, initParameterAddress);
-        ctx[CpuRegister.Rax] = 0;
-        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        return SetReturn(ctx, 0);
     }
 
     [SysAbiExport(
@@ -121,8 +155,11 @@ public static class JsonExports
             return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
 
-        JsonObjectHeap.GlobalNullAccessCallback = ctx[CpuRegister.Rsi];
-        JsonObjectHeap.GlobalNullAccessCallbackContext = ctx[CpuRegister.Rdx];
+        lock (_globalNullAccessCallbackGate)
+        {
+            JsonObjectHeap.GlobalNullAccessCallback = ctx[CpuRegister.Rsi];
+            JsonObjectHeap.GlobalNullAccessCallbackContext = ctx[CpuRegister.Rdx];
+        }
         TraceJson("Initializer.setGlobalNullAccessCallback", thisAddress, ctx[CpuRegister.Rsi]);
         return SetReturn(ctx, 0);
     }
@@ -135,22 +172,23 @@ public static class JsonExports
     public static int InitializerSetGlobalNullAccessCallBack(CpuContext ctx)
     {
         var thisAddress = ctx[CpuRegister.Rdi];
-        Span<byte> initialized = stackalloc byte[1];
-        if (thisAddress == 0 ||
-            !ctx.Memory.TryRead(thisAddress, initialized) ||
-            initialized[0] == 0)
-        {
-            return SetReturn(ctx, SceJsonErrorNotInitialized);
-        }
-
         var callback = ctx[CpuRegister.Rsi];
-        if (callback == 0)
-        {
-            return SetReturn(ctx, SceJsonErrorInvalidCallback);
-        }
-
         lock (_globalNullAccessCallbackGate)
         {
+            Span<byte> initialized = stackalloc byte[1];
+            if (!_json2GlobalInitialized ||
+                thisAddress == 0 ||
+                !ctx.Memory.TryRead(thisAddress, initialized) ||
+                initialized[0] == 0)
+            {
+                return SetReturn(ctx, SceJsonErrorNotInitialized);
+            }
+
+            if (callback == 0)
+            {
+                return SetReturn(ctx, SceJsonErrorInvalidCallback);
+            }
+
             if (JsonObjectHeap.GlobalNullAccessCallback != 0)
             {
                 return SetReturn(ctx, SceJsonErrorCallbackAlreadySet);
@@ -761,6 +799,10 @@ public static class JsonExports
         _values.Clear();
         _strings.Clear();
         _valueReferences.Clear();
+        lock (_globalNullAccessCallbackGate)
+        {
+            _json2GlobalInitialized = false;
+        }
     }
 
     private static bool TryReadUtf8CString(

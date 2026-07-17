@@ -62,10 +62,30 @@ public sealed class KernelCoreServicesCompatExportsTests
 
         ctx[CpuRegister.Rsi] = 0x1000;
         Assert.Equal(
-            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND,
+            unchecked((int)0x8002000C),
             KernelMemoryCompatExports.KernelClearVirtualRangeName(ctx));
         Assert.True(KernelMemoryCompatExports.TryGetVirtualRangeNameForTests(regionAddress, out var name));
         Assert.Equal("persistent", name);
+    }
+
+    [Theory]
+    [InlineData(0UL, 0x100UL, 0x80020016U)]
+    [InlineData(BaseAddress, 0UL, 0x80020016U)]
+    [InlineData(0xFFFF_FFFF_FFFF_FFF0UL, 0x20UL, 0x80020054U)]
+    [InlineData(0x5_0000_0000UL, 0x100UL, 0x8002000CU)]
+    public void ClearVirtualRangeName_ConvertsModeledErrnoExactly(
+        ulong address,
+        ulong length,
+        uint expectedResult)
+    {
+        var ctx = new CpuContext(new FakeCpuMemory(BaseAddress, 0x2000), Generation.Gen5);
+        ctx[CpuRegister.Rdi] = address;
+        ctx[CpuRegister.Rsi] = length;
+
+        Assert.Equal(
+            unchecked((int)expectedResult),
+            KernelMemoryCompatExports.KernelClearVirtualRangeName(ctx));
+        Assert.Equal(unchecked((ulong)(int)expectedResult), ctx[CpuRegister.Rax]);
     }
 
     [Fact]
