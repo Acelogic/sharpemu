@@ -521,7 +521,15 @@ public static class Gen5ShaderTranslator
                     out var sizeDwords,
                     out error))
             {
-                error = $"{error} pc=0x{pc:X} word=0x{word:X8}";
+                if (!error.Contains(" pc=", StringComparison.Ordinal))
+                {
+                    error += $" pc=0x{pc:X}";
+                }
+
+                if (!error.Contains(" word=", StringComparison.Ordinal))
+                {
+                    error += $" word=0x{word:X8}";
+                }
                 return false;
             }
 
