@@ -47,6 +47,27 @@ public static class ShareExports
     }
 
     [SysAbiExport(
+        Nid = "0IL1keINExQ",
+        ExportName = "sceShareTerminate",
+        Target = Generation.Gen5,
+        LibraryName = "libSceShare")]
+    public static int ShareTerminate(CpuContext ctx)
+    {
+        lock (_contentEventGate)
+        {
+            if (Volatile.Read(ref _initialized) == 0)
+            {
+                return SetShareReturn(ctx, ShareErrorNotInitialized);
+            }
+
+            ClearShareLifecycleUnderLock();
+        }
+
+        TraceShare("terminate");
+        return SetShareReturn(ctx, 0);
+    }
+
+    [SysAbiExport(
         Nid = "Sygnk9dr5WQ",
         ExportName = "sceShareRegisterContentEventCallback",
         Target = Generation.Gen5,
@@ -197,11 +218,16 @@ public static class ShareExports
     {
         lock (_contentEventGate)
         {
-            _contentEventRegistrations.Clear();
-            Volatile.Write(ref _contentEventServiceAvailable, 0);
-            Volatile.Write(ref _initialized, 0);
-            _contentParam = string.Empty;
+            ClearShareLifecycleUnderLock();
         }
+    }
+
+    private static void ClearShareLifecycleUnderLock()
+    {
+        _contentEventRegistrations.Clear();
+        Volatile.Write(ref _contentEventServiceAvailable, 0);
+        Volatile.Write(ref _initialized, 0);
+        _contentParam = string.Empty;
     }
 
     private static int SetShareReturn(CpuContext ctx, int result)

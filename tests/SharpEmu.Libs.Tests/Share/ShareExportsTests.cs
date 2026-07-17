@@ -40,6 +40,10 @@ public sealed class ShareExportsTests
         Assert.Equal("sceShareRegisterContentEventCallback", export.Name);
         Assert.Equal("libSceShare", export.LibraryName);
         Assert.False(gen4Manager.TryGetExport("Sygnk9dr5WQ", out _));
+        Assert.True(gen5Manager.TryGetExport("0IL1keINExQ", out var terminate));
+        Assert.Equal("sceShareTerminate", terminate.Name);
+        Assert.Equal("libSceShare", terminate.LibraryName);
+        Assert.False(gen4Manager.TryGetExport("0IL1keINExQ", out _));
     }
 
     [Fact]
@@ -104,6 +108,38 @@ public sealed class ShareExportsTests
         AssertShareResult(unchecked((int)0x81960002));
         Assert.True(ShareExports.TryGetContentEventCallbackForTests(Callback, out var retainedUserData));
         Assert.Equal(UserData, retainedUserData);
+        Assert.Equal(1, ShareExports.ContentEventCallbackCountForTests);
+    }
+
+    [Fact]
+    public void Terminate_WhenUninitializedReturnsDirectLifecycleError()
+    {
+        Assert.Equal(unchecked((int)0x8196000C), ShareExports.ShareTerminate(_ctx));
+        Assert.Equal(0x8196000CUL, _ctx[CpuRegister.Rax]);
+        Assert.Equal(0, ShareExports.ContentEventCallbackCountForTests);
+    }
+
+    [Fact]
+    public void Terminate_ClearsRegistrationAndAllowsCleanReinitialize()
+    {
+        Initialize();
+        _ctx[CpuRegister.Rdi] = Callback;
+        _ctx[CpuRegister.Rsi] = UserData;
+        AssertShareResult(0);
+
+        Assert.Equal(0, ShareExports.ShareTerminate(_ctx));
+        Assert.Equal(0UL, _ctx[CpuRegister.Rax]);
+        Assert.Equal(0, ShareExports.ContentEventCallbackCountForTests);
+        Assert.False(ShareExports.TryGetContentEventCallbackForTests(Callback, out _));
+
+        AssertShareResult(unchecked((int)0x8196000C));
+        Initialize();
+        Assert.Equal(0, ShareExports.ContentEventCallbackCountForTests);
+        _ctx[CpuRegister.Rdi] = Callback;
+        _ctx[CpuRegister.Rsi] = UserData + 0x100;
+        AssertShareResult(0);
+        Assert.True(ShareExports.TryGetContentEventCallbackForTests(Callback, out var userData));
+        Assert.Equal(UserData + 0x100, userData);
         Assert.Equal(1, ShareExports.ContentEventCallbackCountForTests);
     }
 
