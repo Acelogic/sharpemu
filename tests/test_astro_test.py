@@ -134,5 +134,54 @@ class TimelineDiagnosticsTests(unittest.TestCase):
         self.assertEqual(payload["capture_attempts"], payload["capture_failures"])
 
 
+class PsStudiosSequenceTests(unittest.TestCase):
+    @staticmethod
+    def candidate(
+        elapsed: float,
+        edge: bytes,
+        *,
+        animation_reference: float = 5.5,
+    ) -> dict[str, object]:
+        return {
+            "path": f"frame-{elapsed}.png",
+            "elapsed_seconds": elapsed,
+            "animation_score": 0.07,
+            "animation_reference_seconds": animation_reference,
+            "controller_score": 0.5,
+            "controller_reference_seconds": 5.0,
+            "wordmark_score": 0.0,
+            "wordmark_reference_seconds": 6.5,
+            "edges": edge,
+        }
+
+    def test_distinct_current_frames_can_pass_flat_reference_timestamps(self) -> None:
+        first = self.candidate(1.0, b"first")
+        second = self.candidate(2.0, b"second")
+        controller = self.candidate(3.0, b"controller")
+
+        result = HARNESS.find_animation_sequence(
+            [first, second, controller],
+            controller,
+            correlate=lambda left, right: 1.0 if left == right else 0.1,
+        )
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual([first, second, controller], result[0])
+
+    def test_stale_duplicate_frames_do_not_pass(self) -> None:
+        first = self.candidate(1.0, b"same")
+        second = self.candidate(2.0, b"same")
+        controller = self.candidate(3.0, b"same")
+
+        result = HARNESS.find_animation_sequence(
+            [first, second, controller],
+            controller,
+            correlate=lambda _left, _right: 1.0,
+        )
+
+        self.assertIsNone(result)
+
+
 if __name__ == "__main__":
     unittest.main()

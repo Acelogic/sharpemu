@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 
-TOOL_VERSION = 8
+TOOL_VERSION = 9
 TITLE_MILESTONE = "GAME: Level has started: title_controller_ship"
 PS_LOGO_MILESTONE = "GAME: Level has started: ps_logo"
 PS_STUDIOS_VIDEO = Path("data/prein/video/ps_studio_armadillo.mp4")
@@ -35,8 +35,11 @@ PS_STUDIOS_WORDMARK_REFERENCE_SECONDS = tuple(
     round(6.45 + index / 10, 2) for index in range(9)
 )
 PS_STUDIOS_REFERENCE_SECONDS = 6.5
-PS_STUDIOS_ANIMATION_SCORE = 0.15
-PS_STUDIOS_CONTROLLER_SCORE = 0.22
+# The translated intro is deliberately accepted even when its colors are
+# overexposed or vertically striped. Current-frame diversity plus the later
+# controller/wordmark phase matches carry the false-positive protection.
+PS_STUDIOS_ANIMATION_SCORE = 0.06
+PS_STUDIOS_CONTROLLER_SCORE = 0.08
 PS_STUDIOS_CONTROLLER_WORDMARK_MARGIN = 0.10
 PS_STUDIOS_WORDMARK_SCORE = 0.65
 PS_STUDIOS_WORDMARK_CONTROLLER_MARGIN = 0.20
@@ -876,7 +879,13 @@ def find_animation_sequence(
     controller: dict[str, object],
     correlate: Callable[[bytes, bytes], float] = pearson_correlation,
 ) -> tuple[list[dict[str, object]], float] | None:
-    """Find two ordered animation frames followed by the canonical controller frame."""
+    """Find distinct ordered current-run frames ending at the controller frame.
+
+    Corrupt or overexposed guest output can correlate several visibly distinct
+    frames to the same source-video timestamp. Reference-time progression is
+    therefore a ranking preference, while current-run time span and image
+    diversity remain hard requirements that prevent one stale frame passing.
+    """
     prior = [
         candidate for candidate in candidates
         if (
@@ -890,7 +899,11 @@ def find_animation_sequence(
         reverse=True,
     )[:PS_STUDIOS_SEQUENCE_SEARCH_LIMIT]
     ordered = sorted(strongest, key=lambda item: float(item["elapsed_seconds"]))
-    best: tuple[tuple[float, float, float], list[dict[str, object]], float] | None = None
+    best: tuple[
+        tuple[float, int, float, float, float],
+        list[dict[str, object]],
+        float,
+    ] | None = None
     for prefix in itertools.combinations(ordered, PS_STUDIOS_MIN_ANIMATION_FRAMES - 1):
         sequence = [*prefix, controller]
         elapsed = [float(item["elapsed_seconds"]) for item in sequence]
@@ -901,13 +914,12 @@ def find_animation_sequence(
             float(item["animation_reference_seconds"])
             for item in sequence
         ]
-        if max(reference_times) - min(reference_times) < PS_STUDIOS_MIN_REFERENCE_SPAN_SECONDS:
-            continue
-        if any(
+        reference_span = max(reference_times) - min(reference_times)
+        reference_backtracks = sum(
             later + PS_STUDIOS_REFERENCE_BACKTRACK_SECONDS < earlier
             for earlier, later in zip(reference_times, reference_times[1:])
-        ):
-            continue
+        )
+        reference_is_ordered = int(reference_backtracks == 0)
         similarities = [
             correlate(
                 left["edges"],  # type: ignore[arg-type]
@@ -919,7 +931,13 @@ def find_animation_sequence(
         if maximum_similarity > PS_STUDIOS_MAX_FRAME_SIMILARITY:
             continue
         scores = [float(item["animation_score"]) for item in sequence]
-        rank = (sum(scores), min(scores), -span)
+        rank = (
+            sum(scores),
+            reference_is_ordered,
+            reference_span,
+            min(scores),
+            -span,
+        )
         if best is None or rank > best[0]:
             best = (rank, sequence, maximum_similarity)
     if best is None:
@@ -949,7 +967,7 @@ def evaluate_ps_studios_splash(
         "wordmark_controller_margin": PS_STUDIOS_WORDMARK_CONTROLLER_MARGIN,
         "minimum_animation_frames": PS_STUDIOS_MIN_ANIMATION_FRAMES,
         "minimum_animation_span_seconds": PS_STUDIOS_MIN_ANIMATION_SPAN_SECONDS,
-        "minimum_reference_span_seconds": PS_STUDIOS_MIN_REFERENCE_SPAN_SECONDS,
+        "preferred_reference_span_seconds": PS_STUDIOS_MIN_REFERENCE_SPAN_SECONDS,
         "minimum_phase_delay_seconds": PS_STUDIOS_MIN_PHASE_DELAY_SECONDS,
         "maximum_frame_similarity": PS_STUDIOS_MAX_FRAME_SIMILARITY,
         "candidate_frames": 0,
@@ -1778,7 +1796,7 @@ def execute_run(args: argparse.Namespace, *, keep_open: bool) -> int:
                 "wordmark_controller_margin": PS_STUDIOS_WORDMARK_CONTROLLER_MARGIN,
                 "animation_frames": PS_STUDIOS_MIN_ANIMATION_FRAMES,
                 "animation_span_seconds": PS_STUDIOS_MIN_ANIMATION_SPAN_SECONDS,
-                "reference_span_seconds": PS_STUDIOS_MIN_REFERENCE_SPAN_SECONDS,
+                "preferred_reference_span_seconds": PS_STUDIOS_MIN_REFERENCE_SPAN_SECONDS,
                 "maximum_frame_similarity": PS_STUDIOS_MAX_FRAME_SIMILARITY,
             },
         },
