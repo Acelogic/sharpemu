@@ -14601,7 +14601,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -14611,31 +14611,52 @@
       },
       "evidence": {
         "aerolib_name": "cosf",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "Ghidra-defined firmware export cosf in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "host floating-point implementation may differ in uncommon last-bit rounding cases"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
+        "signature": "float cosf(float x)",
+        "returns": [
+          "scalar floating-point result in XMM0; RAX cleared to zero"
+        ],
+        "output_writes": [
+          "XMM0 lower lane set and upper lane cleared"
+        ],
+        "validation_rules": [
+          "firmware-recovered domain, overflow, underflow, NaN, and infinity behavior covered by focused tests"
+        ],
+        "state_transitions": [
+          "updates libc errno and emulated MXCSR flags only for firmware-defined error cases"
+        ],
         "ownership": [],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc",
+        "branch": "codex/nid-gta-libc",
+        "commit": "0c84a2f",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcMathExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcMathExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "77/77 focused libc math tests passed; full integration suite passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -14656,7 +14677,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -14666,31 +14687,48 @@
       },
       "evidence": {
         "aerolib_name": "strspn",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "strspn firmware export at 0x76B70 in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
+        "confidence": "high",
         "conflicts": []
       },
       "contract": {
-        "signature": null,
-        "returns": [],
+        "signature": "size_t strspn(const unsigned char *source, const unsigned char *accept)",
+        "returns": [
+          "byte span length in RAX; memory-fault result on an unreadable required byte"
+        ],
         "output_writes": [],
-        "validation_rules": [],
+        "validation_rules": [
+          "raw unsigned-byte membership semantics; empty source returns before reading the second string"
+        ],
         "state_transitions": [],
-        "ownership": [],
+        "ownership": [
+          "caller owns both NUL-terminated input strings"
+        ],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc-core",
+        "branch": "codex/nid-gta-libc-core",
+        "commit": "6fb1d12",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcStringExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcStringExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "109/109 focused libc tests, 689/689 branch library tests, and Release solution build passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -14876,7 +14914,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -14886,31 +14924,52 @@
       },
       "evidence": {
         "aerolib_name": "cos",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "Ghidra-defined firmware export cos in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "host floating-point implementation may differ in uncommon last-bit rounding cases"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
+        "signature": "double cos(double x)",
+        "returns": [
+          "scalar floating-point result in XMM0; RAX cleared to zero"
+        ],
+        "output_writes": [
+          "XMM0 lower lane set and upper lane cleared"
+        ],
+        "validation_rules": [
+          "firmware-recovered domain, overflow, underflow, NaN, and infinity behavior covered by focused tests"
+        ],
+        "state_transitions": [
+          "updates libc errno and emulated MXCSR flags only for firmware-defined error cases"
+        ],
         "ownership": [],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc",
+        "branch": "codex/nid-gta-libc",
+        "commit": "0c84a2f",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcMathExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcMathExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "77/77 focused libc math tests passed; full integration suite passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -15041,7 +15100,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -15051,31 +15110,50 @@
       },
       "evidence": {
         "aerolib_name": "modff",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "modff firmware export at 0x546C0 in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
+        "confidence": "high",
         "conflicts": []
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
+        "signature": "float modff(float x, float *integral_out)",
+        "returns": [
+          "fractional float in XMM0; memory-fault result on an invalid output pointer"
+        ],
+        "output_writes": [
+          "writes the integral float bit pattern to integral_out"
+        ],
+        "validation_rules": [
+          "preserves signed zero, infinity, and quiet-NaN payload behavior"
+        ],
         "state_transitions": [],
-        "ownership": [],
+        "ownership": [
+          "caller owns integral_out"
+        ],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc-core",
+        "branch": "codex/nid-gta-libc-core",
+        "commit": "6fb1d12",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcMathExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcMathExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "109/109 focused libc tests, 689/689 branch library tests, and Release solution build passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -15261,7 +15339,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -15271,31 +15349,52 @@
       },
       "evidence": {
         "aerolib_name": "asin",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "Ghidra-defined firmware export asin in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "host floating-point implementation may differ in uncommon last-bit rounding cases"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
+        "signature": "double asin(double x)",
+        "returns": [
+          "scalar floating-point result in XMM0; RAX cleared to zero"
+        ],
+        "output_writes": [
+          "XMM0 lower lane set and upper lane cleared"
+        ],
+        "validation_rules": [
+          "firmware-recovered domain, overflow, underflow, NaN, and infinity behavior covered by focused tests"
+        ],
+        "state_transitions": [
+          "updates libc errno and emulated MXCSR flags only for firmware-defined error cases"
+        ],
         "ownership": [],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc",
+        "branch": "codex/nid-gta-libc",
+        "commit": "0c84a2f",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcMathExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcMathExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "77/77 focused libc math tests passed; full integration suite passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -15371,7 +15470,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -15381,31 +15480,52 @@
       },
       "evidence": {
         "aerolib_name": "fmodf",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "fmodf firmware export at 0x4CE40 in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "host floating-point operations may differ in uncommon last-bit rounding cases"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
+        "signature": "float fmodf(float x, float y)",
+        "returns": [
+          "floating-point result in XMM0; RAX cleared to zero"
+        ],
+        "output_writes": [
+          "XMM0 lower lane set and upper lane cleared"
+        ],
+        "validation_rules": [
+          "firmware special cases, signed zero, NaN, infinity, errno, and MXCSR behavior covered by focused tests"
+        ],
+        "state_transitions": [
+          "updates libc errno and emulated MXCSR only where the recovered firmware contract requires it"
+        ],
         "ownership": [],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc-core",
+        "branch": "codex/nid-gta-libc-core",
+        "commit": "6fb1d12",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcMathExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcMathExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "109/109 focused libc tests, 689/689 branch library tests, and Release solution build passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -15426,7 +15546,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -15436,31 +15556,52 @@
       },
       "evidence": {
         "aerolib_name": "expf",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "Ghidra-defined firmware export expf in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "host floating-point implementation may differ in uncommon last-bit rounding cases"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
+        "signature": "float expf(float x)",
+        "returns": [
+          "scalar floating-point result in XMM0; RAX cleared to zero"
+        ],
+        "output_writes": [
+          "XMM0 lower lane set and upper lane cleared"
+        ],
+        "validation_rules": [
+          "firmware-recovered domain, overflow, underflow, NaN, and infinity behavior covered by focused tests"
+        ],
+        "state_transitions": [
+          "updates libc errno and emulated MXCSR flags only for firmware-defined error cases"
+        ],
         "ownership": [],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc",
+        "branch": "codex/nid-gta-libc",
+        "commit": "0c84a2f",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcMathExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcMathExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "77/77 focused libc math tests passed; full integration suite passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -15536,7 +15677,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -15546,31 +15687,52 @@
       },
       "evidence": {
         "aerolib_name": "asinf",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "Ghidra-defined firmware export asinf in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "host floating-point implementation may differ in uncommon last-bit rounding cases"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
+        "signature": "float asinf(float x)",
+        "returns": [
+          "scalar floating-point result in XMM0; RAX cleared to zero"
+        ],
+        "output_writes": [
+          "XMM0 lower lane set and upper lane cleared"
+        ],
+        "validation_rules": [
+          "firmware-recovered domain, overflow, underflow, NaN, and infinity behavior covered by focused tests"
+        ],
+        "state_transitions": [
+          "updates libc errno and emulated MXCSR flags only for firmware-defined error cases"
+        ],
         "ownership": [],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc",
+        "branch": "codex/nid-gta-libc",
+        "commit": "0c84a2f",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcMathExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcMathExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "77/77 focused libc math tests passed; full integration suite passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -15646,7 +15808,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -15656,31 +15818,52 @@
       },
       "evidence": {
         "aerolib_name": "sin",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "Ghidra-defined firmware export sin in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "host floating-point implementation may differ in uncommon last-bit rounding cases"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
+        "signature": "double sin(double x)",
+        "returns": [
+          "scalar floating-point result in XMM0; RAX cleared to zero"
+        ],
+        "output_writes": [
+          "XMM0 lower lane set and upper lane cleared"
+        ],
+        "validation_rules": [
+          "firmware-recovered domain, overflow, underflow, NaN, and infinity behavior covered by focused tests"
+        ],
+        "state_transitions": [
+          "updates libc errno and emulated MXCSR flags only for firmware-defined error cases"
+        ],
         "ownership": [],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc",
+        "branch": "codex/nid-gta-libc",
+        "commit": "0c84a2f",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcMathExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcMathExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "77/77 focused libc math tests passed; full integration suite passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -15756,7 +15939,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -15766,31 +15949,52 @@
       },
       "evidence": {
         "aerolib_name": "acos",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "Ghidra-defined firmware export acos in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "host floating-point implementation may differ in uncommon last-bit rounding cases"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
+        "signature": "double acos(double x)",
+        "returns": [
+          "scalar floating-point result in XMM0; RAX cleared to zero"
+        ],
+        "output_writes": [
+          "XMM0 lower lane set and upper lane cleared"
+        ],
+        "validation_rules": [
+          "firmware-recovered domain, overflow, underflow, NaN, and infinity behavior covered by focused tests"
+        ],
+        "state_transitions": [
+          "updates libc errno and emulated MXCSR flags only for firmware-defined error cases"
+        ],
         "ownership": [],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc",
+        "branch": "codex/nid-gta-libc",
+        "commit": "0c84a2f",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcMathExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcMathExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "77/77 focused libc math tests passed; full integration suite passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -15811,7 +16015,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -15821,31 +16025,52 @@
       },
       "evidence": {
         "aerolib_name": "ldexp",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "ldexp firmware export at 0x52A10 in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "host floating-point operations may differ in uncommon last-bit rounding cases"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
+        "signature": "double ldexp(double x, int exponent)",
+        "returns": [
+          "floating-point result in XMM0; RAX cleared to zero"
+        ],
+        "output_writes": [
+          "XMM0 lower lane set and upper lane cleared"
+        ],
+        "validation_rules": [
+          "firmware special cases, signed zero, NaN, infinity, errno, and MXCSR behavior covered by focused tests"
+        ],
+        "state_transitions": [
+          "updates libc errno and emulated MXCSR only where the recovered firmware contract requires it"
+        ],
         "ownership": [],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc-core",
+        "branch": "codex/nid-gta-libc-core",
+        "commit": "6fb1d12",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcMathExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcMathExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "109/109 focused libc tests, 689/689 branch library tests, and Release solution build passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -15921,7 +16146,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -15931,31 +16156,52 @@
       },
       "evidence": {
         "aerolib_name": "exp",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "Ghidra-defined firmware export exp in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "host floating-point implementation may differ in uncommon last-bit rounding cases"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
+        "signature": "double exp(double x)",
+        "returns": [
+          "scalar floating-point result in XMM0; RAX cleared to zero"
+        ],
+        "output_writes": [
+          "XMM0 lower lane set and upper lane cleared"
+        ],
+        "validation_rules": [
+          "firmware-recovered domain, overflow, underflow, NaN, and infinity behavior covered by focused tests"
+        ],
+        "state_transitions": [
+          "updates libc errno and emulated MXCSR flags only for firmware-defined error cases"
+        ],
         "ownership": [],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc",
+        "branch": "codex/nid-gta-libc",
+        "commit": "0c84a2f",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcMathExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcMathExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "77/77 focused libc math tests passed; full integration suite passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -16086,7 +16332,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -16096,31 +16342,52 @@
       },
       "evidence": {
         "aerolib_name": "atan",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "Ghidra-defined firmware export atan in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "host floating-point implementation may differ in uncommon last-bit rounding cases"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
+        "signature": "double atan(double x)",
+        "returns": [
+          "scalar floating-point result in XMM0; RAX cleared to zero"
+        ],
+        "output_writes": [
+          "XMM0 lower lane set and upper lane cleared"
+        ],
+        "validation_rules": [
+          "firmware-recovered domain, overflow, underflow, NaN, and infinity behavior covered by focused tests"
+        ],
+        "state_transitions": [
+          "updates libc errno and emulated MXCSR flags only for firmware-defined error cases"
+        ],
         "ownership": [],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc",
+        "branch": "codex/nid-gta-libc",
+        "commit": "0c84a2f",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcMathExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcMathExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "77/77 focused libc math tests passed; full integration suite passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -16251,7 +16518,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -16261,31 +16528,52 @@
       },
       "evidence": {
         "aerolib_name": "sinf",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "Ghidra-defined firmware export sinf in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "host floating-point implementation may differ in uncommon last-bit rounding cases"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
+        "signature": "float sinf(float x)",
+        "returns": [
+          "scalar floating-point result in XMM0; RAX cleared to zero"
+        ],
+        "output_writes": [
+          "XMM0 lower lane set and upper lane cleared"
+        ],
+        "validation_rules": [
+          "firmware-recovered domain, overflow, underflow, NaN, and infinity behavior covered by focused tests"
+        ],
+        "state_transitions": [
+          "updates libc errno and emulated MXCSR flags only for firmware-defined error cases"
+        ],
         "ownership": [],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc",
+        "branch": "codex/nid-gta-libc",
+        "commit": "0c84a2f",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcMathExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcMathExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "77/77 focused libc math tests passed; full integration suite passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -16306,7 +16594,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -16316,31 +16604,52 @@
       },
       "evidence": {
         "aerolib_name": "logf",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "Ghidra-defined firmware export logf in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "host floating-point implementation may differ in uncommon last-bit rounding cases"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
+        "signature": "float logf(float x)",
+        "returns": [
+          "scalar floating-point result in XMM0; RAX cleared to zero"
+        ],
+        "output_writes": [
+          "XMM0 lower lane set and upper lane cleared"
+        ],
+        "validation_rules": [
+          "firmware-recovered domain, overflow, underflow, NaN, and infinity behavior covered by focused tests"
+        ],
+        "state_transitions": [
+          "updates libc errno and emulated MXCSR flags only for firmware-defined error cases"
+        ],
         "ownership": [],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc",
+        "branch": "codex/nid-gta-libc",
+        "commit": "0c84a2f",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcMathExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcMathExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "77/77 focused libc math tests passed; full integration suite passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -16471,7 +16780,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -16481,31 +16790,52 @@
       },
       "evidence": {
         "aerolib_name": "tan",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "Ghidra-defined firmware export tan in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "host floating-point implementation may differ in uncommon last-bit rounding cases"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
+        "signature": "double tan(double x)",
+        "returns": [
+          "scalar floating-point result in XMM0; RAX cleared to zero"
+        ],
+        "output_writes": [
+          "XMM0 lower lane set and upper lane cleared"
+        ],
+        "validation_rules": [
+          "firmware-recovered domain, overflow, underflow, NaN, and infinity behavior covered by focused tests"
+        ],
+        "state_transitions": [
+          "updates libc errno and emulated MXCSR flags only for firmware-defined error cases"
+        ],
         "ownership": [],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc",
+        "branch": "codex/nid-gta-libc",
+        "commit": "0c84a2f",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcMathExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcMathExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "77/77 focused libc math tests passed; full integration suite passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -16526,7 +16856,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -16536,31 +16866,50 @@
       },
       "evidence": {
         "aerolib_name": "srand",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "srand firmware export at 0x6FB70 in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
+        "confidence": "high",
         "conflicts": []
       },
       "contract": {
-        "signature": null,
-        "returns": [],
+        "signature": "void srand(uint32_t seed)",
+        "returns": [
+          "rand returns a 30-bit value in RAX; srand returns void-compatible zero"
+        ],
         "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
+        "validation_rules": [
+          "uses the recovered 64-bit LCG multiplier, increment, seed width, and output mask"
+        ],
+        "state_transitions": [
+          "reads or updates one process-global RNG state initialized to 1"
+        ],
         "ownership": [],
-        "synchronization": []
+        "synchronization": [
+          "one lock prevents torn or lost state updates"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc-core",
+        "branch": "codex/nid-gta-libc-core",
+        "commit": "6fb1d12",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcRandomExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcRandomExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "109/109 focused libc tests, 689/689 branch library tests, and Release solution build passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -16581,7 +16930,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -16591,31 +16940,52 @@
       },
       "evidence": {
         "aerolib_name": "log2",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "Ghidra-defined firmware export log2 in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "host floating-point implementation may differ in uncommon last-bit rounding cases"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
+        "signature": "double log2(double x)",
+        "returns": [
+          "scalar floating-point result in XMM0; RAX cleared to zero"
+        ],
+        "output_writes": [
+          "XMM0 lower lane set and upper lane cleared"
+        ],
+        "validation_rules": [
+          "firmware-recovered domain, overflow, underflow, NaN, and infinity behavior covered by focused tests"
+        ],
+        "state_transitions": [
+          "updates libc errno and emulated MXCSR flags only for firmware-defined error cases"
+        ],
         "ownership": [],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc",
+        "branch": "codex/nid-gta-libc",
+        "commit": "0c84a2f",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcMathExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcMathExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "77/77 focused libc math tests passed; full integration suite passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -16691,7 +17061,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -16701,31 +17071,52 @@
       },
       "evidence": {
         "aerolib_name": "tanf",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "Ghidra-defined firmware export tanf in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "host floating-point implementation may differ in uncommon last-bit rounding cases"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
+        "signature": "float tanf(float x)",
+        "returns": [
+          "scalar floating-point result in XMM0; RAX cleared to zero"
+        ],
+        "output_writes": [
+          "XMM0 lower lane set and upper lane cleared"
+        ],
+        "validation_rules": [
+          "firmware-recovered domain, overflow, underflow, NaN, and infinity behavior covered by focused tests"
+        ],
+        "state_transitions": [
+          "updates libc errno and emulated MXCSR flags only for firmware-defined error cases"
+        ],
         "ownership": [],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc",
+        "branch": "codex/nid-gta-libc",
+        "commit": "0c84a2f",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcMathExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcMathExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "77/77 focused libc math tests passed; full integration suite passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -16856,7 +17247,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -16866,31 +17257,50 @@
       },
       "evidence": {
         "aerolib_name": "rand",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "rand firmware export at 0x6AD70 in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
+        "confidence": "high",
         "conflicts": []
       },
       "contract": {
-        "signature": null,
-        "returns": [],
+        "signature": "int rand(void)",
+        "returns": [
+          "rand returns a 30-bit value in RAX; srand returns void-compatible zero"
+        ],
         "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
+        "validation_rules": [
+          "uses the recovered 64-bit LCG multiplier, increment, seed width, and output mask"
+        ],
+        "state_transitions": [
+          "reads or updates one process-global RNG state initialized to 1"
+        ],
         "ownership": [],
-        "synchronization": []
+        "synchronization": [
+          "one lock prevents torn or lost state updates"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc-core",
+        "branch": "codex/nid-gta-libc-core",
+        "commit": "6fb1d12",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcRandomExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcRandomExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "109/109 focused libc tests, 689/689 branch library tests, and Release solution build passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -16911,7 +17321,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -16921,31 +17331,52 @@
       },
       "evidence": {
         "aerolib_name": "exp2",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "Ghidra-defined firmware export exp2 in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "host floating-point implementation may differ in uncommon last-bit rounding cases"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
+        "signature": "double exp2(double x)",
+        "returns": [
+          "scalar floating-point result in XMM0; RAX cleared to zero"
+        ],
+        "output_writes": [
+          "XMM0 lower lane set and upper lane cleared"
+        ],
+        "validation_rules": [
+          "firmware-recovered domain, overflow, underflow, NaN, and infinity behavior covered by focused tests"
+        ],
+        "state_transitions": [
+          "updates libc errno and emulated MXCSR flags only for firmware-defined error cases"
+        ],
         "ownership": [],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc",
+        "branch": "codex/nid-gta-libc",
+        "commit": "0c84a2f",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcMathExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcMathExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "77/77 focused libc math tests passed; full integration suite passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -17131,7 +17562,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -17141,31 +17572,52 @@
       },
       "evidence": {
         "aerolib_name": "log2f",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "Ghidra-defined firmware export log2f in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "host floating-point implementation may differ in uncommon last-bit rounding cases"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
+        "signature": "float log2f(float x)",
+        "returns": [
+          "scalar floating-point result in XMM0; RAX cleared to zero"
+        ],
+        "output_writes": [
+          "XMM0 lower lane set and upper lane cleared"
+        ],
+        "validation_rules": [
+          "firmware-recovered domain, overflow, underflow, NaN, and infinity behavior covered by focused tests"
+        ],
+        "state_transitions": [
+          "updates libc errno and emulated MXCSR flags only for firmware-defined error cases"
+        ],
         "ownership": [],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc",
+        "branch": "codex/nid-gta-libc",
+        "commit": "0c84a2f",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcMathExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcMathExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "77/77 focused libc math tests passed; full integration suite passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -17296,7 +17748,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -17306,31 +17758,52 @@
       },
       "evidence": {
         "aerolib_name": "ldexpf",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "ldexpf firmware export at 0x52D10 in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "host floating-point operations may differ in uncommon last-bit rounding cases"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
+        "signature": "float ldexpf(float x, int exponent)",
+        "returns": [
+          "floating-point result in XMM0; RAX cleared to zero"
+        ],
+        "output_writes": [
+          "XMM0 lower lane set and upper lane cleared"
+        ],
+        "validation_rules": [
+          "firmware special cases, signed zero, NaN, infinity, errno, and MXCSR behavior covered by focused tests"
+        ],
+        "state_transitions": [
+          "updates libc errno and emulated MXCSR only where the recovered firmware contract requires it"
+        ],
         "ownership": [],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc-core",
+        "branch": "codex/nid-gta-libc-core",
+        "commit": "6fb1d12",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcMathExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcMathExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "109/109 focused libc tests, 689/689 branch library tests, and Release solution build passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -17351,7 +17824,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -17361,31 +17834,46 @@
       },
       "evidence": {
         "aerolib_name": "__isnanf",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "__isnanf firmware export at 0x49D80 in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
+        "confidence": "high",
         "conflicts": []
       },
       "contract": {
-        "signature": null,
-        "returns": [],
+        "signature": "int __isnanf(float x)",
+        "returns": [
+          "0 or 1 in RAX from exact IEEE-754 bit classification"
+        ],
         "output_writes": [],
-        "validation_rules": [],
+        "validation_rules": [
+          "classifies float bits without raising floating-point exceptions"
+        ],
         "state_transitions": [],
         "ownership": [],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc-core",
+        "branch": "codex/nid-gta-libc-core",
+        "commit": "6fb1d12",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcMathExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcMathExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "109/109 focused libc tests, 689/689 branch library tests, and Release solution build passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -17461,7 +17949,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -17471,31 +17959,52 @@
       },
       "evidence": {
         "aerolib_name": "log10f",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "Ghidra-defined firmware export log10f in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "host floating-point implementation may differ in uncommon last-bit rounding cases"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
+        "signature": "float log10f(float x)",
+        "returns": [
+          "scalar floating-point result in XMM0; RAX cleared to zero"
+        ],
+        "output_writes": [
+          "XMM0 lower lane set and upper lane cleared"
+        ],
+        "validation_rules": [
+          "firmware-recovered domain, overflow, underflow, NaN, and infinity behavior covered by focused tests"
+        ],
+        "state_transitions": [
+          "updates libc errno and emulated MXCSR flags only for firmware-defined error cases"
+        ],
         "ownership": [],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc",
+        "branch": "codex/nid-gta-libc",
+        "commit": "0c84a2f",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcMathExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcMathExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "77/77 focused libc math tests passed; full integration suite passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -17571,7 +18080,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -17581,31 +18090,52 @@
       },
       "evidence": {
         "aerolib_name": "fmod",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "fmod firmware export at 0x4CAF0 in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "host floating-point operations may differ in uncommon last-bit rounding cases"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
+        "signature": "double fmod(double x, double y)",
+        "returns": [
+          "floating-point result in XMM0; RAX cleared to zero"
+        ],
+        "output_writes": [
+          "XMM0 lower lane set and upper lane cleared"
+        ],
+        "validation_rules": [
+          "firmware special cases, signed zero, NaN, infinity, errno, and MXCSR behavior covered by focused tests"
+        ],
+        "state_transitions": [
+          "updates libc errno and emulated MXCSR only where the recovered firmware contract requires it"
+        ],
         "ownership": [],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc-core",
+        "branch": "codex/nid-gta-libc-core",
+        "commit": "6fb1d12",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcMathExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcMathExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "109/109 focused libc tests, 689/689 branch library tests, and Release solution build passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -17626,7 +18156,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -17636,31 +18166,48 @@
       },
       "evidence": {
         "aerolib_name": "strcspn",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "strcspn firmware export at 0x3F860 in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
+        "confidence": "high",
         "conflicts": []
       },
       "contract": {
-        "signature": null,
-        "returns": [],
+        "signature": "size_t strcspn(const unsigned char *source, const unsigned char *reject)",
+        "returns": [
+          "byte span length in RAX; memory-fault result on an unreadable required byte"
+        ],
         "output_writes": [],
-        "validation_rules": [],
+        "validation_rules": [
+          "raw unsigned-byte membership semantics; empty source returns before reading the second string"
+        ],
         "state_transitions": [],
-        "ownership": [],
+        "ownership": [
+          "caller owns both NUL-terminated input strings"
+        ],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc-core",
+        "branch": "codex/nid-gta-libc-core",
+        "commit": "6fb1d12",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcStringExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcStringExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "109/109 focused libc tests, 689/689 branch library tests, and Release solution build passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -17681,7 +18228,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -17691,31 +18238,46 @@
       },
       "evidence": {
         "aerolib_name": "__isinff",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "__isinff firmware export at 0x49D00 in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
+        "confidence": "high",
         "conflicts": []
       },
       "contract": {
-        "signature": null,
-        "returns": [],
+        "signature": "int __isinff(float x)",
+        "returns": [
+          "0 or 1 in RAX from exact IEEE-754 bit classification"
+        ],
         "output_writes": [],
-        "validation_rules": [],
+        "validation_rules": [
+          "classifies float bits without raising floating-point exceptions"
+        ],
         "state_transitions": [],
         "ownership": [],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc-core",
+        "branch": "codex/nid-gta-libc-core",
+        "commit": "6fb1d12",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcMathExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcMathExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "109/109 focused libc tests, 689/689 branch library tests, and Release solution build passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -17791,7 +18353,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -17801,31 +18363,52 @@
       },
       "evidence": {
         "aerolib_name": "log",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "Ghidra-defined firmware export log in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "host floating-point implementation may differ in uncommon last-bit rounding cases"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
+        "signature": "double log(double x)",
+        "returns": [
+          "scalar floating-point result in XMM0; RAX cleared to zero"
+        ],
+        "output_writes": [
+          "XMM0 lower lane set and upper lane cleared"
+        ],
+        "validation_rules": [
+          "firmware-recovered domain, overflow, underflow, NaN, and infinity behavior covered by focused tests"
+        ],
+        "state_transitions": [
+          "updates libc errno and emulated MXCSR flags only for firmware-defined error cases"
+        ],
         "ownership": [],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc",
+        "branch": "codex/nid-gta-libc",
+        "commit": "0c84a2f",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcMathExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcMathExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "77/77 focused libc math tests passed; full integration suite passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -17901,7 +18484,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -17911,31 +18494,50 @@
       },
       "evidence": {
         "aerolib_name": "time",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "time firmware export at 0x77CD0 in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
+        "confidence": "high",
         "conflicts": []
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
+        "signature": "int64_t time(int64_t *tloc)",
+        "returns": [
+          "signed Unix epoch seconds in RAX; memory-fault result for an invalid non-null tloc"
+        ],
+        "output_writes": [
+          "writes the identical signed 64-bit seconds value when tloc is non-null"
+        ],
+        "validation_rules": [
+          "null tloc is valid"
+        ],
         "state_transitions": [],
-        "ownership": [],
+        "ownership": [
+          "caller owns optional tloc"
+        ],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc-core",
+        "branch": "codex/nid-gta-libc-core",
+        "commit": "6fb1d12",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcTimeExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcTimeExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "109/109 focused libc tests, 689/689 branch library tests, and Release solution build passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -17956,7 +18558,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -17966,31 +18568,52 @@
       },
       "evidence": {
         "aerolib_name": "atanf",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "Ghidra-defined firmware export atanf in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "host floating-point implementation may differ in uncommon last-bit rounding cases"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
+        "signature": "float atanf(float x)",
+        "returns": [
+          "scalar floating-point result in XMM0; RAX cleared to zero"
+        ],
+        "output_writes": [
+          "XMM0 lower lane set and upper lane cleared"
+        ],
+        "validation_rules": [
+          "firmware-recovered domain, overflow, underflow, NaN, and infinity behavior covered by focused tests"
+        ],
+        "state_transitions": [
+          "updates libc errno and emulated MXCSR flags only for firmware-defined error cases"
+        ],
         "ownership": [],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc",
+        "branch": "codex/nid-gta-libc",
+        "commit": "0c84a2f",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcMathExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcMathExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "77/77 focused libc math tests passed; full integration suite passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -18011,7 +18634,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -18021,31 +18644,52 @@
       },
       "evidence": {
         "aerolib_name": "exp2f",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a",
+        "reference_functions": [
+          "Ghidra-defined firmware export exp2f in libSceLibcInternal.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "host floating-point implementation may differ in uncommon last-bit rounding cases"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
+        "signature": "float exp2f(float x)",
+        "returns": [
+          "scalar floating-point result in XMM0; RAX cleared to zero"
+        ],
+        "output_writes": [
+          "XMM0 lower lane set and upper lane cleared"
+        ],
+        "validation_rules": [
+          "firmware-recovered domain, overflow, underflow, NaN, and infinity behavior covered by focused tests"
+        ],
+        "state_transitions": [
+          "updates libc errno and emulated MXCSR flags only for firmware-defined error cases"
+        ],
         "ownership": [],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-libc",
+        "branch": "codex/nid-gta-libc",
+        "commit": "0c84a2f",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcMathExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcMathExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "77/77 focused libc math tests passed; full integration suite passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; HLE runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -44136,7 +44780,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -44146,31 +44790,54 @@
       },
       "evidence": {
         "aerolib_name": "sceNpRegisterPremiumEventCallback",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "2c192ec03cf2b3a8acc24c2aefd98ef8232c2bdbdf2f678deb980397ed48cb72",
+        "reference_functions": [
+          "sceNpRegisterPremiumEventCallback firmware export at 0x16E90 in libSceNpManager.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "real platform premium-backend subscription failures are not modeled because SharpEmu has no premium backend"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
+        "signature": "int sceNpRegisterPremiumEventCallback(void (*callback)(uint64_t eventType, uint64_t eventValue, void *userData), void *userData)",
+        "returns": [
+          "success, not-initialized, invalid-callback, or already-registered firmware NP result"
+        ],
         "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
-        "ownership": [],
-        "synchronization": []
+        "validation_rules": [
+          "manager initialization is checked before null and duplicate callback validation"
+        ],
+        "state_transitions": [
+          "stores one callback and user-data pair after manager initialization"
+        ],
+        "ownership": [
+          "guest owns callback code and user data"
+        ],
+        "synchronization": [
+          "manager mutex protects the slot; dispatch copies under lock and invokes after unlocking"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-np-premium-callbacks",
+        "branch": "codex/nid-gta-np-premium-callbacks",
+        "commit": "f92ed50",
+        "files": [
+          "src/SharpEmu.Libs/Np/NpManagerExports.cs",
+          "tests/SharpEmu.Libs.Tests/Np/NpManagerExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "7/7 focused NpManager tests and 664/664 branch library tests passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; no online premium event was fabricated or runtime-invoked"
+          }
+        ]
       },
       "blockers": []
     },
@@ -44191,7 +44858,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -44201,31 +44868,54 @@
       },
       "evidence": {
         "aerolib_name": "sceNpUnregisterPremiumEventCallback",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "2c192ec03cf2b3a8acc24c2aefd98ef8232c2bdbdf2f678deb980397ed48cb72",
+        "reference_functions": [
+          "sceNpUnregisterPremiumEventCallback firmware export at 0x16FA0 in libSceNpManager.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "real platform premium-backend subscription failures are not modeled because SharpEmu has no premium backend"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
+        "signature": "int sceNpUnregisterPremiumEventCallback(void)",
+        "returns": [
+          "success, not-initialized, or callback-not-registered firmware NP result"
+        ],
         "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
-        "ownership": [],
-        "synchronization": []
+        "validation_rules": [
+          "manager initialization is checked before callback-slot state"
+        ],
+        "state_transitions": [
+          "clears the registered callback and user-data pair; manager termination also clears it"
+        ],
+        "ownership": [
+          "guest owns callback code and user data"
+        ],
+        "synchronization": [
+          "manager mutex protects the slot; dispatch copies under lock and invokes after unlocking"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/.codex/worktrees/sharpemu-gta-np-premium-callbacks",
+        "branch": "codex/nid-gta-np-premium-callbacks",
+        "commit": "f92ed50",
+        "files": [
+          "src/SharpEmu.Libs/Np/NpManagerExports.cs",
+          "tests/SharpEmu.Libs.Tests/Np/NpManagerExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "7/7 focused NpManager tests and 664/664 branch library tests passed",
+        "integration": "SharpEmu.Libs.Tests 696/696 and Release solution build passed on codex/gta-v-nids at 6fb1d12",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; no online premium event was fabricated or runtime-invoked"
+          }
+        ]
       },
       "blockers": []
     },
