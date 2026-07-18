@@ -1581,6 +1581,13 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		{
 			return false;
 		}
+		// Data symbols are addressable objects, never call targets. The loader also
+		// excludes STT_OBJECT imports from the stub map; retain this registry check
+		// as defense in depth for compatibility or malformed images.
+		if (!IsCallableImportNid(_moduleManager, nid))
+		{
+			return false;
+		}
 		if (IsHlePreferredNid(nid))
 		{
 			return false;
@@ -1648,6 +1655,13 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			}
 		}
 		return false;
+	}
+
+	internal static bool IsCallableImportNid(IModuleManager moduleManager, string nid)
+	{
+		ArgumentNullException.ThrowIfNull(moduleManager);
+		ArgumentException.ThrowIfNullOrWhiteSpace(nid);
+		return !moduleManager.TryGetDataSymbol(nid, out _);
 	}
 
 	internal static bool ShouldResolveRegisteredExportViaLle(

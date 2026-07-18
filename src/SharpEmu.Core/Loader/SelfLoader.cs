@@ -97,6 +97,8 @@ public sealed class SelfLoader : ISelfLoader
     private static readonly IReadOnlyDictionary<ulong, string> EmptyImportStubs = new Dictionary<ulong, string>();
     private static readonly IReadOnlyDictionary<string, ulong> EmptyRuntimeSymbols =
         new Dictionary<string, ulong>(StringComparer.Ordinal);
+    private static readonly IReadOnlyDictionary<string, ulong> EmptyRuntimeDataSymbols =
+        new Dictionary<string, ulong>(StringComparer.Ordinal);
     private static readonly IReadOnlyList<ulong> EmptyInitializerFunctions = Array.Empty<ulong>();
     private static readonly int SelfHeaderSize = Unsafe.SizeOf<SelfHeader>();
     private static readonly int SelfSegmentSize = Unsafe.SizeOf<SelfSegment>();
@@ -245,6 +247,7 @@ public sealed class SelfLoader : ISelfLoader
             ? new Dictionary<ulong, string>()
             : new Dictionary<ulong, string>(importStubs);
         var runtimeSymbols = new Dictionary<string, ulong>(StringComparer.Ordinal);
+        var runtimeDataSymbols = new Dictionary<string, ulong>(StringComparer.Ordinal);
         RegisterRuntimeSymbolsAndHooks(
             imageData,
             loadContext,
@@ -253,13 +256,17 @@ public sealed class SelfLoader : ISelfLoader
             virtualMemory,
             imageBase,
             effectiveImportStubs,
-            runtimeSymbols);
+            runtimeSymbols,
+            runtimeDataSymbols);
         var finalizedImportStubs = effectiveImportStubs.Count == 0
             ? EmptyImportStubs
             : effectiveImportStubs;
         var finalizedRuntimeSymbols = runtimeSymbols.Count == 0
             ? EmptyRuntimeSymbols
             : runtimeSymbols;
+        var finalizedRuntimeDataSymbols = runtimeDataSymbols.Count == 0
+            ? EmptyRuntimeDataSymbols
+            : runtimeDataSymbols;
         CollectInitializerFunctions(
             imageData,
             loadContext,
@@ -312,7 +319,8 @@ public sealed class SelfLoader : ISelfLoader
             applicationInfo.Version,
             tlsModuleId,
             tlsInfo.MemorySize,
-            tlsInfo.StaticOffset);
+            tlsInfo.StaticOffset,
+            finalizedRuntimeDataSymbols);
     }
 
     private static (string? Title, string? TitleId, string? Version) TryLoadParamJson(
@@ -752,6 +760,16 @@ public sealed class SelfLoader : ISelfLoader
 
         foreach (var descriptor in descriptors)
         {
+            if (descriptor.ImportNid is not null &&
+                descriptor.IsDataImport &&
+                (descriptor.ValueKind != RelocationValueKind.Pointer ||
+                 descriptor.WriteKind != RelocationWriteKind.UInt64))
+            {
+                throw new InvalidDataException(
+                    $"Imported data NID '{descriptor.ImportNid}' uses unsupported " +
+                    $"relocation shape {descriptor.ValueKind}/{descriptor.WriteKind}.");
+            }
+
             ulong symbolValue;
             if (descriptor.ImportNid is null)
             {
@@ -759,7 +777,14 @@ public sealed class SelfLoader : ISelfLoader
             }
             else
             {
-                if (addressesByNid.TryGetValue(descriptor.ImportNid, out var stubAddress))
+                if (descriptor.IsDataImport)
+                {
+                    // Object relocations are rebound after all adjacent providers
+                    // load. Keep the slot null until then; an executable trap stub
+                    // would turn an addressable object into a callable target.
+                    symbolValue = 0;
+                }
+                else if (addressesByNid.TryGetValue(descriptor.ImportNid, out var stubAddress))
                 {
                     symbolValue = stubAddress;
                 }
@@ -776,7 +801,9 @@ public sealed class SelfLoader : ISelfLoader
                 }
             }
 
-            var targetValue = ComputeRelocationValue(descriptor, symbolValue);
+            var targetValue = descriptor.IsDataImport && descriptor.ImportNid is not null
+                ? 0
+                : ComputeRelocationValue(descriptor, symbolValue);
 
             if (targetValue < 0x1000 && descriptor.ValueKind is
                 RelocationValueKind.TlsOffset or
@@ -786,7 +813,7 @@ public sealed class SelfLoader : ISelfLoader
                 // A TLS offset (TPOFF64/DTPOFF64) is a signed displacement, not a
                 // mapped address, so a small or negative value here is expected.
             }
-            else if (targetValue < 0x1000 && !descriptor.IsWeak)
+            else if (targetValue < 0x1000 && !descriptor.IsWeak && !descriptor.IsDataImport)
             {
                 if (descriptor.ValueKind == RelocationValueKind.TlsModuleId)
                 {
@@ -1170,6 +1197,9 @@ public sealed class SelfLoader : ISelfLoader
         IReadOnlyList<RelocationDescriptor> descriptors,
         IModuleManager? moduleManager)
     {
+        var hasDataImport = false;
+        var hasFunctionImport = false;
+        var hasRequiredFunctionImport = false;
         for (var i = 0; i < descriptors.Count; i++)
         {
             var descriptor = descriptors[i];
@@ -1177,13 +1207,44 @@ public sealed class SelfLoader : ISelfLoader
             {
                 continue;
             }
-            if (!descriptor.IsWeak || moduleManager?.TryGetExport(nid, out _) == true)
+
+            if (descriptor.IsDataImport)
             {
-                return true;
+                hasDataImport = true;
+                continue;
             }
+
+            hasFunctionImport = true;
+            hasRequiredFunctionImport |= !descriptor.IsWeak;
         }
 
-        return false;
+        return EvaluateImportStubPolicy(
+            nid,
+            hasDataImport,
+            hasFunctionImport,
+            hasRequiredFunctionImport,
+            moduleManager?.TryGetExport(nid, out _) == true);
+    }
+
+    internal static bool EvaluateImportStubPolicy(
+        string nid,
+        bool hasDataImport,
+        bool hasFunctionImport,
+        bool hasRequiredFunctionImport,
+        bool hasRegisteredFunction)
+    {
+        if (hasDataImport && hasFunctionImport)
+        {
+            throw new InvalidDataException(
+                $"NID '{nid}' is imported as both an object and a function.");
+        }
+
+        if (hasDataImport || !hasFunctionImport)
+        {
+            return false;
+        }
+
+        return hasRequiredFunctionImport || hasRegisteredFunction;
     }
 
     private static void RegisterRuntimeSymbolsAndHooks(
@@ -1194,9 +1255,17 @@ public sealed class SelfLoader : ISelfLoader
         IVirtualMemory virtualMemory,
         ulong imageBase,
         IDictionary<ulong, string> importStubs,
-        IDictionary<string, ulong> runtimeSymbols)
+        IDictionary<string, ulong> runtimeSymbols,
+        IDictionary<string, ulong> runtimeDataSymbols)
     {
-        var sectionSymbols = RegisterSectionRuntimeSymbols(imageData, loadContext, elfHeader, imageBase, importStubs, runtimeSymbols);
+        var sectionSymbols = RegisterSectionRuntimeSymbols(
+            imageData,
+            loadContext,
+            elfHeader,
+            imageBase,
+            importStubs,
+            runtimeSymbols,
+            runtimeDataSymbols);
         var dynamicSymbols = RegisterDynamicRuntimeSymbols(
             imageData,
             loadContext,
@@ -1204,7 +1273,8 @@ public sealed class SelfLoader : ISelfLoader
             virtualMemory,
             imageBase,
             importStubs,
-            runtimeSymbols);
+            runtimeSymbols,
+            runtimeDataSymbols);
 
         if (sectionSymbols > 0 || dynamicSymbols > 0)
         {
@@ -1359,7 +1429,8 @@ public sealed class SelfLoader : ISelfLoader
                 descriptor.TargetAddress,
                 descriptor.Addend,
                 descriptor.ImportNid,
-                descriptor.IsDataImport));
+                descriptor.IsDataImport,
+                descriptor.IsWeak));
         }
 
         return importedRelocations.Count == 0
@@ -1373,7 +1444,8 @@ public sealed class SelfLoader : ISelfLoader
         ElfHeader elfHeader,
         ulong imageBase,
         IDictionary<ulong, string> importStubs,
-        IDictionary<string, ulong> runtimeSymbols)
+        IDictionary<string, ulong> runtimeSymbols,
+        IDictionary<string, ulong> runtimeDataSymbols)
     {
         if (elfHeader.SectionHeaderOffset == 0 ||
             elfHeader.SectionHeaderCount == 0 ||
@@ -1436,7 +1508,13 @@ public sealed class SelfLoader : ISelfLoader
                     continue;
                 }
 
-                if (RegisterRuntimeSymbol(runtimeSymbols, importStubs, symbolName, symbolAddress))
+                if (RegisterRuntimeSymbol(
+                        runtimeSymbols,
+                        runtimeDataSymbols,
+                        importStubs,
+                        symbolName,
+                        symbolAddress,
+                        GetSymbolType(symbol.Info) == SymbolTypeObject))
                 {
                     added++;
                 }
@@ -1453,7 +1531,8 @@ public sealed class SelfLoader : ISelfLoader
         IVirtualMemory virtualMemory,
         ulong imageBase,
         IDictionary<ulong, string> importStubs,
-        IDictionary<string, ulong> runtimeSymbols)
+        IDictionary<string, ulong> runtimeSymbols,
+        IDictionary<string, ulong> runtimeDataSymbols)
     {
         if (!TryGetProgramHeader(programHeaders, ProgramHeaderType.Dynamic, out var dynamicHeader, out var dynamicHeaderIndex))
         {
@@ -1534,7 +1613,13 @@ public sealed class SelfLoader : ISelfLoader
                 continue;
             }
 
-            if (RegisterRuntimeSymbol(runtimeSymbols, importStubs, symbolName, symbolAddress))
+            if (RegisterRuntimeSymbol(
+                    runtimeSymbols,
+                    runtimeDataSymbols,
+                    importStubs,
+                    symbolName,
+                    symbolAddress,
+                    GetSymbolType(symbol.Info) == SymbolTypeObject))
             {
                 added++;
             }
@@ -1545,42 +1630,59 @@ public sealed class SelfLoader : ISelfLoader
 
     private static bool RegisterRuntimeSymbol(
         IDictionary<string, ulong> runtimeSymbols,
+        IDictionary<string, ulong> runtimeDataSymbols,
         IDictionary<ulong, string> importStubs,
         string symbolName,
-        ulong symbolAddress)
+        ulong symbolAddress,
+        bool isData)
     {
         if (string.IsNullOrWhiteSpace(symbolName) || symbolAddress < 0x10000)
         {
             return false;
         }
 
-        var addedAny = false;
-        if (!runtimeSymbols.ContainsKey(symbolName))
+        var addedAny = RegisterRuntimeSymbolAliases(runtimeSymbols, symbolName, symbolAddress);
+
+        if (isData)
         {
-            runtimeSymbols[symbolName] = symbolAddress;
+            _ = RegisterRuntimeSymbolAliases(runtimeDataSymbols, symbolName, symbolAddress);
+        }
+
+        if (string.Equals(symbolName, "kernel_dynlib_dlsym", StringComparison.Ordinal))
+        {
+            importStubs[symbolAddress] = RuntimeStubNids.KernelDynlibDlsym;
+        }
+
+        return addedAny;
+    }
+
+    private static bool RegisterRuntimeSymbolAliases(
+        IDictionary<string, ulong> destination,
+        string symbolName,
+        ulong symbolAddress)
+    {
+        var addedAny = false;
+        if (!destination.ContainsKey(symbolName))
+        {
+            destination[symbolName] = symbolAddress;
             addedAny = true;
         }
 
         var nid = ExtractNid(symbolName);
         if (!string.IsNullOrWhiteSpace(nid) &&
             !string.Equals(symbolName, nid, StringComparison.Ordinal) &&
-            !runtimeSymbols.ContainsKey(nid))
+            !destination.ContainsKey(nid))
         {
-            runtimeSymbols[nid] = symbolAddress;
+            destination[nid] = symbolAddress;
             addedAny = true;
         }
 
         if (symbolName.Length > 1 &&
             symbolName[0] == '_' &&
-            !runtimeSymbols.ContainsKey(symbolName[1..]))
+            !destination.ContainsKey(symbolName[1..]))
         {
-            runtimeSymbols[symbolName[1..]] = symbolAddress;
+            destination[symbolName[1..]] = symbolAddress;
             addedAny = true;
-        }
-
-        if (string.Equals(symbolName, "kernel_dynlib_dlsym", StringComparison.Ordinal))
-        {
-            importStubs[symbolAddress] = RuntimeStubNids.KernelDynlibDlsym;
         }
 
         return addedAny;
