@@ -15,6 +15,8 @@ public static class NpManagerExports
     private const int NpErrorInvalidArgument = unchecked((int)0x80550003);
     private const int NpErrorCallbackAlreadyRegistered = unchecked((int)0x80550008);
     private const int NpErrorCallbackNotRegistered = unchecked((int)0x80550009);
+    private const int NpErrorInvalidAsyncParameterSize = unchecked((int)0x80550011);
+    private const ulong NpAsyncParameterSize = 0x18;
 
     private static readonly object ManagerGate = new();
     private static ulong _managerAllocatorAddress;
@@ -275,14 +277,109 @@ public static class NpManagerExports
     }
 
     [SysAbiExport(
+        Nid = "eiqMCt9UshI",
+        ExportName = "sceNpCreateAsyncRequest",
+        Target = Generation.Gen5,
+        LibraryName = "libSceNpManager")]
+    public static int NpCreateAsyncRequest(CpuContext ctx)
+    {
+        // Firmware checks the PRX-owned request subsystem before touching the
+        // parameter pointer. This lifecycle is intentionally independent from
+        // the manager allocator used by fHGhS3uP52k.
+        if (!NpManagerAsyncRequests.IsInitialized)
+        {
+            return SetReturn(ctx, NpManagerAsyncRequests.ErrorNotInitialized);
+        }
+
+        var parameterAddress = ctx[CpuRegister.Rdi];
+        if (parameterAddress == 0)
+        {
+            return SetReturn(ctx, NpManagerAsyncRequests.ErrorInvalidArgument);
+        }
+
+        if (!ctx.TryReadUInt64(parameterAddress, out var size))
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        if (size != NpAsyncParameterSize)
+        {
+            return SetReturn(ctx, NpErrorInvalidAsyncParameterSize);
+        }
+
+        if (!ctx.TryReadUInt64(parameterAddress + 0x08, out var affinity) ||
+            !ctx.TryReadUInt32(parameterAddress + 0x10, out var priority))
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        return SetReturn(ctx, NpManagerAsyncRequests.Create(priority, affinity));
+    }
+
+    [SysAbiExport(
         Nid = "S7QTn72PrDw",
         ExportName = "sceNpDeleteRequest",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libSceNpManager")]
     public static int NpDeleteRequest(CpuContext ctx)
     {
-        ctx[CpuRegister.Rax] = 0;
-        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        // The Ghidra evidence packet establishes only Gen5 behavior. Preserve
+        // the pre-existing Gen4 compatibility behavior rather than projecting
+        // the Gen5 request registry onto an unevidenced ABI generation.
+        if (ctx.TargetGeneration == Generation.Gen4)
+        {
+            return SetReturn(ctx, 0);
+        }
+
+        return SetReturn(
+            ctx,
+            NpManagerAsyncRequests.Delete(unchecked((int)ctx[CpuRegister.Rdi])));
+    }
+
+    [SysAbiExport(
+        Nid = "OzKvTvg3ZYU",
+        ExportName = "sceNpAbortRequest",
+        Target = Generation.Gen5,
+        LibraryName = "libSceNpManager")]
+    public static int NpAbortRequest(CpuContext ctx)
+    {
+        return SetReturn(
+            ctx,
+            NpManagerAsyncRequests.Abort(unchecked((int)ctx[CpuRegister.Rdi])));
+    }
+
+    [SysAbiExport(
+        Nid = "uqcPJLWL08M",
+        ExportName = "sceNpPollAsync",
+        Target = Generation.Gen5,
+        LibraryName = "libSceNpManager")]
+    public static int NpPollAsync(CpuContext ctx)
+    {
+        // Initialization wins over a null result pointer in firmware.
+        if (!NpManagerAsyncRequests.IsInitialized)
+        {
+            return SetReturn(ctx, NpManagerAsyncRequests.ErrorNotInitialized);
+        }
+
+        var resultAddress = ctx[CpuRegister.Rsi];
+        if (resultAddress == 0)
+        {
+            return SetReturn(ctx, NpManagerAsyncRequests.ErrorInvalidArgument);
+        }
+
+        var pollResult = NpManagerAsyncRequests.Poll(
+            unchecked((int)ctx[CpuRegister.Rdi]),
+            out var completed,
+            out var operationResult);
+        if (pollResult != 0 || !completed)
+        {
+            return SetReturn(ctx, pollResult);
+        }
+
+        // Firmware writes exactly one 32-bit result, and only on completion.
+        return ctx.TryWriteInt32(resultAddress, operationResult)
+            ? SetReturn(ctx, 0)
+            : ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
     }
 
     [SysAbiExport(
@@ -537,6 +634,7 @@ public static class NpManagerExports
         }
 
         NpCommonExports.ReleaseHleAllocator(allocatorAddress);
+        NpManagerAsyncRequests.ResetForTests();
     }
 
     private static void ClearPremiumEventCallbackUnderLock()
