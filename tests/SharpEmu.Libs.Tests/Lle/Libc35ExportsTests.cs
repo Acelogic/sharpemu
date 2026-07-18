@@ -5,6 +5,7 @@ using SharpEmu.Core.Cpu.Native;
 using SharpEmu.HLE;
 using SharpEmu.Libs.LibcInternal;
 using SharpEmu.Libs.Lle;
+using System.Reflection;
 using Xunit;
 
 namespace SharpEmu.Libs.Tests.Lle;
@@ -133,14 +134,29 @@ public sealed class Libc35ExportsTests
     }
 
     [Fact]
-    public void Libc35Registrations_DoNotProjectToGen4OrIncludeDeferredDataKernelPosixNids()
+    public void Libc35Registrations_DoNotProjectToGen4OrLeakDeferredDataKernelPosixNids()
     {
         var gen4 = SharpEmu.Generated.SysAbiExportRegistry.CreateExports(Generation.Gen4);
         Assert.DoesNotContain(gen4, export => ExpectedPreferLle.ContainsKey(export.Nid));
         Assert.DoesNotContain(gen4, export => export.Nid == BacktraceNid);
 
-        var gen5 = SharpEmu.Generated.SysAbiExportRegistry.CreateExports(Generation.Gen5);
-        Assert.DoesNotContain(gen5, export => ExplicitlyExcludedNids.Contains(export.Nid));
+        var attributes = new[]
+            {
+                typeof(LibcProviderLleExports),
+                typeof(LibcInternalProviderLleExports),
+                typeof(LibcInternalBacktraceExports),
+            }
+            .SelectMany(type => type
+                .GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly)
+                .SelectMany(method => method.GetCustomAttributes<SysAbiExportAttribute>()))
+            .ToArray();
+        var expectedNids = ExpectedPreferLle.Keys
+            .Append(BacktraceNid)
+            .ToHashSet(StringComparer.Ordinal);
+
+        Assert.Equal(35, attributes.Length);
+        Assert.Equal(expectedNids, attributes.Select(attribute => attribute.Nid).ToHashSet(StringComparer.Ordinal));
+        Assert.DoesNotContain(attributes, attribute => ExplicitlyExcludedNids.Contains(attribute.Nid));
     }
 
     [Fact]
