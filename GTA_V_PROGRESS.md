@@ -13,10 +13,10 @@ Implement evidence-backed SharpEmu support for GTA V imports without weakening f
 - Coordinator manifest: `GTA_V_NID_SWARM_MANIFEST.json`
 - Initial Acelogic-main queue: 911 unique uncovered application/runtime imports
 - Pinned Aerolib symbol names: 1,418/1,432; Acelogic labels 7 additional catalog-unnamed registrations, leaving 7 uncovered imports without a symbol name
-- Integrated from that queue on this branch: 34
-- Remaining uncovered on this branch: 877
-- Current static registration coverage: 555/1,432 (38.76%), up from 521/1,432 (36.38%) on the pinned main base
-- Manifest lifecycle: 34 integrated, 870 named, 7 observed-but-unnamed
+- Integrated from that queue on this branch: 37
+- Remaining uncovered on this branch: 874
+- Current static registration coverage: 558/1,432 (38.97%), up from 521/1,432 (36.38%) on the pinned main base
+- Manifest lifecycle: 37 integrated, 867 named, 7 observed-but-unnamed
 
 The queue is a static import inventory. It is not yet a runtime call-frequency trace; `calls=0` means no runtime count has been established.
 
@@ -24,7 +24,7 @@ The queue is a static import inventory. It is not yet a runtime call-frequency t
 
 | Importing image | Gen5-registered NIDs | Unique imported NIDs | Coverage |
 |---|---:|---:|---:|
-| `eboot.bin` | 467 | 1,301 | 35.90% |
+| `eboot.bin` | 470 | 1,301 | 36.13% |
 | `sce_module/libc.prx` | 90 | 104 | 86.54% |
 | `sce_module/libSceJobManager.prx` | 78 | 146 | 53.42% |
 | `sce_module/libSceNpCppWebApi.prx` | 62 | 95 | 65.26% |
@@ -48,7 +48,7 @@ Mac-local firmware Ghidra and an independent rho GTA-consumer Ghidra campaign pr
 | libc core implementation | `codex/nid-gta-libc-core` / `/Users/mcruz/.codex/worktrees/sharpemu-gta-libc-core` | 12 approved libc math/RNG/string/time exports and tests only | integrated as `6fb1d12` |
 | Direct-memory-query implementation | `codex/nid-gta-direct-query` / `/Users/mcruz/.codex/worktrees/sharpemu-gta-direct-query` | firmware/GTA Ghidra contract and kernel implementation/tests | integrated as `ce35c99`; GTA loop removal runtime-verified |
 | NpManager premium callbacks | `codex/nid-gta-np-premium-callbacks` / `/Users/mcruz/.codex/worktrees/sharpemu-gta-np-premium-callbacks` | two firmware-proven callback exports and focused tests only | integrated as `f92ed50` |
-| NpManager async requests | `codex/gta-v-np-async` / `/Users/mcruz/Developer/sharpemu-gta-v-np-async` | Create/Delete/Abort/Poll registry and focused tests only | implementation active from completed firmware Ghidra packet |
+| NpManager async requests | `codex/gta-v-np-async` / `/Users/mcruz/Developer/sharpemu-gta-v-np-async` | Create/Delete/Abort/Poll registry and focused tests only | integrated as `f7105d4` |
 | Local reverse engineering | separate read-only Ghidra projects on the Mac | libc/POSIX, NpManager, and GTA caller evidence packets | libc and NpManager packets complete; post-direct-query fault analysis active |
 | Remote reverse engineering (Linux) | ephemeral `/dev/shm` job on `rho.cs.oswego.edu` | reconstructed eboot derivative and independent GTA caller report | passed; targeted report returned and cleanup independently verified |
 | Remote reverse engineering (Windows) | ephemeral `%TEMP%` job on `192.168.68.54` | reconstructed libc ELF derivative and headless-Ghidra call-site proof | passed; cleanup independently verified |
@@ -68,7 +68,7 @@ No worker may edit this progress file, the central manifest, or the integration 
 | JSON2 | 17 | contract clustering pending runtime evidence |
 | NpWebApi2 | 17 | reverse engineer and prioritize from runtime trace |
 | voice | 15 | research pending runtime evidence |
-| NpManager | 8 | implement only completed firmware-Ghidra contracts; defer provider-backed behavior |
+| NpManager | 5 | implement only completed firmware-Ghidra contracts; defer provider-backed behavior |
 | POSIX | 9 | implement only where host/guest semantics are proven |
 | video recording | 9 | research pending runtime evidence |
 
@@ -119,10 +119,11 @@ The local Mac remains responsible for integration, builds, runtime capture, fina
   - libc core focused tests: 109/109 passed
   - NpManager premium callback focused tests: 7/7 passed
   - direct-memory-query focused tests: 16/16 passed
+  - NpManager async-request focused tests: 13/13 passed; concurrency case repeated 20 times in the isolated lane
 - NID manifest/registration uniqueness check
   - manifest validator: 911/911 unique items valid
-  - lifecycle: 34 integrated, 870 named, 7 observed
-  - remaining CSV: 877/877 unique NIDs with module attribution
+  - lifecycle: 37 integrated, 867 named, 7 observed
+  - remaining CSV: 874/874 unique NIDs with module attribution
 - GTA V loader/import probe, then runtime unresolved trace
   - blocked-SELF `PT_DYNAMIC` translation: passed
   - static TLS reservation for the observed `0x13570` requirement: passed
@@ -130,7 +131,7 @@ The local Mac remains responsible for integration, builds, runtime capture, fina
   - direct-memory-query enumeration contract: passed and runtime-verified across all four GTA loops
   - current runtime gate: recover `sceAgcDriverSetTFRing` (`XlNp7jzGiPo`) from firmware Ghidra evidence
 - SharpEmu library and source-generator tests
-  - SharpEmu.Libs.Tests after all current integrations: 699/699 passed
+  - SharpEmu.Libs.Tests after all current integrations: 712/712 passed
   - Release solution build: passed with 0 warnings and 0 errors
   - SharpEmu.SourceGenerators.Tests: 33/33 passed
   - SharpEmu.ShaderCompiler.Tests: 34/34 passed

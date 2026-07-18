@@ -45046,7 +45046,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -45056,31 +45056,55 @@
       },
       "evidence": {
         "aerolib_name": "sceNpAbortRequest",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "2c192ec03cf2b3a8acc24c2aefd98ef8232c2bdbdf2f678deb980397ed48cb72",
+        "reference_functions": [
+          "sceNpAbortRequest firmware export at 0x17250 in libSceNpManager.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "SharpEmu has no online NP backend or backend cancellation handles, so only the firmware-proven local abort intent is modeled"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
+        "signature": "int32 sceNpAbortRequest(int32 requestId)",
+        "returns": [
+          "success, not-initialized, invalid-argument, or request-not-found firmware NP result"
+        ],
         "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
-        "ownership": [],
-        "synchronization": []
+        "validation_rules": [
+          "request subsystem initialization is checked before requestId <= 0 and registry lookup"
+        ],
+        "state_transitions": [
+          "sets abort-requested without completing or overwriting the request result"
+        ],
+        "ownership": [
+          "PRX-owned local registry retains the request while abort mutates its state"
+        ],
+        "synchronization": [
+          "registry retention protects lookup lifetime and the shared request-state lock protects abort intent"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/Developer/sharpemu-gta-v-np-async",
+        "branch": "codex/gta-v-np-async",
+        "commit": "f7105d4",
+        "files": [
+          "src/SharpEmu.Libs/Np/NpManagerAsyncRequests.cs",
+          "src/SharpEmu.Libs/Np/NpManagerExports.cs",
+          "tests/SharpEmu.Libs.Tests/Np/NpManagerAsyncRequestExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "13/13 focused tests, 20 repeated race-test passes, 712/712 library tests, 33/33 source-generator tests, and clean Release build passed",
+        "integration": "13/13 focused, 712/712 library, 33/33 source-generator, 34/34 shader tests, and Release build with 0 warnings/errors passed on codex/gta-v-nids at f7105d4",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; no online operation or backend cancellation handle was fabricated"
+          }
+        ]
       },
       "blockers": []
     },
@@ -45156,7 +45180,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -45166,31 +45190,56 @@
       },
       "evidence": {
         "aerolib_name": "sceNpCreateAsyncRequest",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "2c192ec03cf2b3a8acc24c2aefd98ef8232c2bdbdf2f678deb980397ed48cb72",
+        "reference_functions": [
+          "sceNpCreateAsyncRequest firmware export at 0x171D0 in libSceNpManager.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "SharpEmu has no production PRX start/stop HLE callback, so type initialization models PRX start and internal reset hooks model teardown"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
+        "signature": "int32 sceNpCreateAsyncRequest(const NpAsyncParameter *parameter)",
+        "returns": [
+          "positive request ID on success or the exact not-initialized, invalid-argument, invalid-size, out-of-memory, or too-many-requests firmware NP result"
+        ],
         "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
-        "ownership": [],
-        "synchronization": []
+        "validation_rules": [
+          "initialization precedes null pointer validation; parameter size must be 0x18 before affinity and priority are read",
+          "at most 32 live requests are accepted and IDs use the smallest missing positive value no greater than 0x2fffffff"
+        ],
+        "state_transitions": [
+          "creates an unstarted local request with state 0 and no fabricated backend operation"
+        ],
+        "ownership": [
+          "guest retains the 0x18-byte input; the PRX-owned local registry owns request state"
+        ],
+        "synchronization": [
+          "the registry lock serializes capacity checks, smallest-gap ID allocation, and insertion"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/Developer/sharpemu-gta-v-np-async",
+        "branch": "codex/gta-v-np-async",
+        "commit": "f7105d4",
+        "files": [
+          "src/SharpEmu.Libs/Np/NpManagerAsyncRequests.cs",
+          "src/SharpEmu.Libs/Np/NpManagerExports.cs",
+          "tests/SharpEmu.Libs.Tests/Np/NpManagerAsyncRequestExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "13/13 focused tests, 20 repeated race-test passes, 712/712 library tests, 33/33 source-generator tests, and clean Release build passed",
+        "integration": "13/13 focused, 712/712 library, 33/33 source-generator, 34/34 shader tests, and Release build with 0 warnings/errors passed on codex/gta-v-nids at f7105d4",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; request creation remains local and no online operation is fabricated"
+          }
+        ]
       },
       "blockers": []
     },
@@ -45266,7 +45315,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -45276,31 +45325,59 @@
       },
       "evidence": {
         "aerolib_name": "sceNpPollAsync",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "2c192ec03cf2b3a8acc24c2aefd98ef8232c2bdbdf2f678deb980397ed48cb72",
+        "reference_functions": [
+          "sceNpPollAsync firmware export at 0x17480 in libSceNpManager.sprx"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "the firmware environment/version query is unavailable offline, so an unstarted request follows the evidenced pending return 1 branch",
+          "no backend completion or service result translation is fabricated"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
-        "ownership": [],
-        "synchronization": []
+        "signature": "int32 sceNpPollAsync(int32 requestId, int32 *result)",
+        "returns": [
+          "zero only for a completed request, one while pending/running, or the exact validation/state firmware NP result"
+        ],
+        "output_writes": [
+          "writes exactly one 32-bit stored operation result only when state is complete"
+        ],
+        "validation_rules": [
+          "initialization precedes null output validation, then requestId and registry lookup",
+          "kind zero returns invalid-request-state and pending paths leave guest output untouched"
+        ],
+        "state_transitions": [
+          "poll is observational and does not advance or fabricate request completion"
+        ],
+        "ownership": [
+          "guest owns the output pointer and the local registry owns stored request results"
+        ],
+        "synchronization": [
+          "registry retention protects lookup lifetime and the shared request-state lock snapshots kind, state, and result"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/Developer/sharpemu-gta-v-np-async",
+        "branch": "codex/gta-v-np-async",
+        "commit": "f7105d4",
+        "files": [
+          "src/SharpEmu.Libs/Np/NpManagerAsyncRequests.cs",
+          "src/SharpEmu.Libs/Np/NpManagerExports.cs",
+          "tests/SharpEmu.Libs.Tests/Np/NpManagerAsyncRequestExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "13/13 focused tests, 20 repeated race-test passes, 712/712 library tests, 33/33 source-generator tests, and clean Release build passed",
+        "integration": "13/13 focused, 712/712 library, 33/33 source-generator, 34/34 shader tests, and Release build with 0 warnings/errors passed on codex/gta-v-nids at f7105d4",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; no online completion or backend result was fabricated"
+          }
+        ]
       },
       "blockers": []
     },
