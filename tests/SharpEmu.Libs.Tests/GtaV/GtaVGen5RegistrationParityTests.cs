@@ -21,6 +21,7 @@ public sealed class GtaVGen5RegistrationParityTests
         Assert.Equal(InventorySha256, Convert.ToHexString(SHA256.HashData(inventoryBytes)).ToLowerInvariant());
 
         var inventory = ParseInventory(Encoding.UTF8.GetString(inventoryBytes));
+        var inventoryByNid = inventory.ToDictionary(row => row.Nid, StringComparer.Ordinal);
         var catalogNids = inventory.Select(row => row.Nid).ToHashSet(StringComparer.Ordinal);
         var functionNids = inventory
             .Where(row => row.SymbolKind == "function")
@@ -45,6 +46,19 @@ public sealed class GtaVGen5RegistrationParityTests
         Assert.Equal(1_427, callable.Length);
         Assert.Equal(1_427, callableNids.Count);
         AssertSetEqual(expectedCallableNids, callableNids, "callable");
+        foreach (var export in callable)
+        {
+            var expected = inventoryByNid[export.Nid];
+            if (expected.CatalogName.Length != 0)
+            {
+                Assert.Equal(expected.CatalogName, export.Name);
+            }
+
+            Assert.True(
+                expected.ImportedLibraries.Contains(export.LibraryName),
+                $"GTA V callable library mismatch for {export.Nid}: '{export.LibraryName}' not in " +
+                $"[{string.Join(",", expected.ImportedLibraries)}].");
+        }
 
         var data = DataSymbolRegistry.CreateRegistrations(Generation.Gen5);
         var dataNids = data.Select(registration => registration.Nid).ToHashSet(StringComparer.Ordinal);
@@ -54,6 +68,15 @@ public sealed class GtaVGen5RegistrationParityTests
         Assert.Equal(5, data.Count);
         Assert.Equal(5, dataNids.Count);
         AssertSetEqual(expectedDataNids, dataNids, "data");
+        foreach (var registration in data)
+        {
+            var expected = inventoryByNid[registration.Nid];
+            Assert.Equal(expected.CatalogName, registration.Name);
+            Assert.True(
+                expected.ImportedLibraries.Contains(registration.LogicalLibraryName),
+                $"GTA V data library mismatch for {registration.Nid}: '{registration.LogicalLibraryName}' not in " +
+                $"[{string.Join(",", expected.ImportedLibraries)}].");
+        }
         Assert.Empty(DataSymbolRegistry.CreateRegistrations(Generation.Gen4));
 
         Assert.Empty(callableNids.Intersect(dataNids, StringComparer.Ordinal));
@@ -81,10 +104,16 @@ public sealed class GtaVGen5RegistrationParityTests
         var headerLine = reader.ReadLine() ?? throw new InvalidDataException("GTA V inventory is empty.");
         var header = ParseCsvLine(headerLine);
         var nidIndex = header.IndexOf("nid");
+        var catalogNameIndex = header.IndexOf("catalog_name");
+        var importedLibrariesIndex = header.IndexOf("imported_libraries");
+        var acelogicExportNameIndex = header.IndexOf("acelogic_export_name");
+        var acelogicExportLibraryIndex = header.IndexOf("acelogic_export_library");
         var symbolKindIndex = header.IndexOf("symbol_kinds");
-        if (nidIndex < 0 || symbolKindIndex < 0)
+        if (nidIndex < 0 || catalogNameIndex < 0 || importedLibrariesIndex < 0 ||
+            acelogicExportNameIndex < 0 || acelogicExportLibraryIndex < 0 || symbolKindIndex < 0)
         {
-            throw new InvalidDataException("GTA V inventory is missing nid or symbol_kinds.");
+            throw new InvalidDataException(
+                "GTA V inventory is missing required identity or symbol-kind columns.");
         }
 
         var rows = new List<InventoryRow>();
@@ -110,7 +139,19 @@ public sealed class GtaVGen5RegistrationParityTests
                     $"GTA V inventory row {rows.Count + 2} has unsupported symbol kind '{symbolKind}'.");
             }
 
-            rows.Add(new InventoryRow(fields[nidIndex], symbolKind));
+            var expectedName = fields[acelogicExportNameIndex].Length == 0
+                ? fields[catalogNameIndex]
+                : fields[acelogicExportNameIndex];
+            var expectedLibraries = fields[acelogicExportLibraryIndex].Length == 0
+                ? fields[importedLibrariesIndex]
+                : fields[acelogicExportLibraryIndex];
+            rows.Add(new InventoryRow(
+                fields[nidIndex],
+                expectedName,
+                expectedLibraries
+                    .Split(';', StringSplitOptions.RemoveEmptyEntries)
+                    .ToHashSet(StringComparer.Ordinal),
+                symbolKind));
         }
 
         return rows;
@@ -168,5 +209,9 @@ public sealed class GtaVGen5RegistrationParityTests
             $"GTA V {label} registration mismatch. Missing=[{string.Join(",", missing)}] Extra=[{string.Join(",", extra)}]");
     }
 
-    private sealed record InventoryRow(string Nid, string SymbolKind);
+    private sealed record InventoryRow(
+        string Nid,
+        string CatalogName,
+        IReadOnlySet<string> ImportedLibraries,
+        string SymbolKind);
 }

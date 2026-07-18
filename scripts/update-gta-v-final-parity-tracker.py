@@ -24,7 +24,24 @@ LIBC_QUEUE = Path("docs/gta-v/provider-evidence/libc35/prefer-lle-registration-q
 LIBC_NON_LLE_QUEUE = RHO_PACKET / "libc-non-lle-contract-queue.csv"
 KERNEL_QUEUE = RHO_PACKET / "kernel-hle-contract-queue.csv"
 DATA_QUEUE = RHO_PACKET / "data-import-disposition.csv"
+CONSOLIDATED_EVIDENCE = RHO_PACKET / "consolidated-nid-evidence.json"
+OBJECT_EVIDENCE = Path("artifacts/gta-v-nid-evidence/data5-objects-20260718/GHIDRA_OBJECT_EVIDENCE.json")
+VALIDATION_EVIDENCE = Path("artifacts/gta-v-nid-evidence/final-parity-validation-20260718.json")
 ATTRIBUTE_RE = re.compile(r"\[SysAbiExport\(\s*(.*?)\)\]", re.DOTALL)
+EXPECTED_UNCOVERED_HEADER = [
+    "component",
+    "calls",
+    "nid",
+    "catalog_symbol",
+    "module",
+    "library",
+    "importing_image",
+    "symbol_kind",
+    "relocation_referenced",
+    "relocation_count",
+    "observation_kind",
+    "acelogic_base_sha",
+]
 
 LIBC_SOURCES = (
     Path("src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs"),
@@ -37,11 +54,11 @@ DATA_SOURCE = Path("src/SharpEmu.HLE/DataSymbolRegistry.cs")
 BACKTRACE_NID = "EHsF2i9FXPM"
 LEGACY_STACK_GUARD_NID = "f7uOxY9mM1U"
 DATA_REGISTRATIONS = {
-    "djxxOmW6-aw": ("__progname", "libkernel"),
-    "P330P3dFF68": ("Need_sceLibc", "libc"),
-    "ZT4ODD2Ts9o": ("Need_sceLibcInternal", "libSceLibcInternal"),
-    "H8AprKeZtNg": ("_Stderr", "libc"),
-    "2sWzhYqFH4E": ("_Stdout", "libc"),
+    "djxxOmW6-aw": ("__progname", "libkernel", "ProgNameNid"),
+    "P330P3dFF68": ("Need_sceLibc", "libc", "LibcNeedFlagNid"),
+    "ZT4ODD2Ts9o": ("Need_sceLibcInternal", "libSceLibcInternal", "LibcInternalNeedFlagNid"),
+    "H8AprKeZtNg": ("_Stderr", "libc", "StderrNid"),
+    "2sWzhYqFH4E": ("_Stdout", "libc", "StdoutNid"),
 }
 KERNEL_SEMANTIC_NIDS = {
     "NhpspxdjEKU",  # _nanosleep
@@ -53,6 +70,10 @@ KERNEL_SEMANTIC_NIDS = {
     "Ez8xjo9UF4E",  # recv, flags == 0
     "fZOeZIOEmLw",  # send, flags == 0
     "TUuiYS2kE8s",  # shutdown
+}
+KERNEL_PARTIAL_NIDS = {
+    "Ez8xjo9UF4E",  # recv is semantic only for flags == 0
+    "fZOeZIOEmLw",  # send is semantic only for flags == 0
 }
 
 
@@ -102,7 +123,12 @@ def parse_exports(repo: Path, sources: tuple[Path, ...]) -> dict[str, dict[str, 
     return exports
 
 
-def verify_commit(repo: Path, commit: str) -> str:
+def verify_commit(
+    repo: Path,
+    commit: str,
+    required_files: set[str],
+    required_diff_markers: tuple[str, ...] = (),
+) -> str:
     resolved = subprocess.run(
         ["git", "rev-parse", f"{commit}^{{commit}}"],
         cwd=repo,
@@ -116,7 +142,97 @@ def verify_commit(repo: Path, commit: str) -> str:
         check=False,
     )
     require(ancestry.returncode == 0, f"commit {resolved} is not integrated into HEAD")
+    changed = set(subprocess.run(
+        ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", resolved],
+        cwd=repo,
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout.splitlines())
+    require(required_files <= changed, f"commit {resolved} is missing required files: {sorted(required_files - changed)}")
+    diff = subprocess.run(
+        ["git", "show", "--format=", "--no-ext-diff", resolved],
+        cwd=repo,
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout
+    for marker in required_diff_markers:
+        require(marker in diff, f"commit {resolved} is missing required marker: {marker}")
     return resolved
+
+
+def require_ancestor(repo: Path, ancestor: str, descendant: str, label: str) -> None:
+    result = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+        cwd=repo,
+        check=False,
+    )
+    require(result.returncode == 0, f"{label}: {ancestor} is not an ancestor of {descendant}")
+
+
+def load_validation_evidence(
+    repo: Path,
+    commits: dict[str, str],
+) -> tuple[str, str]:
+    path = repo / VALIDATION_EVIDENCE
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    require(payload.get("format") == "sharpemu-gta-v-final-parity-validation-v1", "bad final validation format")
+    require(payload.get("pinned_inventory_sha256") == INVENTORY_SHA256, "validation inventory hash mismatch")
+    validated_commit = verify_commit(
+        repo,
+        payload.get("validated_commit", ""),
+        set(),
+    )
+    parity_test_at_commit = subprocess.run(
+        ["git", "cat-file", "-e", f"{validated_commit}:tests/SharpEmu.Libs.Tests/GtaV/GtaVGen5RegistrationParityTests.cs"],
+        cwd=repo,
+        check=False,
+    )
+    require(parity_test_at_commit.returncode == 0, "validated commit predates the compiled parity test")
+    for lane, commit in commits.items():
+        require_ancestor(repo, commit, validated_commit, f"validation does not contain {lane}")
+
+    tests = {record["name"]: record for record in payload.get("tests", [])}
+    expected_tests = {
+        "focused_gta_parity": 53,
+        "SharpEmu.Libs.Tests": 810,
+        "SharpEmu.SourceGenerators.Tests": 36,
+        "SharpEmu.ShaderCompiler.Tests": 34,
+    }
+    require(set(tests) == set(expected_tests), "validation test set mismatch")
+    for name, expected_passed in expected_tests.items():
+        record = tests[name]
+        require(record.get("passed") == expected_passed, f"{name} passed-count mismatch")
+        require(record.get("failed") == 0 and record.get("skipped") == 0, f"{name} is not fully green")
+        require(bool(record.get("command")), f"{name} command is missing")
+
+    build = payload.get("release_build", {})
+    require(build.get("succeeded") is True, "Release build did not succeed")
+    require(build.get("warnings") == 0 and build.get("errors") == 0, "Release build is not warning/error clean")
+    require(bool(build.get("command")), "Release build command is missing")
+
+    runtime = payload.get("runtime", {})
+    runtime_log = repo / runtime.get("log", "")
+    require(runtime_log.is_file(), "final GTA runtime log is missing")
+    require(sha256(runtime_log) == runtime.get("sha256"), "final GTA runtime log hash mismatch")
+    require(runtime.get("libc_direct") == 34 and runtime.get("libc_expected") == 34, "libc runtime routing mismatch")
+    require(runtime.get("libc_missing") == [], "libc runtime routing has missing NIDs")
+    require(runtime.get("object_callable_events") == 0, "data object was routed as a callable import")
+    require(int(runtime.get("max_import", 0)) >= 41_427, "GTA runtime regressed before the prior import checkpoint")
+    require(runtime.get("mm4_checkpoint_reached") is True, "GTA runtime missed the MM4 checkpoint")
+    require(bool(runtime.get("command")), "GTA runtime command is missing")
+
+    integration_summary = (
+        "53/53 focused GTA parity tests, 810/810 library tests, "
+        "36/36 source-generator tests, and 34/34 shader tests passed; "
+        "Release build completed with 0 warnings/errors"
+    )
+    runtime_summary = (
+        f"GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, "
+        f"max import {runtime['max_import']}; {runtime.get('terminal_summary', 'terminal state recorded')}"
+    )
+    return integration_summary, runtime_summary
 
 
 def parse_args() -> argparse.Namespace:
@@ -125,8 +241,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--kernel-commit", required=True)
     parser.add_argument("--data-commit", required=True)
     parser.add_argument("--hardening-commit", required=True)
-    parser.add_argument("--integration-validation", required=True)
-    parser.add_argument("--runtime-validation", required=True)
     parser.add_argument("--check-only", action="store_true")
     parser.add_argument(
         "--repo",
@@ -136,11 +250,15 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def common_validation(args: argparse.Namespace, lane: str) -> dict[str, Any]:
+def common_validation(
+    integration_validation: str,
+    runtime_validation: str,
+    lane: str,
+) -> dict[str, Any]:
     return {
         "branch": lane,
-        "integration": args.integration_validation,
-        "games": [args.runtime_validation],
+        "integration": integration_validation,
+        "games": [runtime_validation],
     }
 
 
@@ -148,11 +266,49 @@ def main() -> None:
     args = parse_args()
     repo = args.repo.resolve()
     commits = {
-        "libc": verify_commit(repo, args.libc_commit),
-        "kernel": verify_commit(repo, args.kernel_commit),
-        "data": verify_commit(repo, args.data_commit),
-        "hardening": verify_commit(repo, args.hardening_commit),
+        "libc": verify_commit(
+            repo,
+            args.libc_commit,
+            {
+                "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
+                "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
+                "docs/gta-v/libc35-lle-ghidra.md",
+            },
+            ("PreferLle = true", "EHsF2i9FXPM"),
+        ),
+        "kernel": verify_commit(
+            repo,
+            args.kernel_commit,
+            {
+                KERNEL_SOURCE.as_posix(),
+                "tests/SharpEmu.Libs.Tests/Kernel/GtaVKernelContractExportsTests.cs",
+                "docs/gta-v/kernel27-ghidra-contracts.md",
+            },
+            ("PreferLle = false", "ORBIS_GEN2_ERROR_NOT_IMPLEMENTED"),
+        ),
+        "data": verify_commit(
+            repo,
+            args.data_commit,
+            {
+                DATA_SOURCE.as_posix(),
+                "src/SharpEmu.Core/Runtime/ImportedDataRebinder.cs",
+                "tests/SharpEmu.Libs.Tests/Loader/DataSymbolRegistrationTests.cs",
+            },
+            ("DataSymbolRegistry", "GuestAuthoritative"),
+        ),
+        "hardening": verify_commit(
+            repo,
+            args.hardening_commit,
+            {
+                "src/SharpEmu.Core/Loader/SelfLoader.cs",
+                "src/SharpEmu.Core/Cpu/Native/DirectExecutionBackend.Imports.cs",
+                "tests/SharpEmu.Libs.Tests/Loader/DataSymbolRegistrationTests.cs",
+            },
+            ("_runtimeDataSymbolsByName", "symbolAddress = 0", "isData ? runtimeDataSymbols : runtimeSymbols"),
+        ),
     }
+    require(len(set(commits.values())) == 4, "lane implementation commits must be distinct")
+    integration_validation, runtime_validation = load_validation_evidence(repo, commits)
 
     inventory_path = repo / INVENTORY_RELATIVE
     require(sha256(inventory_path) == INVENTORY_SHA256, "pinned 1,432-NID inventory hash mismatch")
@@ -173,15 +329,24 @@ def main() -> None:
     require(not any(export["prefer_lle"] for export in kernel_exports.values()), "kernel/POSIX must remain HLE-bound")
 
     data_source_text = (repo / DATA_SOURCE).read_text(encoding="utf-8")
-    for nid, (name, library) in DATA_REGISTRATIONS.items():
-        require(nid in data_source_text and name in data_source_text and library in data_source_text, f"missing data registration {nid}")
-    all_callable_nids: set[str] = set()
+    for nid, (name, library, constant_name) in DATA_REGISTRATIONS.items():
+        constant_pattern = re.compile(
+            rf'public const string {re.escape(constant_name)}\s*=\s*"{re.escape(nid)}";'
+        )
+        registration_pattern = re.compile(
+            rf'new\(\s*"{re.escape(library)}",\s*{re.escape(constant_name)},\s*"{re.escape(name)}",\s*Generation\.Gen5,',
+            re.DOTALL,
+        )
+        require(constant_pattern.search(data_source_text) is not None, f"missing data NID constant {nid}")
+        require(registration_pattern.search(data_source_text) is not None, f"missing exact data registration tuple {nid}")
+    data_nids_in_callable_attributes: set[str] = set()
     for source in (repo / "src").rglob("*.cs"):
         for match in ATTRIBUTE_RE.finditer(source.read_text(encoding="utf-8")):
-            nid_match = re.search(r'\bNid\s*=\s*"([^"]+)"', match.group(1))
-            if nid_match:
-                all_callable_nids.add(nid_match.group(1))
-    require(not (set(DATA_REGISTRATIONS) & all_callable_nids), "data NID leaked into callable registry")
+            body = match.group(1)
+            data_nids_in_callable_attributes.update(
+                nid for nid in DATA_REGISTRATIONS if f'"{nid}"' in body
+            )
+    require(not data_nids_in_callable_attributes, "data NID leaked into callable registry")
 
     _, libc_queue_rows = read_csv(repo / LIBC_QUEUE)
     _, non_lle_rows = read_csv(repo / LIBC_NON_LLE_QUEUE)
@@ -196,14 +361,56 @@ def main() -> None:
     require(set(kernel_evidence) == set(kernel_exports), "kernel source/evidence set mismatch")
     require(set(data_evidence) == set(DATA_REGISTRATIONS), "data source/evidence set mismatch")
     require(set(libc_evidence) | {BACKTRACE_NID} == set(libc_exports), "libc source/evidence set mismatch")
+    for nid, row in libc_evidence.items():
+        export = libc_exports[nid]
+        require(export["name"] == row["catalog_symbol"], f"libc export-name mismatch for {nid}")
+        require(export["library"] == row["library"], f"libc library mismatch for {nid}")
+        require(export["prefer_lle"], f"libc provider export is not PreferLle: {nid}")
+    backtrace_row = non_lle_evidence[BACKTRACE_NID]
+    require(libc_exports[BACKTRACE_NID]["name"] == backtrace_row["catalog_symbol"], "backtrace name mismatch")
+    require(libc_exports[BACKTRACE_NID]["library"] == backtrace_row["library"], "backtrace library mismatch")
+    for nid, row in kernel_evidence.items():
+        export = kernel_exports[nid]
+        require(export["name"] == row["catalog_symbol"], f"kernel export-name mismatch for {nid}")
+        require(export["library"] == row["library"], f"kernel library mismatch for {nid}")
+
+    object_payload = json.loads((repo / OBJECT_EVIDENCE).read_text(encoding="utf-8"))
+    require(object_payload.get("schema_version") == 1, "object evidence schema mismatch")
+    object_evidence = {record["nid"]: record for record in object_payload.get("objects", [])}
+    require(len(object_evidence) == 5 and set(object_evidence) == set(DATA_REGISTRATIONS), "object evidence set mismatch")
+    positive_object_providers: dict[str, list[dict[str, Any]]] = {}
+    for nid, (name, library, _) in DATA_REGISTRATIONS.items():
+        record = object_evidence[nid]
+        require(record.get("name") == name, f"object evidence name mismatch for {nid}")
+        require(record.get("logical_library") == library, f"object evidence library mismatch for {nid}")
+        providers = [
+            provider for provider in record.get("providers", [])
+            if provider.get("status") == "symbol_without_function"
+            and provider.get("address")
+            and re.fullmatch(r"[0-9a-f]{64}", provider.get("sha256", ""))
+        ]
+        require(providers, f"object evidence has no positive Ghidra provider for {nid}")
+        positive_object_providers[nid] = providers
+
+    consolidated_payload = json.loads((repo / CONSOLIDATED_EVIDENCE).read_text(encoding="utf-8"))
+    consolidated_rows = {row["nid"]: row for row in consolidated_payload.get("rows", [])}
+    require(len(consolidated_rows) == 67, "consolidated Ghidra packet cardinality mismatch")
+    backtrace_provider = consolidated_rows[BACKTRACE_NID]["provider_evidence"]["libSceLibcInternal"]
+    require(backtrace_provider.get("function_present") is True, "backtrace positive provider is absent")
+    require(backtrace_provider["function_entry"] == backtrace_row["firmware_function_entry"], "backtrace entry mismatch")
+    require(backtrace_provider["function_body_sha256"] == backtrace_row["firmware_function_body_sha256"], "backtrace body hash mismatch")
+    require(backtrace_provider["decompile_sha256"] == backtrace_row["firmware_decompile_sha256"], "backtrace decompile hash mismatch")
 
     final_wave_nids = set(libc_exports) | set(kernel_exports) | set(DATA_REGISTRATIONS)
     require(len(final_wave_nids) == 67, f"final wave has {len(final_wave_nids)} NIDs, expected 67")
     uncovered_path = repo / UNCOVERED_RELATIVE
     uncovered_header, uncovered = read_csv(uncovered_path)
-    uncovered_nids = {row["nid"] for row in uncovered}
+    require(uncovered_header == EXPECTED_UNCOVERED_HEADER, "uncovered CSV header mismatch")
+    uncovered_nid_list = [row["nid"] for row in uncovered]
+    require(len(uncovered_nid_list) in {0, 67}, "uncovered CSV row count must be 67 or 0")
+    require(len(uncovered_nid_list) == len(set(uncovered_nid_list)), "uncovered CSV contains duplicate NIDs")
     require(
-        not uncovered_nids or uncovered_nids == final_wave_nids,
+        not uncovered_nid_list or set(uncovered_nid_list) == final_wave_nids,
         "uncovered CSV is neither the exact final 67 queue nor the completed empty queue",
     )
 
@@ -222,10 +429,11 @@ def main() -> None:
             row = non_lle_evidence[nid]
             item["evidence"] = {
                 "aerolib_name": item.get("symbol"),
-                "binary_hash": None,
+                "binary_hash": backtrace_provider["provider_sha256"],
                 "reference_functions": [
                     f"firmware Ghidra export {row['firmware_function_entry']}",
-                    row["evidence_file"],
+                    f"body SHA-256 {row['firmware_function_body_sha256']}",
+                    CONSOLIDATED_EVIDENCE.as_posix(),
                     LIBC_NON_LLE_QUEUE.as_posix(),
                 ],
                 "call_sites": [],
@@ -276,7 +484,11 @@ def main() -> None:
                 "docs/gta-v/libc35-lle-ghidra.md",
             ],
         }
-        item["validation"] = common_validation(args, "35/35 exact libc-family registrations validated")
+        item["validation"] = common_validation(
+            integration_validation,
+            runtime_validation,
+            "35/35 exact libc-family registrations validated",
+        )
 
     for nid, export in kernel_exports.items():
         item = by_nid[nid]
@@ -321,21 +533,30 @@ def main() -> None:
                 "docs/gta-v/kernel27-ghidra-contracts.md",
             ],
         }
-        item["validation"] = common_validation(args, "27/27 exact kernel/POSIX registrations and focused contracts validated")
-        item["blockers"] = [] if semantic else [row["implementation_gate"]]
+        item["validation"] = common_validation(
+            integration_validation,
+            runtime_validation,
+            "27/27 exact kernel/POSIX registrations and focused contracts validated",
+        )
+        if nid in KERNEL_PARTIAL_NIDS:
+            item["contract"]["returns"][1] = "implemented semantic path for flags == 0; nonzero flags fail closed"
+            item["blockers"] = ["nonzero recv/send flags remain explicitly NOT_IMPLEMENTED"]
+        else:
+            item["blockers"] = [] if semantic else [row["implementation_gate"]]
 
-    for nid, (name, library) in DATA_REGISTRATIONS.items():
+    for nid, (name, library, _) in DATA_REGISTRATIONS.items():
         item = by_nid[nid]
         row = data_evidence[nid]
+        providers = positive_object_providers[nid]
         require(item.get("symbol") == name, f"data manifest name mismatch for {nid}")
         item["status"] = "integrated"
         item["evidence"] = {
             "aerolib_name": name,
-            "binary_hash": row["provider_sha256"] or None,
+            "binary_hash": providers[0]["sha256"],
             "reference_functions": [
-                f"Ghidra STT_OBJECT {row['provider_symbol_address']}",
+                *(f"{provider['label']} Ghidra STT_OBJECT {provider['address']}" for provider in providers),
                 DATA_QUEUE.as_posix(),
-                "artifacts/gta-v-nid-evidence/data5-objects-20260718/GHIDRA_OBJECT_EVIDENCE.json",
+                OBJECT_EVIDENCE.as_posix(),
             ],
             "call_sites": row["runtime_symbol_addresses"].split(";") if row["runtime_symbol_addresses"] else [],
             "confidence": "high",
@@ -363,7 +584,11 @@ def main() -> None:
                 "docs/gta-v/gen5-object-import-architecture.md",
             ],
         }
-        item["validation"] = common_validation(args, "5/5 exact data-only registrations and loader contracts validated")
+        item["validation"] = common_validation(
+            integration_validation,
+            runtime_validation,
+            "5/5 exact data-only registrations and loader contracts validated",
+        )
         item["blockers"] = (
             ["the loaded GTA libc provider is required; no fabricated HLE FILE object exists"]
             if nid in {"H8AprKeZtNg", "2sWzhYqFH4E"}
