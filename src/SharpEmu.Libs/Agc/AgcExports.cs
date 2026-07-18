@@ -3565,7 +3565,8 @@ public static partial class AgcExports
         Nid = "MM4IZSEYytQ",
         ExportName = "sceAgcDriverSetHsOffchipParam",
         Target = Generation.Gen5,
-        LibraryName = "libSceAgcDriver")]
+        LibraryName = "libSceAgcDriver",
+        PreferLle = true)]
     public static int DriverSetHsOffchipParam(CpuContext ctx)
     {
         var requestedFirst = (uint)ctx[CpuRegister.Rdi];
