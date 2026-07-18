@@ -199,6 +199,22 @@ public sealed class LibcSearchAndConversionExportsTests
     }
 
     [Fact]
+    public void Strtoull_InvalidBaseWritesEndPointerBeforeUnmappedErrnoFault()
+    {
+        var (memory, context) = CreateContext();
+        memory.WriteCString(InputAddress, "99");
+        ConfigureStrtoull(context, numberBase: 1);
+        context.FsBase = MemoryBase + 0x3000;
+
+        var result = LibcSearchAndConversionExports.LibcStrtoull(context);
+
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, result);
+        Assert.True(context.TryReadUInt64(EndPointerAddress, out var endPointer));
+        Assert.Equal(InputAddress, endPointer);
+        Assert.Equal(InitialErrno, ReadErrno(memory));
+    }
+
+    [Fact]
     public void Strtoull_OverflowSaturatesSetsErangeAndConsumesAllDigits()
     {
         var (memory, context) = CreateContext();
@@ -227,6 +243,48 @@ public sealed class LibcSearchAndConversionExportsTests
 
         Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, result);
         Assert.Equal(34, ReadErrno(memory));
+    }
+
+    [Fact]
+    public void Strtoull_OverflowDoesNotWriteEndPointerWhenFirstErrnoWriteFaults()
+    {
+        var (memory, context) = CreateContext();
+        const ulong sentinel = 0xCAFE_BABE_DEAD_BEEFUL;
+        const string digits = "18446744073709551616";
+        memory.WriteCString(InputAddress, digits);
+        ConfigureStrtoull(context, numberBase: 10);
+        Assert.True(context.TryWriteUInt64(EndPointerAddress, sentinel));
+        context.FsBase = MemoryBase + 0x3000;
+
+        var result = LibcSearchAndConversionExports.LibcStrtoull(context);
+
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, result);
+        Assert.True(context.TryReadUInt64(EndPointerAddress, out var endPointer));
+        Assert.Equal(sentinel, endPointer);
+        Assert.Equal(InitialErrno, ReadErrno(memory));
+    }
+
+    [Fact]
+    public void Strtoull_OverflowChecksSecondErrnoWriteAfterEndPointerStore()
+    {
+        var backingMemory = new FakeCpuMemory(MemoryBase, 0x2000);
+        WriteErrno(backingMemory, InitialErrno);
+        const string digits = "18446744073709551616";
+        backingMemory.WriteCString(InputAddress, digits + "!");
+        var memory = new FailNthWriteMemory(backingMemory, ErrnoAddress, failOnWrite: 2);
+        var context = new CpuContext(memory, Generation.Gen5)
+        {
+            FsBase = MemoryBase,
+        };
+        ConfigureStrtoull(context, numberBase: 10);
+
+        var result = LibcSearchAndConversionExports.LibcStrtoull(context);
+
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, result);
+        Assert.Equal(2, memory.TargetWriteCount);
+        Assert.True(context.TryReadUInt64(EndPointerAddress, out var endPointer));
+        Assert.Equal(InputAddress + (ulong)digits.Length, endPointer);
+        Assert.Equal(34, ReadErrno(backingMemory));
     }
 
     [Fact]
@@ -302,6 +360,35 @@ public sealed class LibcSearchAndConversionExportsTests
         Span<byte> bytes = stackalloc byte[sizeof(int)];
         Assert.True(memory.TryRead(ErrnoAddress, bytes));
         return BinaryPrimitives.ReadInt32LittleEndian(bytes);
+    }
+
+    private sealed class FailNthWriteMemory : ICpuMemory
+    {
+        private readonly ICpuMemory _inner;
+        private readonly ulong _targetAddress;
+        private readonly int _failOnWrite;
+
+        public FailNthWriteMemory(ICpuMemory inner, ulong targetAddress, int failOnWrite)
+        {
+            _inner = inner;
+            _targetAddress = targetAddress;
+            _failOnWrite = failOnWrite;
+        }
+
+        public int TargetWriteCount { get; private set; }
+
+        public bool TryRead(ulong virtualAddress, Span<byte> destination) =>
+            _inner.TryRead(virtualAddress, destination);
+
+        public bool TryWrite(ulong virtualAddress, ReadOnlySpan<byte> source)
+        {
+            if (virtualAddress == _targetAddress && ++TargetWriteCount == _failOnWrite)
+            {
+                return false;
+            }
+
+            return _inner.TryWrite(virtualAddress, source);
+        }
     }
 
     private sealed class BsearchTestScheduler : IGuestThreadScheduler

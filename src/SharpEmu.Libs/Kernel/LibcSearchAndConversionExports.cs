@@ -119,7 +119,11 @@ public static class LibcSearchAndConversionExports
                 return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
             }
 
-            _ = KernelRuntimeCompatExports.TrySetErrno(ctx, Einval);
+            if (!KernelRuntimeCompatExports.TrySetErrno(ctx, Einval))
+            {
+                return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
             ctx[CpuRegister.Rax] = 0;
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
@@ -193,7 +197,10 @@ public static class LibcSearchAndConversionExports
         {
             // The internal parser sets ERANGE before its final endptr store;
             // the public wrapper publishes the same value once more.
-            _ = KernelRuntimeCompatExports.TrySetErrno(ctx, Erange);
+            if (!KernelRuntimeCompatExports.TrySetErrno(ctx, Erange))
+            {
+                return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
         }
 
         var endAddress = converted ? cursor : inputAddress;
@@ -204,6 +211,13 @@ public static class LibcSearchAndConversionExports
 
         if (overflow)
         {
+            // The public strtoull wrapper publishes the parser's local ERANGE
+            // once more after the parser's endptr store.
+            if (!KernelRuntimeCompatExports.TrySetErrno(ctx, Erange))
+            {
+                return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
             ctx[CpuRegister.Rax] = ulong.MaxValue;
         }
         else
