@@ -3,6 +3,7 @@
 
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
+using SharpEmu.Libs.Gpu;
 using SharpEmu.Libs.Kernel;
 using SharpEmu.Libs.VideoOut;
 using SharpEmu.ShaderCompiler;
@@ -26,8 +27,8 @@ internal static class AgcShaderCompilerHooks
     internal static void Install()
     {
         Gen5ShaderScalarEvaluator.FallbackMemoryReader =
-            KernelMemoryCompatExports.TryReadTrackedLibcHeap;
+            KernelMemoryCompatExports.TryReadShaderGuestMemory;
         Gen5ShaderScalarEvaluator.GlobalMemoryPool =
-            VulkanVideoPresenter.GuestDataPool;
+            GuestDataPool.Shared;
     }
 }

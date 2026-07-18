@@ -45,11 +45,6 @@ internal static partial class Program
     [STAThread]
     private static int Main(string[] args)
     {
-        // Avoid blocking full collections while guest and render threads are
-        // running, and establish the GC mode before the runtime reserves the
-        // fixed guest address-space window.
-        System.Runtime.GCSettings.LatencyMode = System.Runtime.GCLatencyMode.SustainedLowLatency;
-
         try
         {
             return Run(args);
@@ -290,6 +285,32 @@ internal static partial class Program
             }
         }
 
+        if (!TryGetDebugServerOptions(emulatorArgs, out var debugServerEnabled, out var debugServerOptions, out var debugServerError))
+        {
+            Log.Error($"Invalid --debug-server endpoint: {debugServerError}");
+            return 1;
+        }
+
+        SharpEmu.Debugger.DebuggerServerHost? debugHost = null;
+        if (debugServerEnabled)
+        {
+            debugHost = new SharpEmu.Debugger.DebuggerServerHost(debugServerOptions);
+            try
+            {
+                debugHost.Start();
+                Log.Info($"Live debug server listening on {debugHost.Endpoint}. Attach with SharpEmu.DebugClient.");
+                // With StopAtEntry, the guest parks at its first frame until a
+                // client connects and continues.
+                runtimeOptions = runtimeOptions with { DebugHook = debugHost.Hook };
+            }
+            catch (Exception ex)
+            {
+                Log.Error("Failed to start the debug server.", ex);
+                debugHost.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                return 6;
+            }
+        }
+
         Console.Error.WriteLine("[DEBUG] Creating runtime...");
 
         try
@@ -363,6 +384,12 @@ internal static partial class Program
         }
         finally
         {
+            if (debugHost is not null)
+            {
+                debugHost.NotifyRunCompleted();
+                debugHost.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            }
+
             HostSessionControl.SetEmbeddedHostSurface(0);
             if (hostSurface is not null)
             {
@@ -1060,11 +1087,48 @@ internal static partial class Program
 
     private static void PrintUsage()
     {
-        Log.Info("Usage: SharpEmu.CLI [--strict] [--trace-imports[=N]] [--cpu-engine=<native>] [--log-level=<level>] [--log-file[=<path>]] <path-to-eboot.bin>");
+        Log.Info("Usage: SharpEmu.CLI [--strict] [--trace-imports[=N]] [--cpu-engine=<native>] [--log-level=<level>] [--log-file[=<path>]] [--debug-server[=host:port]] <path-to-eboot.bin>");
         Log.Info("       SharpEmu.CLI --system-ui --system-root=<extracted-root> [options] <path-to-shell.self>");
         Log.Info("       SharpEmu.CLI --system-ui-preflight --system-root=<extracted-root> <path-to-shell.self>");
         Log.Info(@"Example: SharpEmu.CLI --cpu-engine=native --trace-imports=64 --log-level=debug --log-file ""E:\Games\...\eboot.bin""");
         Log.Info(@"System UI example: SharpEmu.CLI --system-ui --system-root=""D:\SystemSoftware"" ""D:\SystemSoftware\system\shell.self""");
+        Log.Info("Debug server: --debug-server starts a live debug listener (default 127.0.0.1:5714); connect with SharpEmu.DebugClient.");
+    }
+
+    /// <summary>
+    /// Detects the <c>--debug-server</c> flag and parses its optional
+    /// <c>host:port</c> endpoint. Returns false only when the flag is present but
+    /// its endpoint is malformed, so the caller can abort with a clear error.
+    /// </summary>
+    private static bool TryGetDebugServerOptions(
+        string[] args,
+        out bool enabled,
+        out SharpEmu.Debugger.Server.DebuggerServerOptions options,
+        out string error)
+    {
+        enabled = false;
+        options = new SharpEmu.Debugger.Server.DebuggerServerOptions();
+        error = string.Empty;
+        foreach (var argument in args)
+        {
+            if (string.Equals(argument, "--debug-server", StringComparison.OrdinalIgnoreCase))
+            {
+                enabled = true;
+                continue;
+            }
+
+            const string prefix = "--debug-server=";
+            if (argument.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                enabled = true;
+                if (!SharpEmu.Debugger.Server.DebuggerServerOptions.TryParseEndpoint(argument[prefix.Length..], out options, out error))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 
     private static bool TryParseArguments(
@@ -1126,6 +1190,15 @@ internal static partial class Program
                 }
 
                 systemRoot = args[++i];
+                continue;
+            }
+
+            // The debug-server endpoint is parsed separately (see
+            // TryGetDebugServerOptions); accept the flag here so it is not
+            // rejected as an unknown option or mistaken for the eboot path.
+            if (string.Equals(argument, "--debug-server", StringComparison.OrdinalIgnoreCase) ||
+                argument.StartsWith("--debug-server=", StringComparison.OrdinalIgnoreCase))
+            {
                 continue;
             }
 

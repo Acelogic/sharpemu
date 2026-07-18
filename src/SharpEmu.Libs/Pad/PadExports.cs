@@ -198,6 +198,35 @@ public static class PadExports
         LibraryName = "libScePad")]
     public static int PadOpenExt(CpuContext ctx) => PadOpenCore(ctx, extended: true);
 
+    // scePadGetHandle(userId, type, index): returns the handle of an already-open
+    // pad without opening a new one. Dead Cells calls it every frame to poll
+    // input; leaving it unresolved returned a garbage handle so the input path
+    // (and the game loop that drives it) misbehaved. Same validation as
+    // scePadOpen — the one primary pad — returning its handle or a not-connected
+    // error, never opening or logging.
+    [SysAbiExport(
+        Nid = "u1GRHp+oWoY",
+        ExportName = "scePadGetHandle",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libScePad")]
+    public static int PadGetHandle(CpuContext ctx)
+    {
+        var userId = unchecked((int)ctx[CpuRegister.Rdi]);
+        var type = unchecked((int)ctx[CpuRegister.Rsi]);
+        var index = unchecked((int)ctx[CpuRegister.Rdx]);
+        if (!_initialized)
+        {
+            return ctx.SetReturn(OrbisPadErrorNotInitialized);
+        }
+
+        if (userId != PrimaryUserId || type is not (0 or 1 or 2) || index != 0)
+        {
+            return ctx.SetReturn(OrbisPadErrorDeviceNotConnected);
+        }
+
+        return ctx.SetReturn(PrimaryPadHandle);
+    }
+
     // scePadOpen rejects a non-null 4th arg and non-standard ports; scePadOpenExt accepts a
     // ScePadOpenExtParam* plus ports 1/2 (racing titles retry scePadOpenExt(type=2) forever if rejected).
     private static int PadOpenCore(CpuContext ctx, bool extended)
@@ -359,6 +388,38 @@ public static class PadExports
         information[0x1E] = 0;   // connectionType: local
 
         return KernelMemoryCompatExports.TryWriteCompat(ctx, informationAddress, information)
+            ? ctx.SetReturn(0)
+            : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+    }
+
+    [SysAbiExport(
+        Nid = "AcslpN1jHR8",
+        ExportName = "scePadDeviceClassGetExtendedInformation",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libScePad")]
+    public static int PadDeviceClassGetExtendedInformation(CpuContext ctx)
+    {
+        var handle = unchecked((int)ctx[CpuRegister.Rdi]);
+        var informationAddress = ctx[CpuRegister.Rsi];
+        if (!IsPrimaryPadHandle(handle))
+        {
+            return ctx.SetReturn(OrbisPadErrorInvalidHandle);
+        }
+
+        if (informationAddress == 0)
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        // ScePadDeviceClassExtendedInformation: deviceClass 0 = standard pad
+        // (DualSense). We emulate no special peripheral (guitar/drums/wheel), so
+        // the class-data union stays zeroed — the guest treats it as a plain
+        // controller with no extended capabilities.
+        Span<byte> information = stackalloc byte[0x20];
+        information.Clear();
+        BinaryPrimitives.WriteInt32LittleEndian(information[0x00..], 0);
+
+        return ctx.Memory.TryWrite(informationAddress, information)
             ? ctx.SetReturn(0)
             : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
     }
