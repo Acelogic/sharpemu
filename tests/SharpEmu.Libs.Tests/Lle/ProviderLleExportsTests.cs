@@ -58,6 +58,7 @@ public sealed class ProviderLleExportsTests
             ["libSceIme"] = 1,
             ["libSceImeDialog"] = 6,
             ["libSceJson2"] = 17,
+            ["libSceLibcInternal"] = 4,
             ["libSceNet"] = 5,
             ["libSceNetCtl"] = 3,
             ["libSceNpAuth"] = 5,
@@ -86,18 +87,19 @@ public sealed class ProviderLleExportsTests
             ["libSceVideoRecordingP"] = 9,
             ["libSceVoice"] = 15,
             ["libSceWebBrowserDialog"] = 6,
+            ["libc"] = 30,
             ["ulobjmgr"] = 2,
         };
 
     [Fact]
-    public void GtaProviderCatalogs_RegisterAll367ExactGen5NidsAsLlePreferred()
+    public void GtaProviderCatalogs_RegisterAll401ExactGen5NidsAsLlePreferred()
     {
         var exports = SharpEmu.Generated.SysAbiExportRegistry.CreateExports(Generation.Gen5)
             .Where(IsGeneratedProviderExport)
             .ToArray();
 
-        Assert.Equal(367, exports.Length);
-        Assert.Equal(367, exports.Select(export => export.Nid).Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(401, exports.Length);
+        Assert.Equal(401, exports.Select(export => export.Nid).Distinct(StringComparer.Ordinal).Count());
         Assert.All(exports, export =>
         {
             Assert.Equal(Generation.Gen5, export.Target);
