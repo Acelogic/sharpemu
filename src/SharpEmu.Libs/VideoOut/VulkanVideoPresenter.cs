@@ -110,6 +110,41 @@ internal static unsafe class VulkanVideoPresenter
     // always takes its dimensions from the native child control instead.
     private const uint DefaultWindowWidth = 1920;
     private const uint DefaultWindowHeight = 1080;
+    internal const long MaxPersistentPipelineCacheBytes = 64L * 1024 * 1024;
+
+    internal static bool IsPersistentPipelineCacheSizeAllowed(long length)
+    {
+        return length >= 0 && length <= MaxPersistentPipelineCacheBytes;
+    }
+
+    internal static string GetDefaultPipelineCachePath(
+        string root,
+        string? app0Directory)
+    {
+        var scope = "shared";
+        if (!string.IsNullOrWhiteSpace(app0Directory))
+        {
+            string normalized;
+            try
+            {
+                normalized = Path.TrimEndingDirectorySeparator(
+                    Path.GetFullPath(app0Directory));
+            }
+            catch (Exception)
+            {
+                normalized = app0Directory.Trim();
+            }
+
+            var digest = SHA256.HashData(Encoding.UTF8.GetBytes(normalized));
+            scope = Convert.ToHexString(digest.AsSpan(0, 12)).ToLowerInvariant();
+        }
+
+        return Path.Combine(
+            root,
+            "SharpEmu",
+            "vulkan-pipeline-cache",
+            $"{scope}.bin");
+    }
 
     internal enum StorageImageComponentKind
     {
@@ -4236,7 +4271,18 @@ internal static unsafe class VulkanVideoPresenter
             {
                 if (_pipelineCachePath is not null && File.Exists(_pipelineCachePath))
                 {
-                    initialData = File.ReadAllBytes(_pipelineCachePath);
+                    var cacheLength = new FileInfo(_pipelineCachePath).Length;
+                    if (IsPersistentPipelineCacheSizeAllowed(cacheLength))
+                    {
+                        initialData = File.ReadAllBytes(_pipelineCachePath);
+                    }
+                    else
+                    {
+                        Console.Error.WriteLine(
+                            $"[LOADER][WARN] Vulkan pipeline cache skipped: " +
+                            $"path={_pipelineCachePath} bytes={cacheLength} " +
+                            $"limit={MaxPersistentPipelineCacheBytes}");
+                    }
                 }
             }
             catch (Exception exception)
@@ -4315,7 +4361,9 @@ internal static unsafe class VulkanVideoPresenter
                     "Library",
                     "Caches")
                 : Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            return Path.Combine(root, "SharpEmu", "vulkan-pipeline-cache.bin");
+            return GetDefaultPipelineCachePath(
+                root,
+                Environment.GetEnvironmentVariable("SHARPEMU_APP0_DIR"));
         }
 
         private void MarkPipelineCacheDirty()
@@ -4357,10 +4405,18 @@ internal static unsafe class VulkanVideoPresenter
                     _pipelineCache,
                     &size,
                     null);
-                if (result != Result.Success || size == 0 || size > 256u * 1024u * 1024u)
+                if (result != Result.Success || size == 0)
                 {
                     Console.Error.WriteLine(
                         $"[LOADER][WARN] Vulkan pipeline cache query failed: result={result} size={size}");
+                    return;
+                }
+
+                if (size > (nuint)MaxPersistentPipelineCacheBytes)
+                {
+                    Console.Error.WriteLine(
+                        $"[LOADER][WARN] Vulkan pipeline cache snapshot skipped: " +
+                        $"bytes={size} limit={MaxPersistentPipelineCacheBytes}");
                     return;
                 }
 
