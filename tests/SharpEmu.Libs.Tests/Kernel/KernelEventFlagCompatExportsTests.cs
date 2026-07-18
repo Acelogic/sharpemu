@@ -109,7 +109,7 @@ public sealed class KernelEventFlagCompatExportsTests
     }
 
     [Fact]
-    public void KernelWaitEventFlag_TimedFallbackDoesNotRecursivelyPumpScheduler()
+    public async Task KernelWaitEventFlag_TimedWaitBlocksInPlaceWithoutPumpingScheduler()
     {
         const ulong memoryBase = 0x1_0000_0000;
         const ulong nameAddress = memoryBase + 0x100;
@@ -118,10 +118,8 @@ public sealed class KernelEventFlagCompatExportsTests
         const ulong timeoutAddress = memoryBase + 0x208;
         var memory = new FakeCpuMemory(memoryBase, 0x1000);
         var context = new CpuContext(memory, Generation.Gen5);
-        memory.WriteCString(nameAddress, "TimedFallback");
-        // Leave enough headroom for a parallel test run to reach the first
-        // scheduler pump before the positive timeout expires.
-        Assert.True(context.TryWriteUInt32(timeoutAddress, 100_000));
+        memory.WriteCString(nameAddress, "TimedInPlace");
+        Assert.True(context.TryWriteUInt32(timeoutAddress, 1_000_000));
         context[CpuRegister.Rdi] = handleAddress;
         context[CpuRegister.Rsi] = nameAddress;
         context[CpuRegister.Rdx] = 0x11;
@@ -136,17 +134,26 @@ public sealed class KernelEventFlagCompatExportsTests
         context[CpuRegister.Rcx] = resultAddress;
         context[CpuRegister.R8] = timeoutAddress;
 
+        var setterContext = new CpuContext(memory, Generation.Gen5);
+        setterContext[CpuRegister.Rdi] = handle;
+        setterContext[CpuRegister.Rsi] = 1;
+
         var previousScheduler = GuestThreadExecution.Scheduler;
-        var scheduler = new CountingScheduler(
-            nestedContext => KernelEventFlagCompatExports.KernelWaitEventFlag(nestedContext));
+        var scheduler = new CountingScheduler();
         GuestThreadExecution.Scheduler = scheduler;
         try
         {
-            Assert.Equal(
-                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT,
-                KernelEventFlagCompatExports.KernelWaitEventFlag(context));
-            Assert.Equal(1, scheduler.PumpCount);
-            Assert.Equal(1, scheduler.MaxPumpDepth);
+            var setter = Task.Run(() =>
+            {
+                Thread.Sleep(25);
+                return KernelEventFlagCompatExports.KernelSetEventFlag(setterContext);
+            });
+
+            Assert.Equal(0, KernelEventFlagCompatExports.KernelWaitEventFlag(context));
+            Assert.Equal(0, await setter);
+            Assert.True(context.TryReadUInt64(resultAddress, out var resultPattern));
+            Assert.Equal(1UL, resultPattern);
+            Assert.Equal(0, scheduler.PumpCount);
         }
         finally
         {
@@ -172,17 +179,7 @@ public sealed class KernelEventFlagCompatExportsTests
 
     private sealed class CountingScheduler : IGuestThreadScheduler
     {
-        private readonly Action<CpuContext>? _onPump;
-        private int _pumpDepth;
-
-        public CountingScheduler(Action<CpuContext>? onPump = null)
-        {
-            _onPump = onPump;
-        }
-
         public int PumpCount { get; private set; }
-
-        public int MaxPumpDepth { get; private set; }
 
         public bool SupportsGuestContextTransfer => false;
 
@@ -210,16 +207,6 @@ public sealed class KernelEventFlagCompatExportsTests
         public void Pump(CpuContext callerContext, string reason)
         {
             PumpCount++;
-            _pumpDepth++;
-            MaxPumpDepth = Math.Max(MaxPumpDepth, _pumpDepth);
-            try
-            {
-                _onPump?.Invoke(callerContext);
-            }
-            finally
-            {
-                _pumpDepth--;
-            }
         }
 
         public int WakeBlockedThreads(string wakeKey, int maxCount = int.MaxValue) => 0;
