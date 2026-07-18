@@ -205,6 +205,8 @@ public static partial class AgcExports
     private const ulong ShaderTypeOffset = 0x5A;
     private const ulong ShaderNumShRegistersOffset = 0x5C;
     private const int AgcErrorIncompatibleShaderPair = unchecked((int)0x8A6C0008);
+    private const int AgcDriverErrorInvalidArgument = unchecked((int)0x8A6DFFFF);
+    private const uint AgcDriverTfRingMaximumSize = 0x4000;
     private const int ShaderDescriptorSize = 0x60;
     private const uint InternalGsRegister = 0x080;
     private const uint InternalHsRegister = 0x100;
@@ -690,6 +692,9 @@ public static partial class AgcExports
         public bool WaitMonitorRunning { get; set; }
         public object WaitMonitorSignalGate { get; } = new();
         public long WaitMonitorSignalVersion { get; set; }
+        public bool TfRingConfigured { get; set; }
+        public ulong TfRingAddress { get; set; }
+        public uint TfRingSize { get; set; }
     }
 
     private readonly record struct RegisteredAgcResource(
@@ -3482,6 +3487,69 @@ public static partial class AgcExports
 
         TraceAgc($"agc.driver_delete_eq_event eq=0x{equeue:X16} id=0x{eventId:X16}");
         return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    // Ghidra: libSceAgcDriver.sprx
+    // SHA-256 bc2ca28f3632ce69e25ab44991ed1f49bc1624fe39c2fc81f2efc6e705876348,
+    // public export 0x6FF0 -> selected Prospero callback 0x6F90 -> helper
+    // 0x9C20. The base path clamps the requested size before the callback
+    // validates the address and effective size, in that order.
+    [SysAbiExport(
+        Nid = "XlNp7jzGiPo",
+        ExportName = "sceAgcDriverSetTFRing",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgcDriver")]
+    public static int DriverSetTfRing(CpuContext ctx)
+    {
+        var ringAddress = ctx[CpuRegister.Rdi];
+        var requestedRingSize = (uint)ctx[CpuRegister.Rsi];
+        var effectiveRingSize = Math.Min(requestedRingSize, AgcDriverTfRingMaximumSize);
+
+        // GTA checks the pointer before entering the provider, so the direct
+        // null-provider outcome is not present in the recovered path. Reject
+        // it conservatively instead of recording a synthetic null ring.
+        if (ringAddress == 0 ||
+            (ringAddress & 0xFF) != 0 ||
+            (effectiveRingSize & 3) != 0)
+        {
+            TraceAgc(
+                $"agc.driver_set_tf_ring invalid addr=0x{ringAddress:X16} " +
+                $"requested=0x{requestedRingSize:X} effective=0x{effectiveRingSize:X}");
+            return ctx.SetReturn(AgcDriverErrorInvalidArgument);
+        }
+
+        var gpuState = _submittedGpuStates.GetValue(ctx.Memory, static _ => new SubmittedGpuState());
+        lock (gpuState.Gate)
+        {
+            gpuState.TfRingConfigured = true;
+            gpuState.TfRingAddress = ringAddress;
+            gpuState.TfRingSize = effectiveRingSize;
+        }
+
+        TraceAgc(
+            $"agc.driver_set_tf_ring addr=0x{ringAddress:X16} " +
+            $"requested=0x{requestedRingSize:X} effective=0x{effectiveRingSize:X}");
+        return ctx.SetReturn(0);
+    }
+
+    internal static bool TryGetDriverTfRingState(
+        ICpuMemory memory,
+        out ulong ringAddress,
+        out uint ringSize)
+    {
+        if (!_submittedGpuStates.TryGetValue(memory, out var gpuState))
+        {
+            ringAddress = 0;
+            ringSize = 0;
+            return false;
+        }
+
+        lock (gpuState.Gate)
+        {
+            ringAddress = gpuState.TfRingAddress;
+            ringSize = gpuState.TfRingSize;
+            return gpuState.TfRingConfigured;
+        }
     }
 
     [SysAbiExport(
