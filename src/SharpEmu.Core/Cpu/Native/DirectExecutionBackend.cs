@@ -447,10 +447,6 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		// Stays set through the wake transition; Resume() consumes it when the thread pumps.
 		public IGuestThreadBlockWaiter? BlockWaiter { get; set; }
 
-		public Func<int>? BlockResumeHandler { get; set; }
-
-		public Func<bool>? BlockWakeHandler { get; set; }
-
 		public long BlockDeadlineTimestamp { get; set; }
 
 		public long ImportCount;
@@ -3187,43 +3183,6 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			thread.HasBlockedContinuation = true;
 			thread.BlockWakeKey = wakeKey;
 			thread.BlockWaiter = waiter;
-			thread.BlockResumeHandler = null;
-			thread.BlockWakeHandler = null;
-			thread.BlockDeadlineTimestamp = blockDeadlineTimestamp;
-			TraceFocusedContinuation(
-				"register",
-				guestThreadHandle,
-				continuation,
-				wakeKey);
-		}
-	}
-
-	private void RegisterBlockedGuestThreadContinuation(
-		ulong guestThreadHandle,
-		GuestCpuContinuation continuation,
-		string wakeKey,
-		Func<int>? resumeHandler,
-		Func<bool>? wakeHandler,
-		long blockDeadlineTimestamp)
-	{
-		if (guestThreadHandle == 0 || continuation.Rip < 65536 || continuation.Rsp == 0)
-		{
-			return;
-		}
-
-		using (LockGate("RegisterBlockedContinuation"))
-		{
-			if (!_guestThreads.TryGetValue(guestThreadHandle, out var thread))
-			{
-				return;
-			}
-
-			thread.BlockedContinuation = continuation;
-			thread.HasBlockedContinuation = true;
-			thread.BlockWakeKey = wakeKey;
-			thread.BlockWaiter = null;
-			thread.BlockResumeHandler = resumeHandler;
-			thread.BlockWakeHandler = wakeHandler;
 			thread.BlockDeadlineTimestamp = blockDeadlineTimestamp;
 			TraceFocusedContinuation(
 				"register",
@@ -3539,11 +3498,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 				owner.State = GuestThreadRunState.Blocked;
 				owner.BlockReason = callbackReason ?? reason;
-				if (owner.BlockWakeHandler is not null && owner.BlockWakeHandler())
+				if (owner.BlockWaiter is not null && owner.BlockWaiter.TryWake())
 				{
 					owner.State = GuestThreadRunState.Ready;
 					owner.BlockReason = null;
-					owner.BlockWakeHandler = null;
 					owner.BlockDeadlineTimestamp = 0;
 				}
 			}
@@ -3555,7 +3513,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			}
 
 			GuestCpuContinuation continuation = default;
-			Func<int>? resumeHandler = null;
+			IGuestThreadBlockWaiter? blockWaiter = null;
 			while (!ActiveForcedGuestExit)
 			{
 				WakeExpiredBlockedGuestThreads();
@@ -3576,9 +3534,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 						owner.BlockedContinuation = default;
 						owner.HasBlockedContinuation = false;
 						owner.BlockWakeKey = null;
-						resumeHandler = owner.BlockResumeHandler;
-						owner.BlockResumeHandler = null;
-						owner.BlockWakeHandler = null;
+						blockWaiter = owner.BlockWaiter;
+						owner.BlockWaiter = null;
 						owner.BlockDeadlineTimestamp = 0;
 						owner.BlockReason = null;
 						owner.State = GuestThreadRunState.Running;
@@ -3601,9 +3558,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				return false;
 			}
 
-			if (resumeHandler is not null)
+			if (blockWaiter is not null)
 			{
-				continuation = continuation with { Rax = unchecked((ulong)(long)resumeHandler()) };
+				continuation = continuation with { Rax = unchecked((ulong)(long)blockWaiter.Resume()) };
 			}
 			if (_logGuestThreads)
 			{
@@ -3816,8 +3773,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		bool savedHasBlockedContinuation;
 		GuestCpuContinuation savedBlockedContinuation;
 		string? savedBlockWakeKey;
-		Func<int>? savedBlockResumeHandler;
-		Func<bool>? savedBlockWakeHandler;
+		IGuestThreadBlockWaiter? savedBlockWaiter;
 		long savedBlockDeadlineTimestamp;
 		ulong exceptionStackBase;
 		lock (_guestThreadGate)
@@ -3953,8 +3909,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			savedHasBlockedContinuation = target.HasBlockedContinuation;
 			savedBlockedContinuation = target.BlockedContinuation;
 			savedBlockWakeKey = target.BlockWakeKey;
-			savedBlockResumeHandler = target.BlockResumeHandler;
-			savedBlockWakeHandler = target.BlockWakeHandler;
+			savedBlockWaiter = target.BlockWaiter;
 			savedBlockDeadlineTimestamp = target.BlockDeadlineTimestamp;
 
 			target.State = GuestThreadRunState.Running;
@@ -3964,8 +3919,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			target.HasBlockedContinuation = false;
 			target.BlockedContinuation = default;
 			target.BlockWakeKey = null;
-			target.BlockResumeHandler = null;
-			target.BlockWakeHandler = null;
+			target.BlockWaiter = null;
 			target.BlockDeadlineTimestamp = 0;
 		}
 
@@ -4013,8 +3967,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			target.HasBlockedContinuation = savedHasBlockedContinuation;
 			target.BlockedContinuation = savedBlockedContinuation;
 			target.BlockWakeKey = savedBlockWakeKey;
-			target.BlockResumeHandler = savedBlockResumeHandler;
-			target.BlockWakeHandler = savedBlockWakeHandler;
+			target.BlockWaiter = savedBlockWaiter;
 			target.BlockDeadlineTimestamp = savedBlockDeadlineTimestamp;
 
 			// A condition/event wake can arrive while the parked thread is
@@ -4024,12 +3977,11 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			// pthread wait remains parked forever after a GC suspension races it.
 			if (target.State == GuestThreadRunState.Blocked &&
 				target.HasBlockedContinuation &&
-				target.BlockWakeHandler is not null &&
-				target.BlockWakeHandler())
+				target.BlockWaiter is not null &&
+				target.BlockWaiter.TryWake())
 			{
 				target.State = GuestThreadRunState.Ready;
 				target.BlockReason = null;
-				target.BlockWakeHandler = null;
 				target.BlockDeadlineTimestamp = 0;
 				_readyGuestThreads.Enqueue(target);
 				Interlocked.Increment(ref _readyGuestThreadCount);

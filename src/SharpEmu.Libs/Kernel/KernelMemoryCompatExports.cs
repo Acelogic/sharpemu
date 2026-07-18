@@ -3153,6 +3153,12 @@ public static partial class KernelMemoryCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
+        if (KernelSocketCompatExports.TryCloseSocketFd(fd))
+        {
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
         FileStream? stream;
         lock (_fdGate)
         {
@@ -3656,7 +3662,20 @@ public static partial class KernelMemoryCompatExports
                 return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
             }
 
-            if (!TryFindAvailableDirectMemorySpanLocked(searchStart, searchEnd, alignment, out var candidate, out var rangeAvailable))
+            bool foundSpan;
+            ulong candidate;
+            ulong rangeAvailable;
+            lock (_memoryGate)
+            {
+                foundSpan = TryFindAvailableDirectMemorySpanLocked(
+                    searchStart,
+                    searchEnd,
+                    alignment,
+                    out candidate,
+                    out rangeAvailable);
+            }
+
+            if (!foundSpan)
             {
                 return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
             }
@@ -7171,9 +7190,12 @@ public static partial class KernelMemoryCompatExports
             var gapEnd = Math.Min(allocation.Start, effectiveEnd);
             if (candidate < gapEnd)
             {
-                spanStart = candidate;
-                spanLength = gapEnd - candidate;
-                return true;
+                var candidateLength = gapEnd - candidate;
+                if (candidateLength > spanLength)
+                {
+                    spanStart = candidate;
+                    spanLength = candidateLength;
+                }
             }
 
             if (allocation.Start >= effectiveEnd)
@@ -7184,12 +7206,20 @@ public static partial class KernelMemoryCompatExports
             candidate = AlignUp(Math.Max(candidate, allocationEnd), alignment);
             if (candidate >= effectiveEnd)
             {
-                return false;
+                break;
             }
         }
 
-        spanStart = candidate;
-        spanLength = effectiveEnd - candidate;
+        if (candidate < effectiveEnd)
+        {
+            var candidateLength = effectiveEnd - candidate;
+            if (candidateLength > spanLength)
+            {
+                spanStart = candidate;
+                spanLength = candidateLength;
+            }
+        }
+
         return spanLength != 0;
     }
 
