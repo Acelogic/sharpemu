@@ -221,6 +221,14 @@
           "SharpEmu.Logging": "[0.0.2-beta.3, )"
         }
       },
+      "sharpemu.debugger": {
+        "type": "Project",
+        "dependencies": {
+          "SharpEmu.Core": "[0.0.2-beta.3, )",
+          "SharpEmu.HLE": "[0.0.2-beta.3, )",
+          "SharpEmu.Logging": "[0.0.2-beta.3, )"
+        }
+      },
       "sharpemu.gui": {
         "type": "Project",
         "dependencies": {
