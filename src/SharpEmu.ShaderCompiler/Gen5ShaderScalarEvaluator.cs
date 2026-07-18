@@ -2406,7 +2406,8 @@ public static class Gen5ShaderScalarEvaluator
     private static bool TryReadUInt32(CpuContext ctx, ulong address, out uint value)
     {
         Span<byte> bytes = stackalloc byte[sizeof(uint)];
-        if (!ctx.Memory.TryRead(address, bytes))
+        if (!ctx.Memory.TryRead(address, bytes) &&
+            FallbackMemoryReader?.Invoke(address, bytes) != true)
         {
             value = 0;
             return false;

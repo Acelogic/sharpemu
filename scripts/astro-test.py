@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 
-TOOL_VERSION = 9
+TOOL_VERSION = 10
 TITLE_MILESTONE = "GAME: Level has started: title_controller_ship"
 PS_LOGO_MILESTONE = "GAME: Level has started: ps_logo"
 PS_STUDIOS_VIDEO = Path("data/prein/video/ps_studio_armadillo.mp4")
@@ -67,6 +67,11 @@ BASE_ENV = {
     "SHARPEMU_IGNORE_STACK_CHK": "1",
     "SHARPEMU_IGNORE_INT41": "1",
     "SHARPEMU_GPU_WAIT_MODE": "force",
+    # ASTRO regresses before the title milestone when newly imported HLE libc
+    # compatibility exports take precedence over the firmware implementations.
+    # Keep the title-specific harness on the validated all-LLE routing while the
+    # emulator-wide default remains the safer mixed HLE/LLE policy.
+    "SHARPEMU_LLE_LIBC_ALL": "1",
     "SHARPEMU_OVERLAY": "1",
     "SHARPEMU_SHADER_MAX_STEPS": "4096",
 }

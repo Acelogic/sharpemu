@@ -32,10 +32,9 @@ internal static class Bink2MovieBridge
     private static bool _availabilityReported;
 
     /// <summary>
-    /// Returns true when the guest should receive a normal "file not found"
-    /// result for a Bink movie. This is the safe default without a decoder:
-    /// games that treat movies as optional fall through to their next state
-    /// rather than submitting an empty Bink GPU texture forever.
+    /// Returns true only when movie skipping was explicitly requested. Without
+    /// a host adapter the guest must be allowed to run the Bink implementation
+    /// statically linked into its executable.
     /// </summary>
     internal static bool ShouldSkipGuestMovie(string hostPath) =>
         hostPath.EndsWith(".bk2", StringComparison.OrdinalIgnoreCase) &&
@@ -56,9 +55,15 @@ internal static class Bink2MovieBridge
                 return;
             }
 
-            if (ResolveMode() == MovieMode.Dummy)
+            var mode = ResolveMode();
+            if (mode == MovieMode.Dummy)
             {
                 AttachDummyMovieLocked(hostPath);
+                return;
+            }
+
+            if (mode != MovieMode.Native)
+            {
                 return;
             }
 
@@ -168,16 +173,15 @@ internal static class Bink2MovieBridge
             return MovieMode.Skip;
         }
 
-        // With no SDK adapter present, returning "not found" makes optional
-        // cinematics advance. Supplying either an explicit path or the normal
-        // side-by-side adapter enables native playback automatically.
+        // Prefer the optional host adapter when one is supplied. Otherwise let
+        // the game's statically linked Bink implementation consume the file.
         if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SHARPEMU_BINK2_BRIDGE")) ||
             EnumerateAdapterCandidates().Any(File.Exists))
         {
             return MovieMode.Native;
         }
 
-        return MovieMode.Skip;
+        return MovieMode.Guest;
     }
 
     private static void AttachDummyMovieLocked(string hostPath)
@@ -338,6 +342,7 @@ internal static class Bink2MovieBridge
 
     private enum MovieMode
     {
+        Guest,
         Skip,
         Dummy,
         Native,

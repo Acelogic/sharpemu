@@ -32,6 +32,8 @@ packages/
 .nuget/
 .dotnet-home/
 .cache/
+__pycache__/
+*.py[cod]
 
 .DS_Store
 Thumbs.db
@@ -40,3 +42,4 @@ ehthumbs.db
 
 .vs/
 .idea/
+packages.lock.json

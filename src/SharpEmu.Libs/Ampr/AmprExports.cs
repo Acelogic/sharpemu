@@ -6,6 +6,7 @@ using SharpEmu.Libs.Kernel;
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
+using Microsoft.Win32.SafeHandles;
 
 namespace SharpEmu.Libs.Ampr;
 
@@ -47,17 +48,17 @@ public static class AmprExports
     {
         public CachedHostFile(string path)
         {
-            Stream = new FileStream(
+            Handle = File.OpenHandle(
                 path,
                 FileMode.Open,
                 FileAccess.Read,
                 FileShare.ReadWrite | FileShare.Delete,
-                bufferSize: 1024 * 1024,
                 FileOptions.RandomAccess);
+            Length = RandomAccess.GetLength(Handle);
         }
 
-        public object Gate { get; } = new();
-        public FileStream Stream { get; }
+        public SafeFileHandle Handle { get; }
+        public long Length { get; }
     }
 
     [SysAbiExport(
@@ -717,13 +718,7 @@ public static class AmprExports
                 return openResult;
             }
 
-            long fileLength;
-            lock (cachedFile.Gate)
-            {
-                fileLength = cachedFile.Stream.Length;
-            }
-
-            if (fileOffset >= (ulong)fileLength)
+            if (fileOffset >= (ulong)cachedFile.Length)
             {
                 return (int)OrbisGen2Result.ORBIS_GEN2_OK;
             }
@@ -742,12 +737,10 @@ public static class AmprExports
                 }
 
                 var request = (int)Math.Min((ulong)buffer.Length, size - bytesRead);
-                int read;
-                lock (cachedFile.Gate)
-                {
-                    cachedFile.Stream.Position = unchecked((long)absoluteOffset);
-                    read = cachedFile.Stream.Read(buffer, 0, request);
-                }
+                var read = RandomAccess.Read(
+                    cachedFile.Handle,
+                    buffer.AsSpan(0, request),
+                    unchecked((long)absoluteOffset));
 
                 if (read <= 0)
                 {

@@ -93,19 +93,6 @@ public static class KernelEventQueueCompatExports
         }
     }
 
-    private sealed class EqueueWaiter : IGuestThreadBlockWaiter
-    {
-        public required CpuContext Ctx { get; init; }
-        public required ulong Handle { get; init; }
-        public required ulong EventsAddress { get; init; }
-        public required int EventCapacity { get; init; }
-        public required ulong OutCountAddress { get; init; }
-
-        public int Resume() => ResumeWaitEqueue(Ctx, Handle, EventsAddress, EventCapacity, OutCountAddress);
-
-        public bool TryWake() => HasPendingEvents(Handle);
-    }
-
     [SysAbiExport(
         Nid = "D0OdFMjp46I",
         ExportName = "sceKernelCreateEqueue",
@@ -127,7 +114,7 @@ public static class KernelEventQueueCompatExports
             _registeredEvents[handle] = new Dictionary<(ulong Ident, short Filter), KernelEventRegistration>();
         }
 
-        if (!TryWriteUInt64(ctx, outAddress, handle))
+        if (!ctx.TryWriteUInt64(outAddress, handle))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -149,9 +136,9 @@ public static class KernelEventQueueCompatExports
             _eventQueues.Remove(handle);
             _pendingEvents.Remove(handle);
             _registeredEvents.Remove(handle);
+            // Wake any thread parked on this queue so it observes the deletion.
+            Monitor.PulseAll(_eventQueueGate);
         }
-
-        _wakeKeys.TryRemove(handle, out _);
 
         TraceEventQueue(ctx, "delete", handle);
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
@@ -327,7 +314,7 @@ public static class KernelEventQueueCompatExports
         LibraryName = "libKernel")]
     public static int KernelGetEventUserData(CpuContext ctx)
     {
-        _ = TryReadUInt64(ctx, ctx[CpuRegister.Rdi] + 0x18, out var userData);
+        _ = ctx.TryReadUInt64(ctx[CpuRegister.Rdi] + 0x18, out var userData);
         ctx[CpuRegister.Rax] = userData;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
@@ -339,7 +326,7 @@ public static class KernelEventQueueCompatExports
         LibraryName = "libKernel")]
     public static int KernelGetEventId(CpuContext ctx)
     {
-        _ = TryReadUInt64(ctx, ctx[CpuRegister.Rdi], out var ident);
+        _ = ctx.TryReadUInt64(ctx[CpuRegister.Rdi], out var ident);
         ctx[CpuRegister.Rax] = ident;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
@@ -352,7 +339,7 @@ public static class KernelEventQueueCompatExports
     public static int KernelGetEventFilter(CpuContext ctx)
     {
         Span<byte> filterBytes = stackalloc byte[sizeof(short)];
-        var filter = KernelMemoryCompatExports.TryReadCompat(ctx, ctx[CpuRegister.Rdi] + 0x08, filterBytes)
+        var filter = ctx.Memory.TryRead(ctx[CpuRegister.Rdi] + 0x08, filterBytes)
             ? BinaryPrimitives.ReadInt16LittleEndian(filterBytes)
             : (short)0;
         ctx[CpuRegister.Rax] = unchecked((uint)filter);
@@ -366,7 +353,7 @@ public static class KernelEventQueueCompatExports
         LibraryName = "libKernel")]
     public static int KernelGetEventData(CpuContext ctx)
     {
-        _ = TryReadUInt64(ctx, ctx[CpuRegister.Rdi] + 0x10, out var data);
+        _ = ctx.TryReadUInt64(ctx[CpuRegister.Rdi] + 0x10, out var data);
         ctx[CpuRegister.Rax] = data;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
@@ -412,59 +399,81 @@ public static class KernelEventQueueCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
-        if (timeoutAddress == 0 &&
-            GuestThreadExecution.RequestCurrentThreadBlock(
-                ctx,
-                "sceKernelWaitEqueue",
-                GetEventQueueWakeKey(handle),
-                new EqueueWaiter
-                {
-                    Ctx = ctx,
-                    Handle = handle,
-                    EventsAddress = eventsAddress,
-                    EventCapacity = eventCapacity,
-                    OutCountAddress = outCountAddress,
-                }))
+        // No events ready: block this host thread in place on the queue gate.
+        // Monitor.Wait releases the gate and parks atomically, so an
+        // EnqueueEvent/TriggerDisplayEvent PulseAll issued the instant after
+        // the emptiness check cannot be lost. kqueue/kevent semantics: sleep
+        // until an event matching a registration is delivered or the timeout
+        // (usec, infinite when the arg pointer is null) lapses; a zero timeout
+        // degrades to an instant poll.
+        long deadline;
+        if (timeoutAddress == 0)
         {
-            TraceEventQueue(ctx, "wait-block", handle);
-            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+            deadline = long.MaxValue;
+        }
+        else if (timeoutUsec == 0)
+        {
+            deadline = 0;
+        }
+        else
+        {
+            deadline = Environment.TickCount64 + Math.Max(1L, timeoutUsec / 1000L);
         }
 
-        if (timeoutAddress != 0 && TryReadUInt64(ctx, timeoutAddress, out var timeoutRaw))
+        TraceEventQueue(ctx, "wait-block", handle);
+        var guestThreadHandle = GuestThreadExecution.CurrentGuestThreadHandle;
+        GuestThreadBlocking.NoteBlocked(guestThreadHandle, "sceKernelWaitEqueue");
+        try
         {
-            var timeoutMicros = timeoutRaw & 0xFFFF_FFFFUL;
-            var deadline = Environment.TickCount64 +
-                Math.Max(1L, (long)Math.Min(timeoutMicros / 1000, int.MaxValue));
             lock (_eventQueueGate)
             {
-                while (!HasPendingEvents(handle))
+                while (true)
                 {
-                    var remaining = deadline - Environment.TickCount64;
-                    if (remaining <= 0)
+                    if ((_pendingEvents.TryGetValue(handle, out var queue) && queue.Count != 0) ||
+                        !_eventQueues.Contains(handle) ||
+                        GuestThreadBlocking.ShutdownRequested)
                     {
                         break;
                     }
 
-                    Monitor.Wait(_eventQueueGate, (int)Math.Min(remaining, 100));
+                    var remaining = deadline - Environment.TickCount64;
+                    if (timeoutAddress != 0 && remaining <= 0)
+                    {
+                        break;
+                    }
+
+                    var slice = timeoutAddress == 0
+                        ? GuestThreadBlocking.WaitSliceMilliseconds
+                        : (int)Math.Min(remaining, GuestThreadBlocking.WaitSliceMilliseconds);
+                    GuestThreadBlocking.Checkpoint(guestThreadHandle, _eventQueueGate);
+                    _ = Monitor.Wait(_eventQueueGate, slice);
                 }
             }
+        }
+        finally
+        {
+            GuestThreadBlocking.NoteUnblocked(guestThreadHandle);
+        }
 
-            deliveredCount = DequeueEvents(ctx, handle, eventsAddress, eventCapacity);
-            if (outCountAddress != 0 && !TryWriteUInt32(ctx, outCountAddress, (uint)deliveredCount))
-            {
-                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
-            }
+        deliveredCount = DequeueEvents(ctx, handle, eventsAddress, eventCapacity);
+        if (outCountAddress != 0 && !TryWriteUInt32(ctx, outCountAddress, (uint)deliveredCount))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
 
-            if (deliveredCount > 0)
-            {
-                TraceEventQueue(ctx, "wait-timed-deliver", handle);
-                return (int)OrbisGen2Result.ORBIS_GEN2_OK;
-            }
+        if (deliveredCount > 0)
+        {
+            TraceEventQueue(ctx, "wait-deliver", handle);
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
 
+        if (timeoutAddress != 0)
+        {
             TraceEventQueue(ctx, "wait-timeout", handle);
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT;
         }
 
+        // Reached only on queue deletion or teardown; the guest sees zero events.
         TraceEventQueue(ctx, "wait", handle);
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
@@ -798,32 +807,6 @@ public static class KernelEventQueueCompatExports
         return triggered;
     }
 
-    private static int ResumeWaitEqueue(
-        CpuContext ctx,
-        ulong handle,
-        ulong eventsAddress,
-        int eventCapacity,
-        ulong outCountAddress)
-    {
-        var deliveredCount = DequeueEvents(ctx, handle, eventsAddress, eventCapacity);
-        if (outCountAddress != 0 && !TryWriteUInt32(ctx, outCountAddress, (uint)deliveredCount))
-        {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
-        }
-
-        return deliveredCount > 0
-            ? (int)OrbisGen2Result.ORBIS_GEN2_OK
-            : (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT;
-    }
-
-    private static bool HasPendingEvents(ulong handle)
-    {
-        lock (_eventQueueGate)
-        {
-            return _pendingEvents.TryGetValue(handle, out var events) && events.Count != 0;
-        }
-    }
-
     private static void QueueOrUpdateEvent(
         KernelEventDeque queue,
         KernelQueuedEvent queuedEvent)
@@ -841,16 +824,16 @@ public static class KernelEventQueueCompatExports
         };
     }
 
-    // Wake keys are formatted once per handle: WakeEventQueue runs on every event
-    // enqueue (vblank/flip edges included), so formatting there is steady string churn.
-    private static readonly ConcurrentDictionary<ulong, string> _wakeKeys = new();
-
-    private static string GetEventQueueWakeKey(ulong handle) =>
-        _wakeKeys.GetOrAdd(handle, static h => $"sceKernelWaitEqueue:{h:X16}");
-
+    // Wake threads parked in-place on the queue gate; each re-checks for a
+    // matching pending event. The handle is unused (all queues share one gate)
+    // but kept in the signature so call sites read intent-fully.
     private static void WakeEventQueue(ulong handle)
     {
-        _ = GuestThreadExecution.Scheduler?.WakeBlockedThreads(GetEventQueueWakeKey(handle));
+        _ = handle;
+        lock (_eventQueueGate)
+        {
+            Monitor.PulseAll(_eventQueueGate);
+        }
     }
 
     private static int DequeueEvents(CpuContext ctx, ulong handle, ulong eventsAddress, int eventCapacity)
@@ -906,7 +889,7 @@ public static class KernelEventQueueCompatExports
         BinaryPrimitives.WriteUInt32LittleEndian(eventBytes[0x0C..], queuedEvent.Fflags);
         BinaryPrimitives.WriteUInt64LittleEndian(eventBytes[0x10..], queuedEvent.Data);
         BinaryPrimitives.WriteUInt64LittleEndian(eventBytes[0x18..], queuedEvent.UserData);
-        return KernelMemoryCompatExports.TryWriteCompat(ctx, address, eventBytes);
+        return ctx.Memory.TryWrite(address, eventBytes);
     }
 
     private static readonly bool _logEqueue =
@@ -920,7 +903,7 @@ public static class KernelEventQueueCompatExports
         }
 
         var returnRip = 0UL;
-        _ = TryReadUInt64(ctx, ctx[CpuRegister.Rsp], out returnRip);
+        _ = ctx.TryReadUInt64(ctx[CpuRegister.Rsp], out returnRip);
         Console.Error.WriteLine(
             $"[LOADER][TRACE] equeue.{operation}: handle=0x{handle:X16} rsi=0x{ctx[CpuRegister.Rsi]:X16} rdx=0x{ctx[CpuRegister.Rdx]:X16} ret=0x{returnRip:X16}");
     }
@@ -929,13 +912,13 @@ public static class KernelEventQueueCompatExports
     {
         Span<byte> buffer = stackalloc byte[sizeof(uint)];
         BinaryPrimitives.WriteUInt32LittleEndian(buffer, value);
-        return KernelMemoryCompatExports.TryWriteCompat(ctx, address, buffer);
+        return ctx.Memory.TryWrite(address, buffer);
     }
 
     private static bool TryReadUInt32(CpuContext ctx, ulong address, out uint value)
     {
         Span<byte> buffer = stackalloc byte[sizeof(uint)];
-        if (!KernelMemoryCompatExports.TryReadCompat(ctx, address, buffer))
+        if (!ctx.Memory.TryRead(address, buffer))
         {
             value = 0;
             return false;
@@ -943,15 +926,5 @@ public static class KernelEventQueueCompatExports
 
         value = BinaryPrimitives.ReadUInt32LittleEndian(buffer);
         return true;
-    }
-
-    private static bool TryReadUInt64(CpuContext ctx, ulong address, out ulong value) =>
-        KernelMemoryCompatExports.TryReadUInt64Compat(ctx, address, out value);
-
-    private static bool TryWriteUInt64(CpuContext ctx, ulong address, ulong value)
-    {
-        Span<byte> buffer = stackalloc byte[sizeof(ulong)];
-        BinaryPrimitives.WriteUInt64LittleEndian(buffer, value);
-        return KernelMemoryCompatExports.TryWriteCompat(ctx, address, buffer);
     }
 }

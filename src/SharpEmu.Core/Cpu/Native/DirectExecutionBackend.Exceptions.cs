@@ -1117,7 +1117,12 @@ public sealed partial class DirectExecutionBackend
 		}
 	}
 
-	private unsafe static bool TryReadHostBytes(ulong address, byte[] buffer)
+	private unsafe static bool TryReadHostBytes(ulong address, byte[] buffer) =>
+		TryReadHostBytes(address, buffer.AsSpan());
+
+	// Span overload so signal-handler recovery paths can read into a stackalloc
+	// buffer instead of allocating managed arrays inside the handler.
+	private unsafe static bool TryReadHostBytes(ulong address, Span<byte> buffer)
 	{
 		if (address < 65536)
 		{
@@ -1141,7 +1146,7 @@ public sealed partial class DirectExecutionBackend
 
 		try
 		{
-			Marshal.Copy((nint)address, buffer, 0, buffer.Length);
+			new ReadOnlySpan<byte>((void*)address, buffer.Length).CopyTo(buffer);
 			return true;
 		}
 		catch

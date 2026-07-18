@@ -243,6 +243,7 @@ public enum SpirvDecoration : uint
     Binding = 33,
     DescriptorSet = 34,
     Offset = 35,
+    NoContraction = 42,
     PerVertexKhr = 5285,
 }
 
