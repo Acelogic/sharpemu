@@ -1,6 +1,7 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using System.Buffers.Binary;
 using SharpEmu.HLE;
 
 namespace SharpEmu.Libs.Kernel;
@@ -30,6 +31,200 @@ public static class LibcMathExports
         BitConverter.Int32BitsToSingle(unchecked((int)0x42B17180U));
     private static readonly float ExpfUnderflowThreshold =
         BitConverter.Int32BitsToSingle(unchecked((int)0xC2CFF1B5U));
+
+    [SysAbiExport(
+        Nid = "rDMyAf1Jhug",
+        ExportName = "__isinff",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcIsinff(CpuContext ctx)
+    {
+        ctx.GetXmmRegister(0, out var inputBits, out _);
+        var magnitude = (uint)inputBits & 0x7FFF_FFFFU;
+        ctx[CpuRegister.Rax] = magnitude == 0x7F80_0000U ? 1UL : 0UL;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "lA94ZgT+vMM",
+        ExportName = "__isnanf",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcIsnanf(CpuContext ctx)
+    {
+        ctx.GetXmmRegister(0, out var inputBits, out _);
+        var magnitude = (uint)inputBits & 0x7FFF_FFFFU;
+        ctx[CpuRegister.Rax] =
+            (magnitude & 0x7F80_0000U) == 0x7F80_0000U &&
+            (magnitude & 0x007F_FFFFU) != 0
+                ? 1UL
+                : 0UL;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "pKwslsMUmSk",
+        ExportName = "fmod",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcFmod(CpuContext ctx)
+    {
+        ctx.GetXmmRegister(0, out var dividendBits, out _);
+        ctx.GetXmmRegister(1, out var divisorBits, out _);
+        var dividend = BitConverter.Int64BitsToDouble(unchecked((long)dividendBits));
+        var divisor = BitConverter.Int64BitsToDouble(unchecked((long)divisorBits));
+
+        double result;
+        if (!double.IsFinite(dividend) ||
+            ((divisorBits & 0x7FFF_FFFF_FFFF_FFFFUL) == 0) ||
+            double.IsNaN(divisor))
+        {
+            RaiseMathError(ctx, FloatingInvalid);
+            result = dividend % divisor;
+        }
+        else if (double.IsInfinity(divisor) || Math.Abs(dividend) < Math.Abs(divisor))
+        {
+            result = dividend;
+        }
+        else
+        {
+            result = dividend % divisor;
+            if (result == 0.0)
+            {
+                result = Math.CopySign(0.0, dividend);
+            }
+        }
+
+        ctx.SetXmmRegister(
+            0,
+            unchecked((ulong)BitConverter.DoubleToInt64Bits(result)),
+            0);
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "88Vv-AzHVj8",
+        ExportName = "fmodf",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcFmodf(CpuContext ctx)
+    {
+        ctx.GetXmmRegister(0, out var dividendRegister, out _);
+        ctx.GetXmmRegister(1, out var divisorRegister, out _);
+        var dividendBits = (uint)dividendRegister;
+        var divisorBits = (uint)divisorRegister;
+        var dividend = BitConverter.Int32BitsToSingle(unchecked((int)dividendBits));
+        var divisor = BitConverter.Int32BitsToSingle(unchecked((int)divisorBits));
+
+        float result;
+        if (!float.IsFinite(dividend) ||
+            ((divisorBits & 0x7FFF_FFFFU) == 0) ||
+            float.IsNaN(divisor))
+        {
+            RaiseMathError(ctx, FloatingInvalid);
+            result = dividend % divisor;
+        }
+        else if (float.IsInfinity(divisor) || MathF.Abs(dividend) < MathF.Abs(divisor))
+        {
+            result = dividend;
+        }
+        else
+        {
+            result = dividend % divisor;
+            if (result == 0.0f)
+            {
+                result = MathF.CopySign(0.0f, dividend);
+            }
+        }
+
+        ctx.SetXmmRegister(
+            0,
+            unchecked((uint)BitConverter.SingleToInt32Bits(result)),
+            0);
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "JrwFIMzKNr0",
+        ExportName = "ldexp",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcLdexp(CpuContext ctx)
+    {
+        ctx.GetXmmRegister(0, out var inputBits, out _);
+        var input = BitConverter.Int64BitsToDouble(unchecked((long)inputBits));
+        var exponent = unchecked((int)(uint)ctx[CpuRegister.Rdi]);
+        var result = input;
+
+        if (exponent != 0 && input != 0.0 && double.IsFinite(input))
+        {
+            result = Math.ScaleB(input, exponent);
+            if (double.IsInfinity(result))
+            {
+                RaiseMathError(ctx, FloatingOverflow);
+            }
+            else if (result == 0.0)
+            {
+                RaiseMathError(ctx, FloatingUnderflow);
+            }
+        }
+
+        ctx.SetXmmRegister(
+            0,
+            unchecked((ulong)BitConverter.DoubleToInt64Bits(result)),
+            0);
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "kn0yiYeExgA",
+        ExportName = "ldexpf",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcLdexpf(CpuContext ctx)
+    {
+        ctx.GetXmmRegister(0, out var inputRegister, out _);
+        var inputBits = (uint)inputRegister;
+        var input = BitConverter.Int32BitsToSingle(unchecked((int)inputBits));
+        var exponent = unchecked((int)(uint)ctx[CpuRegister.Rdi]);
+        var result = exponent == 0 || input == 0.0f || !float.IsFinite(input)
+            ? input
+            : MathF.ScaleB(input, exponent);
+
+        ctx.SetXmmRegister(
+            0,
+            unchecked((uint)BitConverter.SingleToInt32Bits(result)),
+            0);
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "3+UPM-9E6xY",
+        ExportName = "modff",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcModff(CpuContext ctx)
+    {
+        ctx.GetXmmRegister(0, out var inputRegister, out _);
+        var inputBits = (uint)inputRegister;
+        SplitSingle(inputBits, out var integralBits, out var fractionalBits);
+
+        Span<byte> integralBytes = stackalloc byte[sizeof(uint)];
+        BinaryPrimitives.WriteUInt32LittleEndian(integralBytes, integralBits);
+        var integralAddress = ctx[CpuRegister.Rdi];
+        if (integralAddress == 0 || !ctx.Memory.TryWrite(integralAddress, integralBytes))
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        ctx.SetXmmRegister(0, fractionalBits, 0);
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
 
     [SysAbiExport(
         Nid = "JBcgYuW8lPU",
@@ -314,6 +509,59 @@ public static class LibcMathExports
     private static double PowTwo(double input) => Math.Pow(2.0, input);
 
     private static float PowTwo(float input) => MathF.Pow(2.0f, input);
+
+    private static void SplitSingle(
+        uint inputBits,
+        out uint integralBits,
+        out uint fractionalBits)
+    {
+        const uint signMask = 0x8000_0000U;
+        const uint exponentMask = 0x7F80_0000U;
+        const uint fractionMask = 0x007F_FFFFU;
+
+        var magnitude = inputBits & ~signMask;
+        var sign = inputBits & signMask;
+        if ((magnitude & exponentMask) == exponentMask)
+        {
+            if ((magnitude & fractionMask) != 0)
+            {
+                integralBits = inputBits;
+                fractionalBits = inputBits;
+                return;
+            }
+
+            integralBits = inputBits;
+            fractionalBits = sign;
+            return;
+        }
+
+        var unbiasedExponent = (int)((magnitude & exponentMask) >> 23) - 127;
+        if (unbiasedExponent < 0)
+        {
+            integralBits = sign;
+            fractionalBits = inputBits;
+            return;
+        }
+
+        if (unbiasedExponent >= 23)
+        {
+            integralBits = inputBits;
+            fractionalBits = sign;
+            return;
+        }
+
+        var fractionalMask = (1U << (23 - unbiasedExponent)) - 1U;
+        integralBits = inputBits & ~fractionalMask;
+        if (integralBits == inputBits)
+        {
+            fractionalBits = sign;
+            return;
+        }
+
+        var input = BitConverter.Int32BitsToSingle(unchecked((int)inputBits));
+        var integral = BitConverter.Int32BitsToSingle(unchecked((int)integralBits));
+        fractionalBits = unchecked((uint)BitConverter.SingleToInt32Bits(input - integral));
+    }
 
     private static uint LogDoubleError(double input)
     {

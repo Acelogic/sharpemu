@@ -22,6 +22,13 @@ public sealed class LibcMathExportsTests
 
     public static IEnumerable<object[]> ExportCases()
     {
+        yield return new object[] { "rDMyAf1Jhug", "__isinff" };
+        yield return new object[] { "lA94ZgT+vMM", "__isnanf" };
+        yield return new object[] { "pKwslsMUmSk", "fmod" };
+        yield return new object[] { "88Vv-AzHVj8", "fmodf" };
+        yield return new object[] { "JrwFIMzKNr0", "ldexp" };
+        yield return new object[] { "kn0yiYeExgA", "ldexpf" };
+        yield return new object[] { "3+UPM-9E6xY", "modff" };
         yield return new object[] { "JBcgYuW8lPU", "acos" };
         yield return new object[] { "7Ly52zaL44Q", "asin" };
         yield return new object[] { "GZWjF-YIFFk", "asinf" };
@@ -408,6 +415,243 @@ public sealed class LibcMathExportsTests
         AssertNoError(memory, context);
     }
 
+    [Fact]
+    public void FloatClassification_UsesRawBitsWithoutRaising()
+    {
+        var infinityCases = new[]
+        {
+            (Bits: 0x7F80_0000U, Expected: 1UL),
+            (Bits: 0xFF80_0000U, Expected: 1UL),
+            (Bits: 0x7FC1_2345U, Expected: 0UL),
+            (Bits: 0x3F80_0000U, Expected: 0UL),
+        };
+        foreach (var testCase in infinityCases)
+        {
+            var (memory, context) = CreateContext();
+            SetSingleBits(context, 0, testCase.Bits);
+
+            Assert.Equal(
+                OrbisGen2Result.ORBIS_GEN2_OK,
+                DispatchRaw("rDMyAf1Jhug", "__isinff", context));
+
+            Assert.Equal(testCase.Expected, context[CpuRegister.Rax]);
+            AssertXmmSingleBits(context, testCase.Bits);
+            AssertNoError(memory, context);
+        }
+
+        var nanCases = new[]
+        {
+            (Bits: 0x7FC1_2345U, Expected: 1UL),
+            (Bits: 0x7F81_2345U, Expected: 1UL),
+            (Bits: 0x7F80_0000U, Expected: 0UL),
+            (Bits: 0xBF80_0000U, Expected: 0UL),
+        };
+        foreach (var testCase in nanCases)
+        {
+            var (memory, context) = CreateContext();
+            SetSingleBits(context, 0, testCase.Bits);
+
+            Assert.Equal(
+                OrbisGen2Result.ORBIS_GEN2_OK,
+                DispatchRaw("lA94ZgT+vMM", "__isnanf", context));
+
+            Assert.Equal(testCase.Expected, context[CpuRegister.Rax]);
+            AssertXmmSingleBits(context, testCase.Bits);
+            AssertNoError(memory, context);
+        }
+    }
+
+    [Fact]
+    public void Fmod_PreservesFirmwareSpecialCasesAndSignedZero()
+    {
+        var (memory, context) = CreateContext();
+        SetDouble(context, 0, -6.0);
+        SetDouble(context, 1, 3.0);
+
+        Dispatch("pKwslsMUmSk", "fmod", context);
+
+        Assert.Equal(0x8000_0000_0000_0000UL, ReadDoubleBits(context));
+        AssertNoError(memory, context);
+
+        (memory, context) = CreateContext();
+        const ulong smallBits = 0xBFD0_0000_0000_0000UL;
+        SetDoubleBits(context, 0, smallBits);
+        SetDouble(context, 1, double.PositiveInfinity);
+
+        Dispatch("pKwslsMUmSk", "fmod", context);
+
+        Assert.Equal(smallBits, ReadDoubleBits(context));
+        AssertNoError(memory, context);
+
+        (memory, context) = CreateContext();
+        const uint smallSingleBits = 0xBE80_0000U;
+        SetSingleBits(context, 0, smallSingleBits);
+        SetSingle(context, 1, 2.0f);
+
+        Dispatch("88Vv-AzHVj8", "fmodf", context);
+
+        Assert.Equal(smallSingleBits, ReadSingleBits(context));
+        AssertNoError(memory, context);
+    }
+
+    [Fact]
+    public void Fmod_InvalidInputsRaiseDomainAndInvalid()
+    {
+        var doubleCases = new[]
+        {
+            (Dividend: double.PositiveInfinity, Divisor: 2.0),
+            (Dividend: 2.0, Divisor: 0.0),
+            (Dividend: 2.0, Divisor: double.NaN),
+        };
+        foreach (var testCase in doubleCases)
+        {
+            var (memory, context) = CreateContext();
+            SetDouble(context, 0, testCase.Dividend);
+            SetDouble(context, 1, testCase.Divisor);
+
+            Dispatch("pKwslsMUmSk", "fmod", context);
+
+            Assert.True(double.IsNaN(ReadDouble(context)));
+            AssertError(memory, context, ErrnoDomain, FloatingInvalid);
+        }
+
+        var (singleMemory, singleContext) = CreateContext();
+        SetSingle(singleContext, 0, 2.0f);
+        SetSingleBits(singleContext, 1, 0x7FC1_2345U);
+
+        Dispatch("88Vv-AzHVj8", "fmodf", singleContext);
+
+        Assert.True(float.IsNaN(ReadSingle(singleContext)));
+        AssertError(singleMemory, singleContext, ErrnoDomain, FloatingInvalid);
+    }
+
+    [Fact]
+    public void Ldexp_RaisesOnlyForOverflowAndUnderflowToZero()
+    {
+        var (memory, context) = CreateContext();
+        SetDouble(context, double.MaxValue);
+        context[CpuRegister.Rdi] = 1;
+
+        Dispatch("JrwFIMzKNr0", "ldexp", context);
+
+        Assert.True(double.IsPositiveInfinity(ReadDouble(context)));
+        AssertError(memory, context, ErrnoRange, FloatingOverflowAndInexact);
+
+        (memory, context) = CreateContext();
+        SetDouble(context, -double.Epsilon);
+        context[CpuRegister.Rdi] = unchecked((uint)-1);
+
+        Dispatch("JrwFIMzKNr0", "ldexp", context);
+
+        Assert.Equal(0x8000_0000_0000_0000UL, ReadDoubleBits(context));
+        AssertError(memory, context, ErrnoRange, FloatingUnderflowAndInexact);
+
+        (memory, context) = CreateContext();
+        SetDouble(context, double.Epsilon);
+        context[CpuRegister.Rdi] = 1;
+
+        Dispatch("JrwFIMzKNr0", "ldexp", context);
+
+        Assert.Equal(2UL, ReadDoubleBits(context));
+        AssertNoError(memory, context);
+    }
+
+    [Fact]
+    public void Ldexp_PreservesExpZeroAndLdexpfDoesNotInventErrno()
+    {
+        var (memory, context) = CreateContext();
+        const ulong nanPayload = 0x7FF8_1234_5678_9ABCUL;
+        SetDoubleBits(context, 0, nanPayload);
+        context[CpuRegister.Rdi] = 0;
+
+        Dispatch("JrwFIMzKNr0", "ldexp", context);
+
+        Assert.Equal(nanPayload, ReadDoubleBits(context));
+        AssertNoError(memory, context);
+
+        (memory, context) = CreateContext();
+        SetSingle(context, float.MaxValue);
+        context[CpuRegister.Rdi] = 1;
+
+        Dispatch("kn0yiYeExgA", "ldexpf", context);
+
+        Assert.True(float.IsPositiveInfinity(ReadSingle(context)));
+        AssertNoError(memory, context);
+
+        (memory, context) = CreateContext();
+        const uint negativeZero = 0x8000_0000U;
+        SetSingleBits(context, 0, negativeZero);
+        context[CpuRegister.Rdi] = 123;
+
+        Dispatch("kn0yiYeExgA", "ldexpf", context);
+
+        Assert.Equal(negativeZero, ReadSingleBits(context));
+        AssertNoError(memory, context);
+    }
+
+    [Fact]
+    public void Modff_WritesIntegralPartAndPreservesSpecialBits()
+    {
+        var (memory, context) = CreateContext();
+        var outputAddress = MemoryBase + 0x100;
+        SetSingle(context, -3.75f);
+        context[CpuRegister.Rdi] = outputAddress;
+
+        Dispatch("3+UPM-9E6xY", "modff", context);
+
+        Assert.Equal(-3.0f, ReadSingleAt(memory, outputAddress));
+        Assert.Equal(-0.75f, ReadSingle(context));
+        AssertNoError(memory, context);
+
+        (memory, context) = CreateContext();
+        SetSingle(context, -2.0f);
+        context[CpuRegister.Rdi] = outputAddress;
+
+        Dispatch("3+UPM-9E6xY", "modff", context);
+
+        Assert.Equal(0xC000_0000U, ReadUInt32(memory, outputAddress));
+        Assert.Equal(0x8000_0000U, ReadSingleBits(context));
+
+        (memory, context) = CreateContext();
+        SetSingle(context, float.NegativeInfinity);
+        context[CpuRegister.Rdi] = outputAddress;
+
+        Dispatch("3+UPM-9E6xY", "modff", context);
+
+        Assert.Equal(0xFF80_0000U, ReadUInt32(memory, outputAddress));
+        Assert.Equal(0x8000_0000U, ReadSingleBits(context));
+
+        (memory, context) = CreateContext();
+        const uint quietNanPayload = 0x7FC1_2345U;
+        SetSingleBits(context, 0, quietNanPayload);
+        context[CpuRegister.Rdi] = outputAddress;
+
+        Dispatch("3+UPM-9E6xY", "modff", context);
+
+        Assert.Equal(quietNanPayload, ReadUInt32(memory, outputAddress));
+        Assert.Equal(quietNanPayload, ReadSingleBits(context));
+    }
+
+    [Fact]
+    public void Modff_UnmappedOutputIsMemoryFault()
+    {
+        var (_, context) = CreateContext();
+        SetSingle(context, 1.5f);
+        context[CpuRegister.Rdi] = 0xDEAD_BEEF;
+
+        Assert.Equal(
+            OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+            DispatchRaw("3+UPM-9E6xY", "modff", context));
+
+        (_, context) = CreateContext();
+        SetSingle(context, 1.5f);
+        context[CpuRegister.Rdi] = 0;
+
+        Assert.Equal(
+            OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+            DispatchRaw("3+UPM-9E6xY", "modff", context));
+    }
+
     private static ModuleManager CreateManager()
     {
         var manager = new ModuleManager();
@@ -430,21 +674,33 @@ public sealed class LibcMathExportsTests
 
     private static void Dispatch(string nid, string name, CpuContext context)
     {
+        var result = DispatchRaw(nid, name, context);
+        Assert.Equal(OrbisGen2Result.ORBIS_GEN2_OK, result);
+        Assert.Equal(0UL, context[CpuRegister.Rax]);
+    }
+
+    private static OrbisGen2Result DispatchRaw(string nid, string name, CpuContext context)
+    {
         var manager = CreateManager();
         Assert.True(manager.TryGetExport(nid, out var export));
         Assert.Equal(name, export.Name);
         Assert.Equal("libc", export.LibraryName);
         Assert.Equal(Generation.Gen5, export.Target);
         Assert.True(manager.TryDispatch(nid, context, out var result));
-        Assert.Equal(OrbisGen2Result.ORBIS_GEN2_OK, result);
-        Assert.Equal(0UL, context[CpuRegister.Rax]);
+        return result;
     }
 
     private static void SetDouble(CpuContext context, double value) =>
+        SetDouble(context, 0, value);
+
+    private static void SetDouble(CpuContext context, int register, double value) =>
         context.SetXmmRegister(
-            0,
+            register,
             unchecked((ulong)BitConverter.DoubleToInt64Bits(value)),
             ulong.MaxValue);
+
+    private static void SetDoubleBits(CpuContext context, int register, ulong bits) =>
+        context.SetXmmRegister(register, bits, ulong.MaxValue);
 
     private static double ReadDouble(CpuContext context)
     {
@@ -453,11 +709,24 @@ public sealed class LibcMathExportsTests
         return BitConverter.Int64BitsToDouble(unchecked((long)low));
     }
 
+    private static ulong ReadDoubleBits(CpuContext context)
+    {
+        context.GetXmmRegister(0, out var low, out var high);
+        Assert.Equal(0UL, high);
+        return low;
+    }
+
     private static void SetSingle(CpuContext context, float value) =>
+        SetSingle(context, 0, value);
+
+    private static void SetSingle(CpuContext context, int register, float value) =>
         context.SetXmmRegister(
-            0,
+            register,
             unchecked((uint)BitConverter.SingleToInt32Bits(value)) | 0xFFFF_FFFF_0000_0000UL,
             ulong.MaxValue);
+
+    private static void SetSingleBits(CpuContext context, int register, uint bits) =>
+        context.SetXmmRegister(register, bits | 0xFFFF_FFFF_0000_0000UL, ulong.MaxValue);
 
     private static float ReadSingle(CpuContext context)
     {
@@ -466,6 +735,32 @@ public sealed class LibcMathExportsTests
         Assert.Equal(0UL, high);
         return BitConverter.Int32BitsToSingle(unchecked((int)(uint)low));
     }
+
+    private static uint ReadSingleBits(CpuContext context)
+    {
+        context.GetXmmRegister(0, out var low, out var high);
+        Assert.Equal(0UL, low >> 32);
+        Assert.Equal(0UL, high);
+        return (uint)low;
+    }
+
+    private static void AssertXmmSingleBits(CpuContext context, uint expected)
+    {
+        context.GetXmmRegister(0, out var low, out var high);
+        Assert.Equal(expected, (uint)low);
+        Assert.Equal(0xFFFF_FFFFU, (uint)(low >> 32));
+        Assert.Equal(ulong.MaxValue, high);
+    }
+
+    private static uint ReadUInt32(FakeCpuMemory memory, ulong address)
+    {
+        Span<byte> bytes = stackalloc byte[sizeof(uint)];
+        Assert.True(memory.TryRead(address, bytes));
+        return BinaryPrimitives.ReadUInt32LittleEndian(bytes);
+    }
+
+    private static float ReadSingleAt(FakeCpuMemory memory, ulong address) =>
+        BitConverter.Int32BitsToSingle(unchecked((int)ReadUInt32(memory, address)));
 
     private static bool IsPositiveZero(double value) =>
         unchecked((ulong)BitConverter.DoubleToInt64Bits(value)) == 0;
