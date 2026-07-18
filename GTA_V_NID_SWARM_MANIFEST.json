@@ -7444,48 +7444,85 @@
       "observations": [
         {
           "game": "Grand Theft Auto V",
-          "calls": 0,
-          "source": "GTA_V_UNCOVERED_NIDS.csv static import audit",
-          "importing_image": null,
-          "call_sites": [],
-          "run_configuration": null
+          "calls": 1,
+          "source": "GTA V x64 unresolved-import runtime trace",
+          "importing_image": "eboot.bin",
+          "call_sites": [
+            "return 0x00000008029574A5; TEST EAX and INT 0x41 at 0x00000008029574A9"
+          ],
+          "run_configuration": "x64 GTA V trace after the direct-memory-query fix"
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
-        "calls": 0,
-        "criticality": "unknown",
+        "calls": 1,
+        "criticality": "fatal",
         "cross_game_fanout": 1,
-        "dependency_order": null,
-        "rationale": null
+        "dependency_order": 37976,
+        "rationale": "GTA tests EAX immediately and executes INT 0x41 when the import returns nonzero"
       },
       "evidence": {
         "aerolib_name": "sceAgcDriverSetTFRing",
-        "binary_hash": null,
-        "reference_functions": [],
-        "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "binary_hash": "bc2ca28f3632ce69e25ab44991ed1f49bc1624fe39c2fc81f2efc6e705876348",
+        "reference_functions": [
+          "libSceAgcDriver.sprx export 0x6FF0",
+          "selected callback 0x6F90",
+          "validation/ioctl helper 0x9C20",
+          "interface initializer 0x1D0"
+        ],
+        "call_sites": [
+          "GTA runtime return 0x00000008029574A5"
+        ],
+        "confidence": "high",
+        "conflicts": [
+          "the process-query dependency name and kernel-driver effects beyond validated ring registration remain opaque; neither is fabricated"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
-        "ownership": [],
-        "synchronization": []
+        "signature": "int32 sceAgcDriverSetTFRing(uint64 ringAddress, uint32 requestedSize)",
+        "returns": [
+          "0 on accepted TF-ring registration",
+          "0x8A6DFFFF on address, effective-size, or driver rejection"
+        ],
+        "output_writes": [
+          "none"
+        ],
+        "validation_rules": [
+          "the emulated base-Prospero path clamps requestedSize to 0x4000 before validation",
+          "ringAddress must be nonzero and 256-byte aligned before the effective size is checked",
+          "effective size must be divisible by four"
+        ],
+        "state_transitions": [
+          "success records the effective TF-ring address and size; failure preserves prior state"
+        ],
+        "ownership": [
+          "the guest owns the ring memory; SharpEmu records only validated registration metadata"
+        ],
+        "synchronization": [
+          "SubmittedGpuState.Gate serializes TF-ring replacement and observation"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/Developer/sharpemu-gta-v-agcdriver-tfring",
+        "branch": "codex/gta-v-agcdriver-tfring",
+        "commit": "b1bdd3dbffb073d1cf4a947c70f0eeff2027efdc",
+        "files": [
+          "src/SharpEmu.Libs/Agc/AgcExports.cs",
+          "tests/SharpEmu.Libs.Tests/Agc/AgcDriverTfRingTests.cs",
+          "docs/gta-v/agcdriver-settfring-ghidra.md",
+          "docs/gta-v/agcdriver-settfring-contract.json"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "8/8 focused tests, 720/720 library tests, 33/33 source-generator tests, 34/34 shader tests, and clean Release build passed",
+        "integration": "8/8 focused, 739/739 library, 33/33 source-generator, 34/34 shader tests, and Release build with 0 warnings/errors passed on codex/gta-v-nids; x64 GTA runtime cleared the former TFRing fatal gate",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": true,
+            "run": "x64 runtime advanced from the former return at 0x80029574A5 to the later MM4IZSEYytQ gate at 0x8002957516"
+          }
+        ]
       },
       "blockers": []
     },
@@ -15229,7 +15266,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -15239,31 +15276,58 @@
       },
       "evidence": {
         "aerolib_name": "strtoull",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370",
+        "reference_functions": [
+          "libSceLibcInternal.sprx public wrapper 0x6FAC0",
+          "libSceLibcInternal.sprx internal parser 0x3FF30"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
+        "confidence": "high",
         "conflicts": []
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
-        "ownership": [],
+        "signature": "uint64 strtoull(const char *input, char **endptr, int base)",
+        "returns": [
+          "parsed unsigned value, including unsigned wrapping for a negative non-overflowing subject sequence",
+          "UINT64_MAX on overflow and 0 when no conversion or an invalid base is supplied"
+        ],
+        "output_writes": [
+          "endptr receives the first unconsumed byte, or the original input when no conversion occurs",
+          "invalid base publishes EINVAL after endptr; overflow publishes ERANGE before endptr and again through the public wrapper afterward"
+        ],
+        "validation_rules": [
+          "base must be 0 or 2 through 36",
+          "leading whitespace is exactly ASCII 0x09 through 0x0D and 0x20",
+          "base 0 detects octal and hexadecimal prefixes; explicit base 16 accepts a hexadecimal prefix",
+          "guest read, endptr write, or errno/TLS write faults return MEMORY_FAULT in firmware order"
+        ],
+        "state_transitions": [
+          "errno is unchanged on ordinary success and no-conversion; it becomes EINVAL or ERANGE on the corresponding failures"
+        ],
+        "ownership": [
+          "all strings and endptr storage remain guest-owned"
+        ],
         "synchronization": []
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/Developer/sharpemu-gta-v-libc-deferred",
+        "branch": "codex/gta-v-libc-deferred",
+        "commit": "f72fd3907b1b3578856718b96eafad34c2ef3dfb",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcSearchAndConversionExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcSearchAndConversionExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "18/18 focused tests, 730/730 library tests, 33/33 source-generator tests, 34/34 shader tests, and clean Release build passed",
+        "integration": "18/18 focused, 739/739 library, 33/33 source-generator, 34/34 shader tests, and Release build with 0 warnings/errors passed on codex/gta-v-nids",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },
@@ -16222,7 +16286,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -16232,31 +16296,55 @@
       },
       "evidence": {
         "aerolib_name": "bsearch",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370",
+        "reference_functions": [
+          "libSceLibcInternal.sprx export 0x67A20"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
+        "confidence": "high",
         "conflicts": []
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
+        "signature": "void *bsearch(const void *key, const void *base, size_t count, size_t size, int (*compare)(const void *, const void *))",
+        "returns": [
+          "matching element address or null when the range is empty or no element compares equal"
+        ],
+        "output_writes": [
+          "none by bsearch; the guest comparator may have its own side effects"
+        ],
+        "validation_rules": [
+          "an empty range returns null without touching key, base, size, or comparator",
+          "candidate selection uses count divided by two and firmware unchecked pointer arithmetic",
+          "the guest comparator result is interpreted as signed int32 and its negative, zero, and positive branches preserve firmware order",
+          "a guest callback failure returns CPU_TRAP"
+        ],
         "state_transitions": [],
-        "ownership": [],
-        "synchronization": []
+        "ownership": [
+          "the guest owns the key, element array, and comparator code"
+        ],
+        "synchronization": [
+          "guest callback execution is delegated through GuestThreadExecution.Scheduler"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/Developer/sharpemu-gta-v-libc-deferred",
+        "branch": "codex/gta-v-libc-deferred",
+        "commit": "f72fd3907b1b3578856718b96eafad34c2ef3dfb",
+        "files": [
+          "src/SharpEmu.Libs/Kernel/LibcSearchAndConversionExports.cs",
+          "tests/SharpEmu.Libs.Tests/Kernel/LibcSearchAndConversionExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
-        "games": []
+        "branch": "18/18 focused tests, 730/730 library tests, 33/33 source-generator tests, 34/34 shader tests, and clean Release build passed",
+        "integration": "18/18 focused, 739/739 library, 33/33 source-generator, 34/34 shader tests, and Release build with 0 warnings/errors passed on codex/gta-v-nids",
+        "games": [
+          {
+            "game": "Grand Theft Auto V",
+            "passed": null,
+            "run": "static import; runtime invocation not yet established"
+          }
+        ]
       },
       "blockers": []
     },

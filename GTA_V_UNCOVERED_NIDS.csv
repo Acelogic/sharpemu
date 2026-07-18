@@ -139,7 +139,6 @@ AgcDriver,0,SAfhzJPcjuk,sceAgcDriverRequestCaptureStart,libSceAgcDriver,libSceAg
 AgcDriver,0,FOwvmNlFLjM,sceAgcDriverRequestCaptureStop,libSceAgcDriver,libSceAgcDriver,eboot.bin;sce_module/libSceJobManager.prx,function,true,2,static_import,615bae08c2613b6b8363203b8c40f58e2bf6eac6
 AgcDriver,0,MM4IZSEYytQ,sceAgcDriverSetHsOffchipParam,libSceAgcDriver,libSceAgcDriver,eboot.bin,function,true,1,static_import,615bae08c2613b6b8363203b8c40f58e2bf6eac6
 AgcDriver,0,VOMSpd9+vxU,sceAgcDriverSetResourceUserData,libSceAgcDriver,libSceAgcDriver,eboot.bin,function,true,1,static_import,615bae08c2613b6b8363203b8c40f58e2bf6eac6
-AgcDriver,0,XlNp7jzGiPo,sceAgcDriverSetTFRing,libSceAgcDriver,libSceAgcDriver,eboot.bin,function,true,1,static_import,615bae08c2613b6b8363203b8c40f58e2bf6eac6
 AgcDriver,0,HF3YllT3mXU,sceAgcDriverSubmitMultiAcbs,libSceAgcDriver,libSceAgcDriver,eboot.bin;sce_module/libSceJobManager.prx,function,true,2,static_import,615bae08c2613b6b8363203b8c40f58e2bf6eac6
 AgcDriver,0,Xq5WmbwPTnQ,sceAgcDriverTriggerCapture,libSceAgcDriver,libSceAgcDriver,eboot.bin;sce_module/libSceJobManager.prx,function,true,2,static_import,615bae08c2613b6b8363203b8c40f58e2bf6eac6
 AgcDriver,0,SCoAN5fYlUM,sceAgcDriverUnregisterAllResourcesForOwner,libSceAgcDriver,libSceAgcDriver,eboot.bin,function,true,1,static_import,615bae08c2613b6b8363203b8c40f58e2bf6eac6
@@ -281,7 +280,6 @@ Libc,0,ozMAr28BwSY,_ZSt14_Xout_of_rangePKc,libc,libc,eboot.bin,function,true,1,s
 Libc,0,HUbZmOnT-Dg,atan2,libc,libc,eboot.bin,function,true,1,static_import,615bae08c2613b6b8363203b8c40f58e2bf6eac6
 Libc,0,EH-x713A99c,atan2f,libc,libc,eboot.bin,function,true,1,static_import,615bae08c2613b6b8363203b8c40f58e2bf6eac6
 Libc,0,SRI6S9B+-a4,atof,libc,libc,eboot.bin,function,true,1,static_import,615bae08c2613b6b8363203b8c40f58e2bf6eac6
-Libc,0,NesIgTmfF0Q,bsearch,libc,libc,eboot.bin,function,true,1,static_import,615bae08c2613b6b8363203b8c40f58e2bf6eac6
 Libc,0,5bBacGLyLOs,gmtime_s,libc,libc,eboot.bin,function,true,1,static_import,615bae08c2613b6b8363203b8c40f58e2bf6eac6
 Libc,0,0hlfW1O4Aa4,localeconv,libc,libc,eboot.bin,function,true,1,static_import,615bae08c2613b6b8363203b8c40f58e2bf6eac6
 Libc,0,fiiNDnNBKVY,localtime_s,libc,libc,eboot.bin,function,true,1,static_import,615bae08c2613b6b8363203b8c40f58e2bf6eac6
@@ -292,7 +290,6 @@ Libc,0,1D0H2KNjshE,powf,libc,libc,eboot.bin,function,true,1,static_import,615bae
 Libc,0,jMB7EFyu30Y,sincos,libc,libc,eboot.bin,function,true,1,static_import,615bae08c2613b6b8363203b8c40f58e2bf6eac6
 Libc,0,24m4Z4bUaoY,sscanf_s,libc,libc,eboot.bin,function,true,1,static_import,615bae08c2613b6b8363203b8c40f58e2bf6eac6
 Libc,0,2vDqwBlpF-o,strtod,libc,libc,eboot.bin,function,true,1,static_import,615bae08c2613b6b8363203b8c40f58e2bf6eac6
-Libc,0,5OqszGpy7Mg,strtoull,libc,libc,eboot.bin,function,true,1,static_import,615bae08c2613b6b8363203b8c40f58e2bf6eac6
 Libc,0,SAd0Z3wKwLA,tanhf,libc,libc,eboot.bin,function,true,1,static_import,615bae08c2613b6b8363203b8c40f58e2bf6eac6
 Libc,0,+qitMEbkSWk,vsprintf_s,libc,libc,eboot.bin,function,true,1,static_import,615bae08c2613b6b8363203b8c40f58e2bf6eac6
 LibcInternal,0,ZT4ODD2Ts9o,Need_sceLibcInternal,libSceLibcInternal,libSceLibcInternal,sce_module/libSceJobManager.prx;sce_module/libSceNpCppWebApi.prx,object,true,2,static_import,615bae08c2613b6b8363203b8c40f58e2bf6eac6
