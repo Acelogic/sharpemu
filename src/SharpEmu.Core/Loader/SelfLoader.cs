@@ -453,7 +453,7 @@ public sealed class SelfLoader : ISelfLoader
 
             var sourceOffset = header.FileSize == 0
                 ? 0UL
-                : ResolvePhysicalSegmentOffset(imageData.Length, loadContext, header, index);
+                : ResolvePhysicalSegmentOffset(imageData.Length, loadContext, programHeaders, header, index);
 
             var virtualAddress = header.VirtualAddress + imageBase;
 
@@ -575,6 +575,7 @@ public sealed class SelfLoader : ISelfLoader
         if (!TryLoadDynamicTableBytes(
                 imageData,
                 loadContext,
+                programHeaders,
                 virtualMemory,
                 imageBase,
                 dynamicHeader,
@@ -1235,6 +1236,7 @@ public sealed class SelfLoader : ISelfLoader
         if (!TryLoadDynamicTableBytes(
                 imageData,
                 loadContext,
+                programHeaders,
                 virtualMemory,
                 imageBase,
                 dynamicHeader,
@@ -1466,6 +1468,7 @@ public sealed class SelfLoader : ISelfLoader
         if (!TryLoadDynamicTableBytes(
                 imageData,
                 loadContext,
+                programHeaders,
                 virtualMemory,
                 imageBase,
                 dynamicHeader,
@@ -1610,6 +1613,7 @@ public sealed class SelfLoader : ISelfLoader
     private static bool TryLoadDynamicTableBytes(
         ReadOnlySpan<byte> imageData,
         LoadContext loadContext,
+        IReadOnlyList<ProgramHeader> programHeaders,
         IVirtualMemory virtualMemory,
         ulong imageBase,
         ProgramHeader dynamicHeader,
@@ -1628,7 +1632,12 @@ public sealed class SelfLoader : ISelfLoader
             return true;
         }
 
-        var dynamicOffset = ResolvePhysicalSegmentOffset(imageData.Length, loadContext, dynamicHeader, dynamicHeaderIndex);
+        var dynamicOffset = ResolvePhysicalSegmentOffset(
+            imageData.Length,
+            loadContext,
+            programHeaders,
+            dynamicHeader,
+            dynamicHeaderIndex);
         if (!TrySlice(imageData, dynamicOffset, dynamicHeader.FileSize, out dynamicTable))
         {
             dynamicTable = default;
@@ -2495,7 +2504,12 @@ public sealed class SelfLoader : ISelfLoader
         return true;
     }
 
-    private static ulong ResolvePhysicalSegmentOffset(int imageLength, LoadContext loadContext, ProgramHeader header, int headerIndex)
+    private static ulong ResolvePhysicalSegmentOffset(
+        int imageLength,
+        LoadContext loadContext,
+        IReadOnlyList<ProgramHeader> programHeaders,
+        ProgramHeader header,
+        int headerIndex)
     {
         if (!loadContext.IsSelf)
         {
@@ -2510,22 +2524,56 @@ public sealed class SelfLoader : ISelfLoader
                 out var offset,
                 out var resolveStatus))
         {
+            if (resolveStatus != SelfSegmentResolveStatus.NotFound)
+            {
+                throw CreateUnresolvedSelfSegmentException(headerIndex, resolveStatus);
+            }
+
+            if (TryResolveSelfContainingSegmentOffset(
+                    imageLength,
+                    loadContext.SelfSegments,
+                    programHeaders,
+                    header,
+                    headerIndex,
+                    out offset,
+                    out resolveStatus))
+            {
+                return offset;
+            }
+
+            // Do not let a raw ELF-relative fallback bypass an identified
+            // unavailable, encrypted, or compressed enclosing payload. The
+            // direct resolver still accepts an on-disk dumped payload via
+            // ResolvedDumped.
+            if (resolveStatus != SelfSegmentResolveStatus.NotFound)
+            {
+                throw CreateUnresolvedSelfSegmentException(headerIndex, resolveStatus);
+            }
+
             if (TryResolveSelfFallbackOffset(imageLength, loadContext, header, out var fallbackOffset))
             {
                 return fallbackOffset;
-            }
-
-            if (resolveStatus is SelfSegmentResolveStatus.Encrypted or SelfSegmentResolveStatus.Compressed)
-            {
-                throw new NotSupportedException(
-                    $"SELF segment for program header {headerIndex} is marked as {resolveStatus.ToString().ToLowerInvariant()} and no dumped payload could be resolved. " +
-                    "Runtime decryption is not implemented yet. Use a decrypted ELF/FSELF image.");
             }
 
             throw new NotSupportedException($"SELF segment mapping for program header {headerIndex} could not be resolved.");
         }
 
         return offset;
+    }
+
+    private static NotSupportedException CreateUnresolvedSelfSegmentException(
+        int headerIndex,
+        SelfSegmentResolveStatus resolveStatus)
+    {
+        if (resolveStatus == SelfSegmentResolveStatus.Unavailable)
+        {
+            return new NotSupportedException(
+                $"SELF segment mapping for program header {headerIndex} points outside the available payload.");
+        }
+
+        return new NotSupportedException(
+            $"SELF segment for program header {headerIndex} is marked as {resolveStatus.ToString().ToLowerInvariant()} and no dumped payload could be resolved. " +
+            "Runtime decryption is not implemented yet. Use a decrypted ELF/FSELF image.");
     }
 
     private static bool TryResolveSelfFallbackOffset(
@@ -2611,7 +2659,9 @@ public sealed class SelfLoader : ISelfLoader
 
             if (!TryIsInRange(imageLength, segment.Offset, header.FileSize))
             {
-                continue;
+                offset = 0;
+                status = SelfSegmentResolveStatus.Unavailable;
+                return false;
             }
 
             offset = segment.Offset;
@@ -2622,6 +2672,78 @@ public sealed class SelfLoader : ISelfLoader
         offset = 0;
         status = SelfSegmentResolveStatus.NotFound;
         return false;
+    }
+
+    private static bool TryResolveSelfContainingSegmentOffset(
+        int imageLength,
+        IReadOnlyList<SelfSegment> selfSegments,
+        IReadOnlyList<ProgramHeader> programHeaders,
+        ProgramHeader requestedHeader,
+        int requestedHeaderIndex,
+        out ulong offset,
+        out SelfSegmentResolveStatus status)
+    {
+        offset = 0;
+        status = SelfSegmentResolveStatus.NotFound;
+
+        if (!TryGetRangeEnd(requestedHeader.Offset, requestedHeader.FileSize, out var requestedEnd))
+        {
+            return false;
+        }
+
+        foreach (var segment in selfSegments)
+        {
+            if (!segment.IsBlocked || segment.ProgramHeaderId >= (ulong)programHeaders.Count)
+            {
+                continue;
+            }
+
+            var containerIndex = (int)segment.ProgramHeaderId;
+            if (containerIndex == requestedHeaderIndex)
+            {
+                continue;
+            }
+
+            var containerHeader = programHeaders[containerIndex];
+            if (!TryGetRangeEnd(containerHeader.Offset, containerHeader.FileSize, out var containerEnd) ||
+                requestedHeader.Offset < containerHeader.Offset ||
+                requestedEnd > containerEnd)
+            {
+                continue;
+            }
+
+            if (!TryResolveSelfSegmentOffset(
+                    imageLength,
+                    selfSegments,
+                    containerHeader,
+                    containerIndex,
+                    out var containerOffset,
+                    out var containerStatus))
+            {
+                status = containerStatus;
+                return false;
+            }
+
+            var delta = requestedHeader.Offset - containerHeader.Offset;
+            var candidateOffset = containerOffset + delta;
+            if (!TryIsInRange(imageLength, candidateOffset, requestedHeader.FileSize))
+            {
+                status = SelfSegmentResolveStatus.Unavailable;
+                return false;
+            }
+
+            offset = candidateOffset;
+            status = containerStatus;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryGetRangeEnd(ulong offset, ulong size, out ulong end)
+    {
+        end = offset + size;
+        return end >= offset;
     }
 
     private static void ValidateElfHeader(ElfHeader header)
@@ -2773,6 +2895,7 @@ public sealed class SelfLoader : ISelfLoader
         ResolvedDumped = 2,
         Encrypted = 3,
         Compressed = 4,
+        Unavailable = 5,
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
