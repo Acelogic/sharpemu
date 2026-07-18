@@ -121,6 +121,64 @@ public sealed class KernelMemoryCompatExportsTests
     }
 
     [Fact]
+    public void MainDirectMemoryAndMap_AcceptLibcBackedInOutPointers()
+    {
+        const ulong memoryBase = 0x1_0000_0000;
+        const ulong length = 0x4000;
+        var context = new CpuContext(new FakeCpuMemory(memoryBase, (int)length), Generation.Gen5);
+        var directAddressOut = AllocateTracked(context, sizeof(ulong));
+        var mappedAddressInOut = AllocateTracked(context, sizeof(ulong));
+        var directAddress = ulong.MaxValue;
+        var mapped = false;
+        try
+        {
+            Marshal.WriteInt64(unchecked((nint)directAddressOut), -1);
+            context[CpuRegister.Rdi] = length;
+            context[CpuRegister.Rsi] = length;
+            context[CpuRegister.Rdx] = 0x0C;
+            context[CpuRegister.Rcx] = directAddressOut;
+
+            Assert.Equal(0, KernelMemoryCompatExports.KernelAllocateMainDirectMemory(context));
+            directAddress = unchecked((ulong)Marshal.ReadInt64(unchecked((nint)directAddressOut)));
+            Assert.NotEqual(ulong.MaxValue, directAddress);
+            Assert.Equal(0UL, directAddress & (length - 1));
+
+            Marshal.WriteInt64(unchecked((nint)mappedAddressInOut), unchecked((long)memoryBase));
+            context[CpuRegister.Rdi] = mappedAddressInOut;
+            context[CpuRegister.Rsi] = length;
+            context[CpuRegister.Rdx] = 0xF2;
+            context[CpuRegister.Rcx] = 0;
+            context[CpuRegister.R8] = directAddress;
+            context[CpuRegister.R9] = length;
+
+            Assert.Equal(0, KernelMemoryCompatExports.KernelMapDirectMemory(context));
+            Assert.Equal(
+                memoryBase,
+                unchecked((ulong)Marshal.ReadInt64(unchecked((nint)mappedAddressInOut))));
+            mapped = true;
+        }
+        finally
+        {
+            if (mapped)
+            {
+                context[CpuRegister.Rdi] = memoryBase;
+                context[CpuRegister.Rsi] = length;
+                Assert.Equal(0, KernelMemoryCompatExports.KernelMunmap(context));
+            }
+
+            if (directAddress != ulong.MaxValue)
+            {
+                context[CpuRegister.Rdi] = directAddress;
+                context[CpuRegister.Rsi] = length;
+                Assert.Equal(0, KernelMemoryCompatExports.KernelReleaseDirectMemory(context));
+            }
+
+            FreeTracked(context, mappedAddressInOut);
+            FreeTracked(context, directAddressOut);
+        }
+    }
+
+    [Fact]
     public void BasicLibcCompatExports_RegisterByKnownNids()
     {
         var manager = new ModuleManager();
@@ -305,6 +363,20 @@ public sealed class KernelMemoryCompatExportsTests
     {
         Assert.True(manager.TryGetExport(nid, out var export));
         Assert.Equal(name, export.Name);
+    }
+
+    private static ulong AllocateTracked(CpuContext context, int length)
+    {
+        context[CpuRegister.Rdi] = unchecked((ulong)length);
+        Assert.Equal(0, KernelMemoryCompatExports.Malloc(context));
+        Assert.NotEqual(0UL, context[CpuRegister.Rax]);
+        return context[CpuRegister.Rax];
+    }
+
+    private static void FreeTracked(CpuContext context, ulong address)
+    {
+        context[CpuRegister.Rdi] = address;
+        Assert.Equal(0, KernelMemoryCompatExports.Free(context));
     }
 
     private static float ReadSingle(FakeCpuMemory memory, ulong address)

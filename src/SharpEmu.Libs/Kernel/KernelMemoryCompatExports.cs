@@ -3412,7 +3412,7 @@ public static partial class KernelMemoryCompatExports
         var payload = requested == 0
             ? Array.Empty<byte>()
             : GC.AllocateUninitializedArray<byte>(requested);
-        if (requested > 0 && !ctx.Memory.TryRead(bufferAddress, payload))
+        if (requested > 0 && !TryReadCompat(ctx, bufferAddress, payload))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -3885,7 +3885,7 @@ public static partial class KernelMemoryCompatExports
             }
         }
 
-        if (!ctx.TryWriteUInt64(outAddress, aligned))
+        if (!TryWriteUInt64Compat(ctx, outAddress, aligned))
         {
             TraceDirectMemoryCall(
                 ctx,
@@ -3995,7 +3995,7 @@ public static partial class KernelMemoryCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
 
-        if (!ctx.TryReadUInt64(inOutAddressPointer, out var requestedAddress))
+        if (!TryReadUInt64Compat(ctx, inOutAddressPointer, out var requestedAddress))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -4098,7 +4098,7 @@ public static partial class KernelMemoryCompatExports
         GuestImageWriteTracker.TrackConfiguredGuestMemoryRanges(
             mappedAddress,
             length);
-        if (!ctx.TryWriteUInt64(inOutAddressPointer, mappedAddress))
+        if (!TryWriteUInt64Compat(ctx, inOutAddressPointer, mappedAddress))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }

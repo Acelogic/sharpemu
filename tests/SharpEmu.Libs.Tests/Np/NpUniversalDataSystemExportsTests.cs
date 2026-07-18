@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 using SharpEmu.HLE;
+using SharpEmu.Libs.Kernel;
 using SharpEmu.Libs.Np;
 using Xunit;
 
@@ -43,6 +45,35 @@ public sealed class NpUniversalDataSystemExportsTests
         Assert.True(manager.TryGetExport("4llLk7YJRTE", out var export));
         Assert.Equal("sceNpUniversalDataSystemEventPropertyArraySetString", export.Name);
         Assert.Equal("libSceNpUniversalDataSystem", export.LibraryName);
+    }
+
+    [Fact]
+    public void CreateEvent_WritesIdToLibcBackedPointer()
+    {
+        var eventIdAddress = AllocateTracked(_ctx, sizeof(int));
+        try
+        {
+            Marshal.WriteInt32(unchecked((nint)eventIdAddress), 0);
+            _ctx[CpuRegister.Rdi] = ParametersAddress;
+            _ctx[CpuRegister.Rsi] = 0;
+            _ctx[CpuRegister.Rdx] = eventIdAddress;
+            _ctx[CpuRegister.Rcx] = 0;
+
+            Assert.Equal(
+                0,
+                NpUniversalDataSystemExports.NpUniversalDataSystemCreateEvent(_ctx));
+            var eventId = Marshal.ReadInt32(unchecked((nint)eventIdAddress));
+            Assert.True(eventId > 0);
+
+            _ctx[CpuRegister.Rdi] = unchecked((ulong)eventId);
+            Assert.Equal(
+                0,
+                NpUniversalDataSystemExports.NpUniversalDataSystemDestroyEvent(_ctx));
+        }
+        finally
+        {
+            FreeTracked(_ctx, eventIdAddress);
+        }
     }
 
     [Fact]
@@ -431,6 +462,20 @@ public sealed class NpUniversalDataSystemExportsTests
         Assert.True(_ctx.TryReadUInt64(variantAddress + 0x08, out var backingAddress));
         Assert.True(_ctx.TryReadUInt64(backingAddress + 0x18, out var stringAddress));
         return _memory.ReadCString(stringAddress);
+    }
+
+    private static ulong AllocateTracked(CpuContext context, int length)
+    {
+        context[CpuRegister.Rdi] = unchecked((ulong)length);
+        Assert.Equal(0, KernelMemoryCompatExports.Malloc(context));
+        Assert.NotEqual(0UL, context[CpuRegister.Rax]);
+        return context[CpuRegister.Rax];
+    }
+
+    private static void FreeTracked(CpuContext context, ulong address)
+    {
+        context[CpuRegister.Rdi] = address;
+        Assert.Equal(0, KernelMemoryCompatExports.Free(context));
     }
 
     private sealed class AllocatingCpuMemory : ICpuMemory, IGuestMemoryAllocator

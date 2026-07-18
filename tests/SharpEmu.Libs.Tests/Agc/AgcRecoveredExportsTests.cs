@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 using SharpEmu.HLE;
 using SharpEmu.Libs.Agc;
+using SharpEmu.Libs.Kernel;
 using Xunit;
 
 namespace SharpEmu.Libs.Tests.Agc;
@@ -52,6 +54,49 @@ public sealed class AgcRecoveredExportsTests
         Assert.Equal(0x8877_6655_4433_2211UL, ctx[CpuRegister.Rax]);
         Assert.True(ctx.WasRaxWritten);
         Assert.Equal(0, ReadByte(memory, BaseAddress + 0x20));
+    }
+
+    [Fact]
+    public void CreateShader_WritesDescriptorToLibcBackedDestination()
+    {
+        var memory = new FakeCpuMemory(BaseAddress, 0x4000);
+        var ctx = new CpuContext(memory, Generation.Gen5);
+        var header = BaseAddress + 0x100;
+        var registers = BaseAddress + 0x400;
+        var code = BaseAddress + 0x1000;
+        Span<byte> descriptor = stackalloc byte[DescriptorSize];
+        descriptor.Clear();
+        BinaryPrimitives.WriteUInt32LittleEndian(descriptor, 0x3433_3231);
+        BinaryPrimitives.WriteUInt32LittleEndian(descriptor[4..], 0x18);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            descriptor[0x20..],
+            registers - (header + 0x20));
+        descriptor[0x5A] = 0;
+        descriptor[0x5C] = 2;
+        Assert.True(memory.TryWrite(header, descriptor));
+        WriteRegisters(memory, registers, (0x20C, 0), (0x20D, 0));
+
+        var output = AllocateTracked(ctx, sizeof(ulong));
+        try
+        {
+            Marshal.WriteInt64(unchecked((nint)output), 0);
+            ctx[CpuRegister.Rdi] = output;
+            ctx[CpuRegister.Rsi] = header;
+            ctx[CpuRegister.Rdx] = code;
+
+            Assert.Equal(0, AgcExports.CreateShader(ctx));
+            Assert.Equal(
+                header,
+                unchecked((ulong)Marshal.ReadInt64(unchecked((nint)output))));
+            Assert.Equal(code, ReadUInt64(memory, header + 0x10));
+            Assert.Equal(registers, ReadUInt64(memory, header + 0x20));
+            AssertRegisterValue(memory, registers, 0, unchecked((uint)(code >> 8)));
+            AssertRegisterValue(memory, registers, 1, unchecked((uint)(code >> 40)));
+        }
+        finally
+        {
+            FreeTracked(ctx, output);
+        }
     }
 
     [Theory]
@@ -264,6 +309,20 @@ public sealed class AgcRecoveredExportsTests
         Assert.True(manager.TryGetExport(nid, out var export));
         Assert.Equal(name, export.Name);
         Assert.Equal("libSceAgc", export.LibraryName);
+    }
+
+    private static ulong AllocateTracked(CpuContext context, int length)
+    {
+        context[CpuRegister.Rdi] = unchecked((ulong)length);
+        Assert.Equal(0, KernelMemoryCompatExports.Malloc(context));
+        Assert.NotEqual(0UL, context[CpuRegister.Rax]);
+        return context[CpuRegister.Rax];
+    }
+
+    private static void FreeTracked(CpuContext context, ulong address)
+    {
+        context[CpuRegister.Rdi] = address;
+        Assert.Equal(0, KernelMemoryCompatExports.Free(context));
     }
 
     private static void WriteDescriptor(

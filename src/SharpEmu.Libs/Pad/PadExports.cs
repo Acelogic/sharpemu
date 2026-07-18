@@ -3,6 +3,7 @@
 
 using SharpEmu.HLE;
 using SharpEmu.HLE.Host;
+using SharpEmu.Libs.Kernel;
 using System.Buffers.Binary;
 using System.Diagnostics;
 
@@ -96,7 +97,7 @@ public static class PadExports
 
             Span<byte> state = stackalloc byte[2 * sizeof(uint)];
             state.Clear();
-            if (!ctx.Memory.TryWrite(stateAddress, state))
+            if (!KernelMemoryCompatExports.TryWriteCompat(ctx, stateAddress, state))
             {
                 return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
             }
@@ -122,7 +123,7 @@ public static class PadExports
                 backend.RightState == byte.MaxValue
                     ? uint.MaxValue
                     : backend.RightState);
-            return ctx.Memory.TryWrite(stateAddress, state)
+            return KernelMemoryCompatExports.TryWriteCompat(ctx, stateAddress, state)
                 ? ctx.SetReturn(0)
                 : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
@@ -316,7 +317,7 @@ public static class PadExports
         information[0x0C] = 1;
         BinaryPrimitives.WriteInt32LittleEndian(information[0x10..], 0);
 
-        return ctx.Memory.TryWrite(informationAddress, information)
+        return KernelMemoryCompatExports.TryWriteCompat(ctx, informationAddress, information)
             ? ctx.SetReturn(0)
             : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
     }
@@ -357,7 +358,7 @@ public static class PadExports
         information[0x1D] = 1;   // connected (ext)
         information[0x1E] = 0;   // connectionType: local
 
-        return ctx.Memory.TryWrite(informationAddress, information)
+        return KernelMemoryCompatExports.TryWriteCompat(ctx, informationAddress, information)
             ? ctx.SetReturn(0)
             : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
     }
@@ -441,7 +442,7 @@ public static class PadExports
         }
 
         Span<byte> parameter = stackalloc byte[120];
-        if (!ctx.Memory.TryRead(parameterAddress, parameter))
+        if (!KernelMemoryCompatExports.TryReadCompat(ctx, parameterAddress, parameter))
         {
             return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
@@ -486,7 +487,7 @@ public static class PadExports
 
         // ScePadVibrationParam: { uint8_t largeMotor; uint8_t smallMotor; }
         Span<byte> parameter = stackalloc byte[2];
-        if (!ctx.Memory.TryRead(parameterAddress, parameter))
+        if (!KernelMemoryCompatExports.TryReadCompat(ctx, parameterAddress, parameter))
         {
             return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
@@ -516,7 +517,7 @@ public static class PadExports
 
         // ScePadColor: { uint8_t r; uint8_t g; uint8_t b; uint8_t reserved; }
         Span<byte> color = stackalloc byte[4];
-        if (!ctx.Memory.TryRead(parameterAddress, color))
+        if (!KernelMemoryCompatExports.TryReadCompat(ctx, parameterAddress, color))
         {
             return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
@@ -573,7 +574,7 @@ public static class PadExports
             timestampMicroseconds);
         data[0x68] = 1;
 
-        return ctx.Memory.TryWrite(dataAddress, data);
+        return KernelMemoryCompatExports.TryWriteCompat(ctx, dataAddress, data);
     }
 
     private static PadState ReadHostInputState()
@@ -584,7 +585,7 @@ public static class PadExports
             return _cachedInputState;
         }
 
-        var input = HostPlatform.Current.Input;
+        var input = GetHostInput();
         var acceptsKeyboardInput = input.IsHostWindowFocused();
         var buttons = acceptsKeyboardInput ? ReadKeyboardButtons(input) : 0;
         var leftX = acceptsKeyboardInput ? ReadAnalogStick(input.IsKeyDown(0x41), input.IsKeyDown(0x44)) : (byte)128;

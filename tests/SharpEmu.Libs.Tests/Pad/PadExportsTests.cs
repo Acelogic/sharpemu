@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 using SharpEmu.HLE;
 using SharpEmu.HLE.Host;
+using SharpEmu.Libs.Kernel;
 using SharpEmu.Libs.Pad;
 using Xunit;
 
@@ -153,6 +155,33 @@ public sealed class PadExportsTests
     }
 
     [Fact]
+    public void PadReadState_WritesLibcBackedBuffer()
+    {
+        PadExports.SetHostInputForTests(new TestHostInput());
+        var dataAddress = AllocateTracked(_ctx, 0x78);
+        try
+        {
+            var sentinel = Enumerable.Repeat((byte)0xCC, 0x78).ToArray();
+            Marshal.Copy(sentinel, 0, unchecked((nint)dataAddress), sentinel.Length);
+            _ctx[CpuRegister.Rdi] = 1;
+            _ctx[CpuRegister.Rsi] = dataAddress;
+
+            Assert.Equal(0, PadExports.PadReadState(_ctx));
+
+            var data = new byte[0x78];
+            Marshal.Copy(unchecked((nint)dataAddress), data, 0, data.Length);
+            Assert.Equal(new byte[] { 128, 128, 128, 128 }, data[4..8]);
+            Assert.Equal(1, data[0x4C]);
+            Assert.Equal(1, data[0x68]);
+        }
+        finally
+        {
+            FreeTracked(_ctx, dataAddress);
+            PadExports.ResetTriggerEffectStateForTests();
+        }
+    }
+
+    [Fact]
     public void TriggerEffectStateNid_RegistersWithPadIdentity()
     {
         var manager = new ModuleManager();
@@ -169,6 +198,20 @@ public sealed class PadExportsTests
         Span<byte> actual = stackalloc byte[expected.Length];
         Assert.True(_memory.TryRead(address, actual));
         Assert.Equal(expected.ToArray(), actual.ToArray());
+    }
+
+    private static ulong AllocateTracked(CpuContext context, int length)
+    {
+        context[CpuRegister.Rdi] = unchecked((ulong)length);
+        Assert.Equal(0, KernelMemoryCompatExports.Malloc(context));
+        Assert.NotEqual(0UL, context[CpuRegister.Rax]);
+        return context[CpuRegister.Rax];
+    }
+
+    private static void FreeTracked(CpuContext context, ulong address)
+    {
+        context[CpuRegister.Rdi] = address;
+        Assert.Equal(0, KernelMemoryCompatExports.Free(context));
     }
 
     private sealed class TestHostInput : IHostInput

@@ -785,7 +785,7 @@ public static partial class AgcExports
             !RelocatePointerField(ctx, headerAddress + ShaderSpecialsOffset) ||
             !RelocatePointerField(ctx, headerAddress + ShaderInputSemanticsOffset) ||
             !RelocatePointerField(ctx, headerAddress + ShaderOutputSemanticsOffset) ||
-            !ctx.TryWriteUInt64(headerAddress + ShaderCodeOffset, codeAddress))
+            !TryWriteUInt64(ctx, headerAddress + ShaderCodeOffset, codeAddress))
         {
             return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
@@ -811,7 +811,7 @@ public static partial class AgcExports
         }
 
         if (destinationAddress != 0 &&
-            !ctx.TryWriteUInt64(destinationAddress, headerAddress))
+            !TryWriteUInt64(ctx, destinationAddress, headerAddress))
         {
             return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
@@ -12820,7 +12820,7 @@ public static partial class AgcExports
             return true;
         }
 
-        return ctx.TryWriteUInt64(fieldAddress, fieldAddress + relativeAddress);
+        return TryWriteUInt64(ctx, fieldAddress, fieldAddress + relativeAddress);
     }
 
     private static int ReturnRegisterDefaults(CpuContext ctx, bool internalDefaults)

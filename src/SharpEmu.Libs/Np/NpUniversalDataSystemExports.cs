@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using SharpEmu.HLE;
+using SharpEmu.Libs.Kernel;
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Text;
@@ -51,7 +52,7 @@ public static class NpUniversalDataSystemExports
         }
 
         Span<byte> parameters = stackalloc byte[16];
-        if (!ctx.Memory.TryRead(parameterAddress, parameters))
+        if (!KernelMemoryCompatExports.TryReadCompat(ctx, parameterAddress, parameters))
         {
             return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, typeof(long));
         }
@@ -75,7 +76,7 @@ public static class NpUniversalDataSystemExports
 
         Span<byte> context = stackalloc byte[sizeof(int)];
         BinaryPrimitives.WriteInt32LittleEndian(context, 1);
-        return ctx.Memory.TryWrite(contextAddress, context)
+        return KernelMemoryCompatExports.TryWriteCompat(ctx, contextAddress, context)
             ? ctx.SetReturn(0, typeof(long))
             : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, typeof(long));
     }
@@ -88,8 +89,8 @@ public static class NpUniversalDataSystemExports
     public static int NpUniversalDataSystemCreateHandle(CpuContext ctx)
     {
         var handle = Interlocked.Increment(ref _nextHandle);
-        if (ctx.TryWriteInt32(ctx[CpuRegister.Rdi], handle, checkNil: true) ||
-            ctx.TryWriteInt32(ctx[CpuRegister.Rsi], handle, checkNil: true))
+        if (TryWriteInt32(ctx, ctx[CpuRegister.Rdi], handle) ||
+            TryWriteInt32(ctx, ctx[CpuRegister.Rsi], handle))
         {
             return ctx.SetReturn(0, typeof(long));
         }
@@ -116,8 +117,8 @@ public static class NpUniversalDataSystemExports
             _createdEvents.Add(eventId);
         }
 
-        if (ctx.TryWriteInt32(ctx[CpuRegister.Rdx], eventId, checkNil: true) ||
-            ctx.TryWriteInt32(ctx[CpuRegister.Rcx], eventId, checkNil: true))
+        if (TryWriteInt32(ctx, ctx[CpuRegister.Rdx], eventId) ||
+            TryWriteInt32(ctx, ctx[CpuRegister.Rcx], eventId))
         {
             return ctx.SetReturn(0, typeof(long));
         }
@@ -161,8 +162,8 @@ public static class NpUniversalDataSystemExports
         }
 
         Span<byte> probe = stackalloc byte[1];
-        return ctx.Memory.TryRead(propertyObjectAddress, probe) &&
-               ctx.Memory.TryRead(valueAddress, probe)
+        return KernelMemoryCompatExports.TryReadCompat(ctx, propertyObjectAddress, probe) &&
+               KernelMemoryCompatExports.TryReadCompat(ctx, valueAddress, probe)
             ? ctx.SetReturn(0, typeof(long))
             : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, typeof(long));
     }
@@ -182,12 +183,12 @@ public static class NpUniversalDataSystemExports
         }
 
         Span<byte> probe = stackalloc byte[1];
-        if (!ctx.Memory.TryRead(propertyObjectAddress, probe))
+        if (!KernelMemoryCompatExports.TryReadCompat(ctx, propertyObjectAddress, probe))
         {
             return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, typeof(long));
         }
 
-        if (valueAddress != 0 && !ctx.Memory.TryRead(valueAddress, probe))
+        if (valueAddress != 0 && !KernelMemoryCompatExports.TryReadCompat(ctx, valueAddress, probe))
         {
             return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, typeof(long));
         }
@@ -638,9 +639,9 @@ public static class NpUniversalDataSystemExports
         BinaryPrimitives.WriteUInt64LittleEndian(nodePayload.AsSpan(0x20), stringBackingAddress);
         var backingPayload = new byte[0x20];
         BinaryPrimitives.WriteUInt64LittleEndian(backingPayload.AsSpan(0x18), stringAddress);
-        if (!ctx.Memory.TryWrite(stringAddress, terminatedString) ||
-            !ctx.Memory.TryWrite(stringBackingAddress, backingPayload) ||
-            !ctx.Memory.TryWrite(nodeAddress, nodePayload))
+        if (!KernelMemoryCompatExports.TryWriteCompat(ctx, stringAddress, terminatedString) ||
+            !KernelMemoryCompatExports.TryWriteCompat(ctx, stringBackingAddress, backingPayload) ||
+            !KernelMemoryCompatExports.TryWriteCompat(ctx, nodeAddress, nodePayload))
         {
             ReleaseUnlinkedEventPropertyStringNode(
                 allocator,
@@ -677,18 +678,18 @@ public static class NpUniversalDataSystemExports
             BinaryPrimitives.WriteUInt64LittleEndian(emptyListState, nodeAddress);
             BinaryPrimitives.WriteUInt64LittleEndian(emptyListState[0x08..], nodeAddress);
             BinaryPrimitives.WriteUInt64LittleEndian(emptyListState[0x10..], count + 1);
-            return ctx.Memory.TryWrite(headAddress, emptyListState);
+            return KernelMemoryCompatExports.TryWriteCompat(ctx, headAddress, emptyListState);
         }
 
         Span<byte> appendedListState = stackalloc byte[0x10];
         BinaryPrimitives.WriteUInt64LittleEndian(appendedListState, nodeAddress);
         BinaryPrimitives.WriteUInt64LittleEndian(appendedListState[0x08..], count + 1);
-        if (!ctx.Memory.TryWrite(tailAddress, appendedListState))
+        if (!KernelMemoryCompatExports.TryWriteCompat(ctx, tailAddress, appendedListState))
         {
             return false;
         }
 
-        if (ctx.TryWriteUInt64(oldTail + 0x08, nodeAddress))
+        if (KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, oldTail + 0x08, nodeAddress))
         {
             return true;
         }
@@ -696,7 +697,7 @@ public static class NpUniversalDataSystemExports
         Span<byte> originalListState = stackalloc byte[0x10];
         BinaryPrimitives.WriteUInt64LittleEndian(originalListState, oldTail);
         BinaryPrimitives.WriteUInt64LittleEndian(originalListState[0x08..], count);
-        canReleaseUnlinkedNode = ctx.Memory.TryWrite(tailAddress, originalListState);
+        canReleaseUnlinkedNode = KernelMemoryCompatExports.TryWriteCompat(ctx, tailAddress, originalListState);
         return false;
     }
 
@@ -725,7 +726,7 @@ public static class NpUniversalDataSystemExports
     private static bool TryReadEventPropertyType(CpuContext ctx, ulong address, out ushort type)
     {
         Span<byte> typeBytes = stackalloc byte[sizeof(ushort)];
-        if (!ctx.Memory.TryRead(address, typeBytes))
+        if (!KernelMemoryCompatExports.TryReadCompat(ctx, address, typeBytes))
         {
             type = 0;
             return false;
@@ -747,8 +748,12 @@ public static class NpUniversalDataSystemExports
             return false;
         }
 
-        return ctx.TryReadUInt64(fieldAddress, out value);
+        return KernelMemoryCompatExports.TryReadUInt64Compat(ctx, fieldAddress, out value);
     }
+
+    private static bool TryWriteInt32(CpuContext ctx, ulong address, int value) =>
+        address != 0 &&
+        KernelMemoryCompatExports.TryWriteUInt32Compat(ctx, address, unchecked((uint)value));
 
     private static bool TryAddAddress(ulong address, ulong offset, out ulong result)
     {
@@ -786,7 +791,7 @@ public static class NpUniversalDataSystemExports
         Span<byte> current = stackalloc byte[1];
         for (var index = 0; index < bytes.Length; index++)
         {
-            if (!ctx.Memory.TryRead(address + (ulong)index, current))
+            if (!KernelMemoryCompatExports.TryReadCompat(ctx, address + (ulong)index, current))
             {
                 return false;
             }
