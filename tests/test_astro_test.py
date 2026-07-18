@@ -134,6 +134,29 @@ class TimelineDiagnosticsTests(unittest.TestCase):
         self.assertEqual(payload["capture_attempts"], payload["capture_failures"])
 
 
+class EnvironmentTests(unittest.TestCase):
+    def test_astro_defaults_to_validated_all_lle_libc_routing(self) -> None:
+        with mock.patch.dict(os.environ, {"SHARPEMU_LLE_LIBC_ALL": "0"}):
+            environment = HARNESS.build_environment(
+                Path("/tmp/astro/eboot.bin"),
+                Path("/tmp/sharpemu/SharpEmu"),
+                {},
+                [],
+            )
+
+        self.assertEqual("1", environment["SHARPEMU_LLE_LIBC_ALL"])
+
+    def test_explicit_override_can_disable_all_lle_libc_routing(self) -> None:
+        environment = HARNESS.build_environment(
+            Path("/tmp/astro/eboot.bin"),
+            Path("/tmp/sharpemu/SharpEmu"),
+            {"SHARPEMU_LLE_LIBC_ALL": "0"},
+            [],
+        )
+
+        self.assertEqual("0", environment["SHARPEMU_LLE_LIBC_ALL"])
+
+
 class PsStudiosSequenceTests(unittest.TestCase):
     @staticmethod
     def candidate(
