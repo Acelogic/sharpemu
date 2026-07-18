@@ -495,7 +495,18 @@ public static class VideoOutExports
         LibraryName = "libSceVideoOut")]
     public static int VideoOutInitializeOutputOptions(CpuContext ctx)
     {
-        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        const int outputOptionsSize = 0x40;
+        var optionsAddress = ctx[CpuRegister.Rdi];
+        if (optionsAddress == 0)
+        {
+            return OrbisVideoOutErrorInvalidAddress;
+        }
+
+        Span<byte> options = stackalloc byte[outputOptionsSize];
+        options.Clear();
+        return ctx.Memory.TryWrite(optionsAddress, options)
+            ? (int)OrbisGen2Result.ORBIS_GEN2_OK
+            : (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
     }
 
     [SysAbiExport(
