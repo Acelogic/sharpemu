@@ -62,6 +62,7 @@ public sealed class ModuleManager : IModuleManager
     // Run every HLE type's initializer and JIT its methods here first, on a host thread.
     private void WarmHleTypeInitializers()
     {
+        var warmupStarted = System.Diagnostics.Stopwatch.GetTimestamp();
         Assembly[] assemblies;
         lock (_registrationGate)
         {
@@ -76,6 +77,7 @@ public sealed class ModuleManager : IModuleManager
         var failed = 0;
         var jitted = 0;
         var jitFailed = 0;
+        var methodsToPrepare = new List<RuntimeMethodHandle>(24_000);
         foreach (var assembly in assemblies)
         {
             Type[] types;
@@ -109,7 +111,9 @@ public sealed class ModuleManager : IModuleManager
                     failed++;
                 }
 
-                // Force-JIT (not execute) every method so no guest thread compiles one first.
+                // Collect every method after all class constructors have run. The
+                // runtime supports concurrent JIT compilation, but class initializer
+                // order is observable and therefore remains deliberately serial.
                 MethodBase[] members;
                 try
                 {
@@ -131,8 +135,7 @@ public sealed class ModuleManager : IModuleManager
 
                     try
                     {
-                        RuntimeHelpers.PrepareMethod(member.MethodHandle);
-                        jitted++;
+                        methodsToPrepare.Add(member.MethodHandle);
                     }
                     catch
                     {
@@ -142,8 +145,63 @@ public sealed class ModuleManager : IModuleManager
             }
         }
 
+        var warmupWorkers = GetWarmupWorkerCount();
+        if (warmupWorkers == 1)
+        {
+            foreach (var methodHandle in methodsToPrepare)
+            {
+                try
+                {
+                    RuntimeHelpers.PrepareMethod(methodHandle);
+                    jitted++;
+                }
+                catch
+                {
+                    jitFailed++;
+                }
+            }
+        }
+        else
+        {
+            Parallel.ForEach(
+                methodsToPrepare,
+                new ParallelOptions { MaxDegreeOfParallelism = warmupWorkers },
+                methodHandle =>
+                {
+                    try
+                    {
+                        RuntimeHelpers.PrepareMethod(methodHandle);
+                        Interlocked.Increment(ref jitted);
+                    }
+                    catch
+                    {
+                        Interlocked.Increment(ref jitFailed);
+                    }
+                });
+        }
+
+        var warmupSeconds = System.Diagnostics.Stopwatch.GetElapsedTime(warmupStarted).TotalSeconds;
+
         Console.Error.WriteLine(
-            $"[HLE] Warmed {warmed} type initializers ({failed} threw) + JIT-compiled {jitted} methods ({jitFailed} skipped) across {assemblies.Length} HLE assemblies, plus {bclWarmed} framework type initializers.");
+            $"[HLE] Warmed {warmed} type initializers ({failed} threw) + JIT-compiled {jitted} methods ({jitFailed} skipped) across {assemblies.Length} HLE assemblies, plus {bclWarmed} framework type initializers using {warmupWorkers} worker(s) in {warmupSeconds:F3}s.");
+    }
+
+    private static int GetWarmupWorkerCount()
+    {
+        return SelectWarmupWorkerCount(
+            Environment.ProcessorCount,
+            Environment.GetEnvironmentVariable("SHARPEMU_HLE_WARMUP_WORKERS"));
+    }
+
+    internal static int SelectWarmupWorkerCount(int processorCount, string? configuredValue)
+    {
+        var hostLimit = Math.Max(1, processorCount);
+        if (int.TryParse(configuredValue, out var configuredWorkers))
+        {
+            return Math.Clamp(configuredWorkers, 1, hostLimit);
+        }
+
+        return Math.Min(hostLimit, 8);
     }
 
     // Framework .cctors too (but not JIT — the BCL is too large).
