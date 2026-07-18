@@ -780,8 +780,8 @@ public sealed class SelfLoader : ISelfLoader
                 if (descriptor.IsDataImport)
                 {
                     // Object relocations are rebound after all adjacent providers
-                    // load. Keep the slot null until then; an executable trap stub
-                    // would turn an addressable object into a callable target.
+                    // load. Use S=0 until then so the initial cell still retains A;
+                    // an executable trap stub would turn an object into a call target.
                     symbolValue = 0;
                 }
                 else if (addressesByNid.TryGetValue(descriptor.ImportNid, out var stubAddress))
@@ -801,9 +801,7 @@ public sealed class SelfLoader : ISelfLoader
                 }
             }
 
-            var targetValue = descriptor.IsDataImport && descriptor.ImportNid is not null
-                ? 0
-                : ComputeRelocationValue(descriptor, symbolValue);
+            var targetValue = ComputeRelocationValue(descriptor, symbolValue);
 
             if (targetValue < 0x1000 && descriptor.ValueKind is
                 RelocationValueKind.TlsOffset or
@@ -1279,7 +1277,8 @@ public sealed class SelfLoader : ISelfLoader
         if (sectionSymbols > 0 || dynamicSymbols > 0)
         {
             Console.Error.WriteLine(
-                $"[LOADER] Runtime symbol index populated: section={sectionSymbols}, dynamic={dynamicSymbols}, total={runtimeSymbols.Count}");
+                $"[LOADER] Runtime symbol index populated: section={sectionSymbols}, dynamic={dynamicSymbols}, " +
+                $"callable={runtimeSymbols.Count}, data={runtimeDataSymbols.Count}");
         }
     }
 
@@ -1628,7 +1627,7 @@ public sealed class SelfLoader : ISelfLoader
         return added;
     }
 
-    private static bool RegisterRuntimeSymbol(
+    internal static bool RegisterRuntimeSymbol(
         IDictionary<string, ulong> runtimeSymbols,
         IDictionary<string, ulong> runtimeDataSymbols,
         IDictionary<ulong, string> importStubs,
@@ -1641,14 +1640,10 @@ public sealed class SelfLoader : ISelfLoader
             return false;
         }
 
-        var addedAny = RegisterRuntimeSymbolAliases(runtimeSymbols, symbolName, symbolAddress);
+        var destination = isData ? runtimeDataSymbols : runtimeSymbols;
+        var addedAny = RegisterRuntimeSymbolAliases(destination, symbolName, symbolAddress);
 
-        if (isData)
-        {
-            _ = RegisterRuntimeSymbolAliases(runtimeDataSymbols, symbolName, symbolAddress);
-        }
-
-        if (string.Equals(symbolName, "kernel_dynlib_dlsym", StringComparison.Ordinal))
+        if (!isData && string.Equals(symbolName, "kernel_dynlib_dlsym", StringComparison.Ordinal))
         {
             importStubs[symbolAddress] = RuntimeStubNids.KernelDynlibDlsym;
         }

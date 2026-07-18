@@ -211,6 +211,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             generation,
             activeImportStubs,
             activeRuntimeSymbols,
+            activeRuntimeDataSymbols,
             processImageName);
         if (initializerResult is { } failedInitializerResult)
         {
@@ -230,6 +231,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             generation,
             activeImportStubs,
             activeRuntimeSymbols,
+            activeRuntimeDataSymbols,
             processImageName,
             _cpuExecutionOptions);
 
@@ -581,13 +583,15 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         Generation generation,
         IReadOnlyDictionary<ulong, string> activeImportStubs,
         IReadOnlyDictionary<string, ulong> activeRuntimeSymbols,
+        IReadOnlyDictionary<string, ulong> activeRuntimeDataSymbols,
         string processImageName)
     {
         var moduleStartResult = RunPreloadedModuleInitializers(
             loadedModuleImages,
             generation,
             activeImportStubs,
-            activeRuntimeSymbols);
+            activeRuntimeSymbols,
+            activeRuntimeDataSymbols);
         if (moduleStartResult is not null)
         {
             return moduleStartResult;
@@ -653,7 +657,8 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         IReadOnlyList<LoadedModuleImage> loadedModuleImages,
         Generation generation,
         IReadOnlyDictionary<ulong, string> activeImportStubs,
-        IReadOnlyDictionary<string, ulong> activeRuntimeSymbols)
+        IReadOnlyDictionary<string, ulong> activeRuntimeSymbols,
+        IReadOnlyDictionary<string, ulong> activeRuntimeDataSymbols)
     {
         for (var i = 0; i < loadedModuleImages.Count; i++)
         {
@@ -688,6 +693,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
                 generation,
                 activeImportStubs,
                 activeRuntimeSymbols,
+                activeRuntimeDataSymbols,
                 moduleName,
                 _cpuExecutionOptions);
             KernelModuleRegistry.CompleteModuleStart(
@@ -710,6 +716,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         Generation generation,
         IReadOnlyDictionary<ulong, string> activeImportStubs,
         IReadOnlyDictionary<string, ulong> activeRuntimeSymbols,
+        IReadOnlyDictionary<string, ulong> activeRuntimeDataSymbols,
         string processImageName)
     {
         if (image.PreInitializerFunctions.Count == 0 && image.InitializerFunctions.Count == 0)
@@ -726,6 +733,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             generation,
             activeImportStubs,
             activeRuntimeSymbols,
+            activeRuntimeDataSymbols,
             processImageName);
         if (result is not null)
         {
@@ -738,6 +746,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             generation,
             activeImportStubs,
             activeRuntimeSymbols,
+            activeRuntimeDataSymbols,
             processImageName);
     }
 
@@ -747,6 +756,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         Generation generation,
         IReadOnlyDictionary<ulong, string> activeImportStubs,
         IReadOnlyDictionary<string, ulong> activeRuntimeSymbols,
+        IReadOnlyDictionary<string, ulong> activeRuntimeDataSymbols,
         string processImageName)
     {
         for (var i = 0; i < initializerFunctions.Count; i++)
@@ -765,6 +775,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
                 generation,
                 activeImportStubs,
                 activeRuntimeSymbols,
+                activeRuntimeDataSymbols,
                 processImageName,
                 _cpuExecutionOptions);
             if (result != OrbisGen2Result.ORBIS_GEN2_OK)
@@ -1100,10 +1111,30 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             ehFrameSize,
             isMain,
             isSystemModule);
-        KernelModuleRegistry.RegisterModuleSymbols(handle, image.RuntimeSymbols);
+        KernelModuleRegistry.RegisterModuleSymbols(handle, CreateModuleDlsymSymbols(image));
         Console.Error.WriteLine(
             $"[RUNTIME] Registered module handle={handle} name={Path.GetFileName(modulePath)} base=0x{baseAddress:X16} size=0x{size:X16}");
         return handle;
+    }
+
+    internal static IReadOnlyDictionary<string, ulong> CreateModuleDlsymSymbols(SelfImage image)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        if (image.RuntimeDataSymbols.Count == 0)
+        {
+            return image.RuntimeSymbols;
+        }
+
+        var symbols = new Dictionary<string, ulong>(image.RuntimeSymbols, StringComparer.Ordinal);
+        foreach (var (name, address) in image.RuntimeDataSymbols)
+        {
+            // A malformed image defining the same alias as both a function and
+            // an object keeps the callable entry for compatibility. The loader
+            // otherwise keeps the two symbol kinds fully separate.
+            symbols.TryAdd(name, address);
+        }
+
+        return symbols;
     }
 
     private static bool TryComputeImageRange(SelfImage image, out ulong baseAddress, out ulong size)

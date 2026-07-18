@@ -45,10 +45,18 @@ Runtime resolution order is:
 2. an optional registered HLE fallback;
 3. failure before module or process initializers for an unresolved strong import.
 
-An unresolved weak data import remains zero. A relocation write failure is
-always fatal. `_Stderr` and `_Stdout` intentionally have no fabricated HLE
-fallback because the provider-owned stream state and layout have not been
-reconstructed as an HLE object contract.
+An unresolved weak data import uses the ELF definition `S=0` and still writes
+`S+A`; non-zero positive and negative addends are therefore retained. A
+relocation write failure is always fatal. `_Stderr` and `_Stdout` intentionally
+have no fabricated HLE fallback because the provider-owned stream state and
+layout have not been reconstructed as an HLE object contract.
+
+Callable and data symbol maps remain distinct through native dispatch. Only the
+callable map participates in direct-call bridge selection. Module-scoped
+`sceKernelDlsym` receives the union of a guest module's callable and data
+definitions, while global `sceKernelDlsym` receives a separate data lookup that
+also contains registered HLE fallbacks. This keeps `__progname` and the two
+`Need_*` flags discoverable without making their addresses executable targets.
 
 ## Coverage semantics
 

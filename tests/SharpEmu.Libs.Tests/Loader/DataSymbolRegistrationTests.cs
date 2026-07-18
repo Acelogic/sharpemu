@@ -63,6 +63,35 @@ public sealed class DataSymbolRegistrationTests
     }
 
     [Fact]
+    public void RuntimeObjectDefinitions_AreExcludedFromCallableSymbols()
+    {
+        var callableSymbols = new Dictionary<string, ulong>(StringComparer.Ordinal);
+        var dataSymbols = new Dictionary<string, ulong>(StringComparer.Ordinal);
+        var importStubs = new Dictionary<ulong, string>();
+
+        Assert.True(SelfLoader.RegisterRuntimeSymbol(
+            callableSymbols,
+            dataSymbols,
+            importStubs,
+            "kernel_dynlib_dlsym",
+            0x2000_0000,
+            isData: true));
+        Assert.True(SelfLoader.RegisterRuntimeSymbol(
+            callableSymbols,
+            dataSymbols,
+            importStubs,
+            "function_definition",
+            0x3000_0000,
+            isData: false));
+
+        Assert.DoesNotContain("kernel_dynlib_dlsym", callableSymbols.Keys);
+        Assert.Equal(0x2000_0000UL, dataSymbols["kernel_dynlib_dlsym"]);
+        Assert.Equal(0x3000_0000UL, callableSymbols["function_definition"]);
+        Assert.DoesNotContain("function_definition", dataSymbols.Keys);
+        Assert.Empty(importStubs);
+    }
+
+    [Fact]
     public void ModuleManager_RejectsFunctionDataKindConflictsInEitherOrder()
     {
         var data = Assert.Single(
@@ -124,6 +153,52 @@ public sealed class DataSymbolRegistrationTests
     }
 
     [Fact]
+    public void ModuleDlsymSymbols_AreUnionOfCallableAndDataDefinitions()
+    {
+        var image = new SelfImage(
+            isSelf: false,
+            elfHeader: default,
+            programHeaders: Array.Empty<ProgramHeader>(),
+            mappedRegions: Array.Empty<VirtualMemoryRegion>(),
+            runtimeSymbols: new Dictionary<string, ulong>(StringComparer.Ordinal)
+            {
+                ["callable"] = 0x2000_0000,
+            },
+            runtimeDataSymbols: new Dictionary<string, ulong>(StringComparer.Ordinal)
+            {
+                ["object"] = 0x3000_0000,
+            });
+
+        var dlsymSymbols = SharpEmuRuntime.CreateModuleDlsymSymbols(image);
+
+        Assert.Equal(0x2000_0000UL, dlsymSymbols["callable"]);
+        Assert.Equal(0x3000_0000UL, dlsymSymbols["object"]);
+        Assert.DoesNotContain("object", image.RuntimeSymbols.Keys);
+    }
+
+    [Theory]
+    [InlineData("__progname", DataSymbolRegistry.ProgNameNid)]
+    [InlineData("Need_sceLibc", DataSymbolRegistry.LibcNeedFlagNid)]
+    [InlineData("Need_sceLibcInternal", DataSymbolRegistry.LibcInternalNeedFlagNid)]
+    public void HleDataFallbacks_AreDlsymVisibleButNotCallable(string symbolName, string nid)
+    {
+        var callableSymbols = new Dictionary<string, ulong>(StringComparer.Ordinal);
+        var dataSymbols = new Dictionary<string, ulong>(StringComparer.Ordinal);
+        Assert.Equal(3, SharpEmuRuntime.MergeRegisteredHleDataSymbols(dataSymbols, Generation.Gen5));
+
+        Assert.True(DirectExecutionBackend.TryResolveGlobalDlsymSymbolAddress(
+            callableSymbols,
+            dataSymbols,
+            symbolName,
+            out var dlsymAddress));
+        Assert.Equal(dataSymbols[nid], dlsymAddress);
+        Assert.False(DirectExecutionBackend.TryResolveCallableRuntimeSymbolAddress(
+            callableSymbols,
+            nid,
+            out _));
+    }
+
+    [Fact]
     public void HleFallbacks_HaveExpectedPointerAndFlagTopology()
     {
         const string imageName = "gta-v-data5-test-eboot.bin";
@@ -176,17 +251,24 @@ public sealed class DataSymbolRegistrationTests
     }
 
     [Fact]
-    public void RebindMissing_WeakStaysZeroButStrongFailsClosed()
+    public void RebindMissing_WeakUsesZeroSymbolValueAndStrongFailsClosed()
     {
         var memory = CreateWritableMemory();
-        var weak = CreateImage(new ImportedSymbolRelocation(
-            0x10020,
-            0,
-            DataSymbolRegistry.StderrNid,
-            IsData: true,
-            IsWeak: true));
+        var weak = CreateImage(
+            new ImportedSymbolRelocation(
+                0x10020,
+                0x28,
+                "weak-positive",
+                IsData: true,
+                IsWeak: true),
+            new ImportedSymbolRelocation(
+                0x10028,
+                -0x18,
+                "weak-negative",
+                IsData: true,
+                IsWeak: true));
         var strong = CreateImage(new ImportedSymbolRelocation(
-            0x10028,
+            0x10030,
             0,
             DataSymbolRegistry.StdoutNid,
             IsData: true,
@@ -197,7 +279,8 @@ public sealed class DataSymbolRegistrationTests
             weak,
             "weak.prx",
             new Dictionary<string, ulong>()));
-        Assert.Equal(0UL, ReadUInt64(memory, 0x10020));
+        Assert.Equal(0x28UL, ReadUInt64(memory, 0x10020));
+        Assert.Equal(0xFFFF_FFFF_FFFF_FFE8UL, ReadUInt64(memory, 0x10028));
         var exception = Assert.Throws<InvalidDataException>(() => ImportedDataRebinder.Rebind(
             memory,
             strong,

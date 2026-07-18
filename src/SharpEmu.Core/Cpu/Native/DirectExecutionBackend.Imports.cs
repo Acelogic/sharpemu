@@ -2012,8 +2012,11 @@ public sealed partial class DirectExecutionBackend
 		}
 		var moduleHandle = unchecked((int)cpuContext[CpuRegister.Rdi]);
 		if (!TryResolveModuleSymbolAddress(moduleHandle, symbolName, out var resolvedAddress) &&
-			!TryResolveRuntimeSymbolAddress(symbolName, out resolvedAddress) &&
-			!TryResolveRuntimeSymbolAddress(ComputePsNid(symbolName), out resolvedAddress) &&
+			!TryResolveGlobalDlsymSymbolAddress(
+				_runtimeSymbolsByName,
+				_runtimeDataSymbolsByName,
+				symbolName,
+				out resolvedAddress) &&
 			!TryResolveRuntimeSymbolAlias(symbolName, out resolvedAddress))
 		{
 			Console.Error.WriteLine(
@@ -2157,22 +2160,55 @@ public sealed partial class DirectExecutionBackend
 
 	private bool TryResolveRuntimeSymbolAddress(string symbolName, out ulong address)
 	{
+		return TryResolveCallableRuntimeSymbolAddress(_runtimeSymbolsByName, symbolName, out address);
+	}
+
+	internal static bool TryResolveGlobalDlsymSymbolAddress(
+		IReadOnlyDictionary<string, ulong> runtimeSymbols,
+		IReadOnlyDictionary<string, ulong> runtimeDataSymbols,
+		string symbolName,
+		out ulong address)
+	{
+		if (TryResolveIndexedRuntimeSymbolAddress(runtimeSymbols, symbolName, out address) ||
+			TryResolveIndexedRuntimeSymbolAddress(runtimeDataSymbols, symbolName, out address))
+		{
+			return true;
+		}
+
+		var nid = ComputePsNid(symbolName);
+		return TryResolveIndexedRuntimeSymbolAddress(runtimeSymbols, nid, out address) ||
+			TryResolveIndexedRuntimeSymbolAddress(runtimeDataSymbols, nid, out address);
+	}
+
+	internal static bool TryResolveCallableRuntimeSymbolAddress(
+		IReadOnlyDictionary<string, ulong> runtimeSymbols,
+		string symbolName,
+		out ulong address)
+	{
+		return TryResolveIndexedRuntimeSymbolAddress(runtimeSymbols, symbolName, out address);
+	}
+
+	private static bool TryResolveIndexedRuntimeSymbolAddress(
+		IReadOnlyDictionary<string, ulong> runtimeSymbols,
+		string symbolName,
+		out ulong address)
+	{
 		address = 0uL;
 		if (string.IsNullOrWhiteSpace(symbolName))
 		{
 			return false;
 		}
-		if (_runtimeSymbolsByName.TryGetValue(symbolName, out var value) && IsRuntimeSymbolAddressUsable(value))
+		if (runtimeSymbols.TryGetValue(symbolName, out var value) && IsRuntimeSymbolAddressUsable(value))
 		{
 			address = value;
 			return true;
 		}
-		if (symbolName.StartsWith("_", StringComparison.Ordinal) && _runtimeSymbolsByName.TryGetValue(symbolName[1..], out value) && IsRuntimeSymbolAddressUsable(value))
+		if (symbolName.StartsWith("_", StringComparison.Ordinal) && runtimeSymbols.TryGetValue(symbolName[1..], out value) && IsRuntimeSymbolAddressUsable(value))
 		{
 			address = value;
 			return true;
 		}
-		if (_runtimeSymbolsByName.TryGetValue("_" + symbolName, out value) && IsRuntimeSymbolAddressUsable(value))
+		if (runtimeSymbols.TryGetValue("_" + symbolName, out value) && IsRuntimeSymbolAddressUsable(value))
 		{
 			address = value;
 			return true;

@@ -300,6 +300,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private readonly Dictionary<string, ulong> _runtimeSymbolsByName = new Dictionary<string, ulong>(StringComparer.Ordinal);
 
+	// Data symbols are visible to dynamic lookup but never participate in
+	// direct-call bridge selection or callable symbol diagnostics.
+	private readonly Dictionary<string, ulong> _runtimeDataSymbolsByName = new Dictionary<string, ulong>(StringComparer.Ordinal);
+
 	private readonly RecentImportTraceEntry[] _recentImportTrace = new RecentImportTraceEntry[64];
 
 	private int _recentImportTraceCount;
@@ -1079,11 +1083,12 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		SetupExceptionHandler();
 	}
 
-	public bool TryExecute(CpuContext context, ulong entryPoint, Generation generation, IReadOnlyDictionary<ulong, string> importStubs, IReadOnlyDictionary<string, ulong> runtimeSymbols, CpuExecutionOptions executionOptions, out OrbisGen2Result result)
+	public bool TryExecute(CpuContext context, ulong entryPoint, Generation generation, IReadOnlyDictionary<ulong, string> importStubs, IReadOnlyDictionary<string, ulong> runtimeSymbols, IReadOnlyDictionary<string, ulong> runtimeDataSymbols, CpuExecutionOptions executionOptions, out OrbisGen2Result result)
 	{
 		Console.Error.WriteLine("[LOADER][INFO] === Execute START ===");
 		Console.Error.WriteLine($"[LOADER][INFO] EntryPoint: 0x{entryPoint:X16}, ImportStubs: {importStubs.Count}");
 		Console.Error.WriteLine($"[LOADER][INFO] RuntimeSymbols: {runtimeSymbols.Count}");
+		Console.Error.WriteLine($"[LOADER][INFO] RuntimeDataSymbols: {runtimeDataSymbols.Count}");
 		Console.Error.WriteLine(_moduleManager.TryGetExport("QrZZdJ8XsX0", out ExportedFunction export) ? ("[LOADER][INFO] ExportCheck fputs: " + export.LibraryName + ":" + export.Name) : "[LOADER][INFO] ExportCheck fputs: MISSING");
 		Console.Error.WriteLine(_moduleManager.TryGetExport("L-Q3LEjIbgA", out ExportedFunction export2) ? ("[LOADER][INFO] ExportCheck map_direct: " + export2.LibraryName + ":" + export2.Name) : "[LOADER][INFO] ExportCheck map_direct: MISSING");
 		_entryPoint = entryPoint;
@@ -1095,6 +1100,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		result = OrbisGen2Result.ORBIS_GEN2_OK;
 		LastError = null;
 		InitializeRuntimeSymbolIndex(runtimeSymbols);
+		InitializeRuntimeDataSymbolIndex(runtimeDataSymbols);
 		_recentImportTraceCount = 0;
 		_recentImportTraceWriteIndex = 0;
 		_distinctImportNidHistoryCount = 0;

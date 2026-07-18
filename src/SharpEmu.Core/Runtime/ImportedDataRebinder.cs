@@ -28,17 +28,20 @@ internal static class ImportedDataRebinder
                 continue;
             }
 
-            if (!dataSymbols.TryGetValue(relocation.Nid, out var symbolAddress) ||
-                !IsUsableAddress(symbolAddress))
+            var resolved = dataSymbols.TryGetValue(relocation.Nid, out var symbolAddress) &&
+                IsUsableAddress(symbolAddress);
+            if (!resolved)
             {
-                if (relocation.IsWeak)
+                if (!relocation.IsWeak)
                 {
-                    continue;
+                    throw new InvalidDataException(
+                        $"Required imported data symbol '{relocation.Nid}' is unresolved " +
+                        $"for '{Path.GetFileName(imagePath)}' at relocation 0x{relocation.TargetAddress:X16}.");
                 }
 
-                throw new InvalidDataException(
-                    $"Required imported data symbol '{relocation.Nid}' is unresolved " +
-                    $"for '{Path.GetFileName(imagePath)}' at relocation 0x{relocation.TargetAddress:X16}.");
+                // ELF weak undefined symbols resolve with S=0. The relocation
+                // still writes S+A, so a non-zero addend must not be discarded.
+                symbolAddress = 0;
             }
 
             var reboundValue = AddSigned(symbolAddress, relocation.Addend);
@@ -50,7 +53,10 @@ internal static class ImportedDataRebinder
                     $"'{Path.GetFileName(imagePath)}' at relocation 0x{relocation.TargetAddress:X16}.");
             }
 
-            rebound++;
+            if (resolved)
+            {
+                rebound++;
+            }
         }
 
         return rebound;
