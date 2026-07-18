@@ -19,16 +19,19 @@ The queue is a static import inventory. It is not yet a runtime call-frequency t
 
 ## Current checkpoint
 
-The current SharpEmu loader does not expose GTA V eboot imports because its fallback for a blocked SELF `PT_DYNAMIC` segment reads the logical file offset instead of translating through the containing SELF segment. A generic loader correction and focused regression test are in progress first. After that lands, GTA V will be run again to establish the actual unresolved-call order and prioritize implementations.
+The generic blocked-SELF mapping fix is integrated. GTA V now maps its eboot `PT_DYNAMIC` range through the containing payload at physical offset `0x3EF0090`, then reaches TLS registration. The next verified prerequisite is a Variant-II static-TLS span of `0x13570`, which exceeds SharpEmu's current `0x10000` startup reservation. A generic reservation fix is isolated and in progress. Runtime call ordering will be captured after that gate.
 
 ## Active lanes
 
 | Lane | Branch/worktree | Ownership | Status |
 |---|---|---|---|
 | Integration | `codex/gta-v-nids` / `/Users/mcruz/Developer/sharpemu-gta-v-nids` | coordinator-owned manifest, queue, integration, regression | active |
-| Loader prerequisite | `codex/nid-gta-loader` / `/Users/mcruz/.codex/worktrees/sharpemu-gta-loader` | `SelfLoader.cs` and focused loader tests only | implementing |
-| libc evidence and implementation | `codex/nid-gta-libc` / `/Users/mcruz/.codex/worktrees/sharpemu-gta-libc` | approved libc export files and tests only | evidence review |
-| Remote reverse engineering | ephemeral `/dev/shm` job on `rho.cs.oswego.edu` | portable headless-Ghidra proof and benchmarks only | probing |
+| Loader prerequisite | `codex/nid-gta-loader` / `/Users/mcruz/.codex/worktrees/sharpemu-gta-loader` | `SelfLoader.cs` and focused loader tests only | integrated as `e6e71ac` |
+| TLS prerequisite | `codex/nid-gta-tls` / `/Users/mcruz/.codex/worktrees/sharpemu-gta-tls` | shared Variant-II reservation and focused TLS tests only | implementing |
+| libc evidence and implementation | `codex/nid-gta-libc` / `/Users/mcruz/.codex/worktrees/sharpemu-gta-libc` | 20 approved libc math exports and tests only | implementing |
+| Local reverse engineering | separate read-only KawaiiDRA projects on the Mac | libc/POSIX and NpManager evidence packets | active/queued |
+| Remote reverse engineering (Linux) | ephemeral `/dev/shm` job on `rho.cs.oswego.edu` | portable headless-Ghidra proof and benchmarks only | smoke passed; semantic loader gate identified |
+| Remote reverse engineering (Windows) | ephemeral temp job on `192.168.68.54` | portable headless-Ghidra proof and benchmarks only | preflight passed |
 
 No worker may edit this progress file, the central manifest, or the integration branch.
 
@@ -63,18 +66,20 @@ Every implementation must have:
 
 Large subsystems remain evidence/research lanes until this contract is met. The coordinator integrates one reviewed commit at a time and updates the manifest only after validation.
 
-## Rho policy
+## Remote-worker policy
 
-`rho` is suitable for parallel headless-analysis jobs: it exposes 88 CPUs, roughly 125 GiB RAM, and a 63 GiB empty `/dev/shm`. Remote jobs must:
+`rho` is suitable for parallel headless-analysis jobs: it exposes 88 CPUs, roughly 125 GiB RAM, and a 63 GiB empty `/dev/shm`. `DESKTOP-RAAKAQJ` (`192.168.68.54`) adds 32 logical CPUs, roughly 191 GiB RAM, and ample temporary disk. It currently has Java 17 but no Ghidra, so its jobs require an ephemeral JDK 21 and Ghidra 12.1.2 bundle. Remote jobs must:
 
 - use a unique directory beneath `/dev/shm`;
 - install/copy only the portable tooling and the smallest required binary slice or module;
 - never transfer the whole game;
 - register cleanup traps and remove the job directory on success or failure;
 - return only reports, logs, scripts, and compact analysis artifacts;
-- begin at 8-12 independent jobs and scale only after measured memory and I/O behavior.
+- begin at no more than 8 independent jobs on rho and 4-6 on the Windows host, then scale only after measured memory and I/O behavior.
 
-The local Mac remains responsible for integration, builds, runtime capture, and final regression. Rho adds parallel workers; it does not replace the local coordinator.
+The rho smoke used only the 71,654-byte `libSceJobManager.prx` and completed in 20.09 seconds at 173% CPU with about 1.32 GiB peak RSS. It proved the ephemeral pipeline and cleanup, but stock Ghidra classified the PS5 SELF as a raw binary and recovered no real imports. Meaningful remote contracts therefore require a PS5 SELF loader or a locally reconstructed/decrypted ELF derivative before fan-out.
+
+The local Mac remains responsible for integration, builds, runtime capture, final regression, and additional read-only KawaiiDRA evidence lanes. The two remote hosts add parallel workers; they do not replace the local coordinator.
 
 ## Validation gates
 
@@ -86,6 +91,8 @@ The local Mac remains responsible for integration, builds, runtime capture, and 
 - Focused tests for each implemented contract, including failure paths
 - NID manifest/registration uniqueness check
 - GTA V loader/import probe, then runtime unresolved trace
+  - blocked-SELF `PT_DYNAMIC` translation: passed
+  - current runtime gate: expand static TLS reservation beyond the observed `0x13570` requirement
 - SharpEmu library and source-generator tests
 - GTA V launch regression
 - Existing game regressions where the changed subsystem is shared
