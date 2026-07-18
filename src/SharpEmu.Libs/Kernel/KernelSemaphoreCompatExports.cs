@@ -3,7 +3,6 @@
 
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
-using System.Text;
 using SharpEmu.HLE;
 
 namespace SharpEmu.Libs.Kernel;
@@ -429,6 +428,28 @@ public static class KernelSemaphoreCompatExports
     }
 
     [SysAbiExport(
+        Nid = "-wUggz2S5yk",
+        ExportName = "sem_setname",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixSemSetName(CpuContext ctx)
+    {
+        // The name is diagnostic metadata. Validate it without changing the
+        // immutable scheduler wake key while waiters may be blocked.
+        var semaphoreAddress = ctx[CpuRegister.Rdi];
+        var nameAddress = ctx[CpuRegister.Rsi];
+        if (!TryGetPosixSemaphoreHandle(ctx, semaphoreAddress, out var handle) ||
+            !_semaphores.ContainsKey(handle) ||
+            nameAddress == 0 ||
+            !ctx.TryReadNullTerminatedUtf8(nameAddress, MaxSemaphoreNameLength, out _))
+        {
+            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    [SysAbiExport(
         Nid = "YCV5dGGBcCo",
         ExportName = "sem_wait",
         Target = Generation.Gen4 | Generation.Gen5,
@@ -567,7 +588,7 @@ public static class KernelSemaphoreCompatExports
     private static bool TryReadUInt32(CpuContext ctx, ulong address, out uint value)
     {
         Span<byte> buffer = stackalloc byte[sizeof(uint)];
-        if (!ctx.Memory.TryRead(address, buffer))
+        if (!KernelMemoryCompatExports.TryReadCompat(ctx, address, buffer))
         {
             value = 0;
             return false;
@@ -581,7 +602,7 @@ public static class KernelSemaphoreCompatExports
     {
         Span<byte> buffer = stackalloc byte[sizeof(uint)];
         BinaryPrimitives.WriteUInt32LittleEndian(buffer, value);
-        return ctx.Memory.TryWrite(address, buffer);
+        return KernelMemoryCompatExports.TryWriteCompat(ctx, address, buffer);
     }
 
     private static bool TryReadNullTerminatedUtf8(CpuContext ctx, ulong address, int maxLength, out string value)
@@ -592,26 +613,7 @@ public static class KernelSemaphoreCompatExports
             return false;
         }
 
-        var bytes = new byte[Math.Min(maxLength, 4096)];
-        Span<byte> current = stackalloc byte[1];
-        for (var i = 0; i < bytes.Length; i++)
-        {
-            if (!ctx.Memory.TryRead(address + (ulong)i, current))
-            {
-                return false;
-            }
-
-            if (current[0] == 0)
-            {
-                value = Encoding.UTF8.GetString(bytes, 0, i);
-                return true;
-            }
-
-            bytes[i] = current[0];
-        }
-
-        value = Encoding.UTF8.GetString(bytes);
-        return true;
+        return KernelMemoryCompatExports.TryReadNullTerminatedUtf8(ctx, address, maxLength, out value);
     }
 
     // Call sites must check this before building the interpolated message; the trace

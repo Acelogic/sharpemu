@@ -74,6 +74,33 @@ public interface IGuestThreadScheduler
     /// </summary>
     bool TrySetGuestThreadAffinity(ulong guestThreadHandle, ulong affinityMask);
 
+    /// <summary>
+    /// Optional scheduler support for Sony's user-context suspension ABI.
+    /// Backends without cooperative suspension report the capability as
+    /// unavailable; the ShellCore scheduler supplies the full implementation.
+    /// </summary>
+    bool TrySuspendGuestThread(ulong guestThreadHandle, out string? error)
+    {
+        error = "guest thread user-context suspension is not supported by this scheduler";
+        return false;
+    }
+
+    bool TryResumeGuestThread(ulong guestThreadHandle, out string? error)
+    {
+        error = "guest thread user-context suspension is not supported by this scheduler";
+        return false;
+    }
+
+    bool TryGetSuspendedGuestThreadContext(
+        ulong guestThreadHandle,
+        out GuestCpuContinuation continuation,
+        out string? error)
+    {
+        continuation = default;
+        error = "guest thread user-context suspension is not supported by this scheduler";
+        return false;
+    }
+
     IReadOnlyList<GuestThreadSnapshot> SnapshotThreads();
 
     bool TryCallGuestFunction(

@@ -9,9 +9,17 @@ namespace SharpEmu.Libs.Share;
 public static class ShareExports
 {
     private const int MaxContentParamBytes = 4096;
+    private const int ShareErrorServiceUnavailable = unchecked((int)0x81960001);
+    private const int ShareErrorInvalidArgument = unchecked((int)0x81960002);
+    private const int ShareErrorNotInitialized = unchecked((int)0x8196000C);
 
+    private static readonly object _contentEventGate = new();
+    private static readonly List<ContentEventRegistration> _contentEventRegistrations = [];
     private static int _initialized;
+    private static int _contentEventServiceAvailable;
     private static string _contentParam = string.Empty;
+
+    private sealed record ContentEventRegistration(ulong Callback, ulong UserData);
 
     [SysAbiExport(
         Nid = "nBDD66kiFW8",
@@ -28,10 +36,77 @@ public static class ShareExports
             return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
 
-        Interlocked.Exchange(ref _initialized, 1);
+        lock (_contentEventGate)
+        {
+            Volatile.Write(ref _initialized, 1);
+            Volatile.Write(ref _contentEventServiceAvailable, 1);
+        }
 
         TraceShare($"initialize memory=0x{memorySize:X} priority={priority} affinity=0x{affinityMask:X}");
         return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    [SysAbiExport(
+        Nid = "0IL1keINExQ",
+        ExportName = "sceShareTerminate",
+        Target = Generation.Gen5,
+        LibraryName = "libSceShare")]
+    public static int ShareTerminate(CpuContext ctx)
+    {
+        lock (_contentEventGate)
+        {
+            if (Volatile.Read(ref _initialized) == 0)
+            {
+                return SetShareReturn(ctx, ShareErrorNotInitialized);
+            }
+
+            ClearShareLifecycleUnderLock();
+        }
+
+        TraceShare("terminate");
+        return SetShareReturn(ctx, 0);
+    }
+
+    [SysAbiExport(
+        Nid = "Sygnk9dr5WQ",
+        ExportName = "sceShareRegisterContentEventCallback",
+        Target = Generation.Gen5,
+        LibraryName = "libSceShare")]
+    public static int ShareRegisterContentEventCallback(CpuContext ctx)
+    {
+        var callback = ctx[CpuRegister.Rdi];
+        var userData = ctx[CpuRegister.Rsi];
+        if (callback == 0)
+        {
+            return SetShareReturn(ctx, ShareErrorInvalidArgument);
+        }
+
+        lock (_contentEventGate)
+        {
+            if (Volatile.Read(ref _initialized) == 0)
+            {
+                return SetShareReturn(ctx, ShareErrorNotInitialized);
+            }
+
+            if (Volatile.Read(ref _contentEventServiceAvailable) == 0)
+            {
+                return SetShareReturn(ctx, ShareErrorServiceUnavailable);
+            }
+
+            if (_contentEventRegistrations.Exists(
+                    registration => registration.Callback == callback))
+            {
+                return SetShareReturn(ctx, ShareErrorInvalidArgument);
+            }
+
+            // Firmware owns only its 0x20 list node. The callback and userdata
+            // remain unowned guest targets; invoking the guest callback requires
+            // a guest-execution bridge and is intentionally outside this HLE.
+            _contentEventRegistrations.Add(new ContentEventRegistration(callback, userData));
+        }
+
+        TraceShare($"register_content_event_callback callback=0x{callback:X} userdata=0x{userData:X}");
+        return SetShareReturn(ctx, 0);
     }
 
     [SysAbiExport(
@@ -101,5 +176,64 @@ public static class ShareExports
         }
 
         Console.Error.WriteLine($"[LOADER][TRACE] share.{message}");
+    }
+
+    internal static bool TryGetContentEventCallbackForTests(ulong callback, out ulong userData)
+    {
+        lock (_contentEventGate)
+        {
+            var registration = _contentEventRegistrations.Find(
+                candidate => candidate.Callback == callback);
+            if (registration is not null)
+            {
+                userData = registration.UserData;
+                return true;
+            }
+        }
+
+        userData = 0;
+        return false;
+    }
+
+    internal static int ContentEventCallbackCountForTests
+    {
+        get
+        {
+            lock (_contentEventGate)
+            {
+                return _contentEventRegistrations.Count;
+            }
+        }
+    }
+
+    internal static void SetContentEventServiceAvailableForTests(bool available)
+    {
+        lock (_contentEventGate)
+        {
+            Volatile.Write(ref _contentEventServiceAvailable, available ? 1 : 0);
+        }
+    }
+
+    internal static void ResetForTests()
+    {
+        lock (_contentEventGate)
+        {
+            ClearShareLifecycleUnderLock();
+        }
+    }
+
+    private static void ClearShareLifecycleUnderLock()
+    {
+        _contentEventRegistrations.Clear();
+        Volatile.Write(ref _contentEventServiceAvailable, 0);
+        Volatile.Write(ref _initialized, 0);
+        _contentParam = string.Empty;
+    }
+
+    private static int SetShareReturn(CpuContext ctx, int result)
+    {
+        // The firmware functions return through EAX, which zero-extends RAX.
+        ctx[CpuRegister.Rax] = unchecked((uint)result);
+        return result;
     }
 }

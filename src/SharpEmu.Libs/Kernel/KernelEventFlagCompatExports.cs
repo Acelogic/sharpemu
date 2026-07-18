@@ -25,6 +25,9 @@ public static class KernelEventFlagCompatExports
     private static readonly ConcurrentDictionary<ulong, EventFlagState> _eventFlags = new();
     private static long _nextEventFlagHandle = 1;
 
+    [ThreadStatic]
+    private static int _fallbackSchedulerPumpDepth;
+
     // Cached once: gating every call site avoids building the interpolated
     // trace string (and FormatFrameChain/FormatGuestWaitObject) when disabled.
     private static readonly bool _traceEventFlag = string.Equals(
@@ -78,7 +81,7 @@ public static class KernelEventFlagCompatExports
             Bits = initialPattern,
         };
 
-        if (!ctx.TryWriteUInt64(outAddress, handle))
+        if (!KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, outAddress, handle))
         {
             _eventFlags.TryRemove(handle, out _);
             return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
@@ -302,20 +305,66 @@ public static class KernelEventFlagCompatExports
                     return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_TRY_AGAIN);
                 }
 
+                // A zero-duration timed wait is an instant poll. Pumping the
+                // guest scheduler first can recursively enter another main-
+                // executor wait and grow the native call stack without bound.
+                if (timeoutAddress != 0 && hostDeadlineMs <= Environment.TickCount64)
+                {
+                    _ = TryWriteUInt32(ctx, timeoutAddress, 0);
+                    _ = TryWriteResultPattern(ctx, resultAddress, state.Bits);
+                    return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT);
+                }
+
                 state.WaitingThreads++;
                 if (_traceEventFlag) TraceEventFlag($"wait-pump handle=0x{handle:X16} pattern=0x{pattern:X16} waiters={state.WaitingThreads} guest_thread=0x{currentGuestThread:X16} fiber=0x{currentFiber:X16} managed={managedThread} ret=0x{returnRip:X16}");
                 var releaseWaiter = true;
                 try
                 {
+                    int CompleteFallbackTimeout()
+                    {
+                        state.WaitingThreads = Math.Max(0, state.WaitingThreads - 1);
+                        releaseWaiter = false;
+                        _ = TryWriteUInt32(ctx, timeoutAddress, 0);
+                        _ = TryWriteResultPattern(ctx, resultAddress, state.Bits);
+                        if (_traceEventFlag) TraceEventFlag($"wait-timeout handle=0x{handle:X16} pattern=0x{pattern:X16} bits=0x{state.Bits:X16} ret=0x{returnRip:X16}");
+                        return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT);
+                    }
+
                     while (true)
                     {
+                        var remaining = hostDeadlineMs - Environment.TickCount64;
+                        if (timeoutAddress != 0 && remaining <= 0)
+                        {
+                            return CompleteFallbackTimeout();
+                        }
+
+                        if (_fallbackSchedulerPumpDepth != 0)
+                        {
+                            // A scheduler pump can encounter another wait on
+                            // the same main executor. Let a timed nested wait
+                            // expire on the host instead of recursively pumping.
+                            if (timeoutAddress == 0)
+                            {
+                                state.WaitingThreads = Math.Max(0, state.WaitingThreads - 1);
+                                releaseWaiter = false;
+                                return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_TRY_AGAIN);
+                            }
+
+                            Monitor.Wait(
+                                state.Gate,
+                                (int)Math.Min(remaining, HostWaitPumpMilliseconds));
+                            continue;
+                        }
+
                         Monitor.Exit(state.Gate);
                         try
                         {
+                            _fallbackSchedulerPumpDepth++;
                             scheduler.Pump(ctx, "sceKernelWaitEventFlag");
                         }
                         finally
                         {
+                            _fallbackSchedulerPumpDepth--;
                             Monitor.Enter(state.Gate);
                         }
 
@@ -327,15 +376,10 @@ public static class KernelEventFlagCompatExports
                             return SetReturn(ctx, pumpedWaitResult);
                         }
 
-                        var remaining = hostDeadlineMs - Environment.TickCount64;
+                        remaining = hostDeadlineMs - Environment.TickCount64;
                         if (timeoutAddress != 0 && remaining <= 0)
                         {
-                            state.WaitingThreads = Math.Max(0, state.WaitingThreads - 1);
-                            releaseWaiter = false;
-                            _ = TryWriteUInt32(ctx, timeoutAddress, 0);
-                            _ = TryWriteResultPattern(ctx, resultAddress, state.Bits);
-                            if (_traceEventFlag) TraceEventFlag($"wait-timeout handle=0x{handle:X16} pattern=0x{pattern:X16} bits=0x{state.Bits:X16} ret=0x{returnRip:X16}");
-                            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT);
+                            return CompleteFallbackTimeout();
                         }
 
                         Monitor.Wait(state.Gate, (int)Math.Min(remaining, HostWaitPumpMilliseconds));

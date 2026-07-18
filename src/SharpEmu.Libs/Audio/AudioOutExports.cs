@@ -139,6 +139,26 @@ public static class AudioOutExports
     }
 
     [SysAbiExport(
+        Nid = "qLpSK75lXI4",
+        ExportName = "sceAudioOutOpenEx",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAudioOut")]
+    public static int AudioOutOpenEx(CpuContext ctx)
+    {
+        // Gen5 OpenEx inserts a modifier before the standard length/frequency
+        // pair and carries the format as its seventh SysV argument.
+        if (!ctx.TryReadUInt64(ctx[CpuRegister.Rsp] + sizeof(ulong), out var format))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        ctx[CpuRegister.Rcx] = ctx[CpuRegister.R8];
+        ctx[CpuRegister.R8] = ctx[CpuRegister.R9];
+        ctx[CpuRegister.R9] = format;
+        return AudioOutOpen(ctx);
+    }
+
+    [SysAbiExport(
         Nid = "s1--uE9mBFw",
         ExportName = "sceAudioOutClose",
         Target = Generation.Gen4 | Generation.Gen5,
@@ -263,6 +283,29 @@ public static class AudioOutExports
             port.Volume = Math.Clamp(maxVolume / (float)unityVolume, 0f, 1f);
         }
 
+        return ctx.SetReturn(0);
+    }
+
+    [SysAbiExport(
+        Nid = "VjhsmxpcezI",
+        ExportName = "sceAudiodecInitLibrary",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAudiodec")]
+    public static int AudiodecInitLibrary(CpuContext ctx)
+    {
+        // PSM initializes its MP3 and AAC codec libraries before creating the
+        // managed sound service. ShellUI can render without decoding audio, so
+        // accept both codec types and let later decode calls remain optional.
+        return ctx.SetReturn(0);
+    }
+
+    [SysAbiExport(
+        Nid = "h5jSB2QIDV0",
+        ExportName = "sceAudiodecTermLibrary",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAudiodec")]
+    public static int AudiodecTermLibrary(CpuContext ctx)
+    {
         return ctx.SetReturn(0);
     }
 

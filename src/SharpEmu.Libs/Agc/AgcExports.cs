@@ -6,12 +6,17 @@ using SharpEmu.HLE;
 using SharpEmu.Libs.AvPlayer;
 using SharpEmu.Libs.Gpu;
 using SharpEmu.ShaderCompiler;
+using SharpEmu.ShaderCompiler.Vulkan;
 using SharpEmu.Libs.Kernel;
 using SharpEmu.Libs.VideoOut;
 using System.Buffers.Binary;
 using System.Runtime.CompilerServices;
 
 namespace SharpEmu.Libs.Agc;
+
+// Attribution: substantial PS5 AGC command and shader-runtime portions in this file were
+// originally authored by @xnetcat and later adapted in PR #216. Source snapshot:
+// https://github.com/xnetcat/sharpemu/tree/2497ea6799432ac2385a50f739eff2ce922d6fd4
 
 public static partial class AgcExports
 {
@@ -167,9 +172,16 @@ public static partial class AgcExports
     private const uint RegisterDefaultsVersion7 = 7;
     private const uint RegisterDefaultsVersion8 = 8;
     private const uint RegisterDefaultsVersion10 = 10;
+    private const uint RegisterDefaultsVersion11 = 11;
     private const uint RegisterDefaultsVersion13 = 13;
     private const int RegisterDefaultsSize = 0x40;
     private const int RegisterDefaultBlockSize = 16 * 8;
+    // GDS is device-global storage, not address-zero per-draw scratch.  Give it
+    // a stable synthetic identity so the Vulkan guest-buffer cache preserves
+    // its contents across translated draws without exposing it as guest RAM.
+    private const ulong SyntheticGdsBaseAddress = 0xFFFF_FFFE_0000_0000;
+    private static readonly byte[] _persistentGds =
+        new byte[Gen5SpirvTranslator.GdsByteSize];
 
     private const ulong ShaderUserDataOffset = 0x08;
     private const ulong ShaderCodeOffset = 0x10;
@@ -186,6 +198,12 @@ public static partial class AgcExports
     private const ulong ShaderNumOutputSemanticsOffset = 0x56;
     private const ulong ShaderTypeOffset = 0x5A;
     private const ulong ShaderNumShRegistersOffset = 0x5C;
+    private const int AgcErrorIncompatibleShaderPair = unchecked((int)0x8A6C0008);
+    private const int ShaderDescriptorSize = 0x60;
+    private const uint InternalGsRegister = 0x080;
+    private const uint InternalHsRegister = 0x100;
+    private const uint SpiShaderPgmRsrc1Hs = 0x10A;
+    private const uint SpiShaderPgmRsrc2Hs = 0x10B;
     private const ulong CommandBufferCursorUpOffset = 0x10;
     private const ulong CommandBufferCursorDownOffset = 0x18;
     private const ulong CommandBufferCallbackOffset = 0x20;
@@ -231,6 +249,8 @@ public static partial class AgcExports
         _rejectedDispatchArguments = new();
     private static readonly ulong[] _dumpShaderProgramAddresses = ParseHexAddresses(
         Environment.GetEnvironmentVariable("SHARPEMU_DUMP_SHADER_PROGRAM_ADDRS"));
+    private static readonly ulong[] _dumpSpirvAddresses = ParseHexAddresses(
+        Environment.GetEnvironmentVariable("SHARPEMU_DUMP_SPIRV_ADDRS"));
     private static readonly string? _dumpShaderProgramDirectory =
         Environment.GetEnvironmentVariable("SHARPEMU_DUMP_SHADER_PROGRAM_DIR");
     private static readonly ConcurrentDictionary<(string Stage, ulong Address), byte>
@@ -241,7 +261,8 @@ public static partial class AgcExports
     private static readonly ConcurrentDictionary<
         (ulong Es, ulong EsState, uint EsRsrc1, ulong Ps, ulong PsState,
          uint PsRsrc1, ulong OutputLayout, uint OutputMasks, uint OutputCount, uint Attributes,
-         uint PsInputEna, uint PsInputAddr, ulong InputControls, ulong AliasAlignment),
+         uint PsInputEna, uint PsInputAddr, ulong InputControls, bool UsesGds,
+         ulong AliasAlignment),
         (IGuestCompiledShader Vertex, IGuestCompiledShader Pixel)> _graphicsShaderCache = new();
     private static readonly ConcurrentDictionary<
         (ulong Cs, ulong State, uint Rsrc1, uint LocalX, uint LocalY, uint LocalZ,
@@ -523,11 +544,13 @@ public static partial class AgcExports
         uint RawBlendControl,
         uint RawColorInfo,
         IReadOnlyList<uint> PixelInitialScalars,
-        IReadOnlyList<uint> VertexInitialScalars);
+        IReadOnlyList<uint> VertexInitialScalars,
+        bool UsesGds = false);
 
     private sealed record TranslatedImageBinding(
         TextureDescriptor Descriptor,
         bool IsStorage,
+        bool WritesImage,
         uint MipLevel,
         IReadOnlyList<uint> SamplerDescriptor);
 
@@ -762,7 +785,7 @@ public static partial class AgcExports
             !RelocatePointerField(ctx, headerAddress + ShaderSpecialsOffset) ||
             !RelocatePointerField(ctx, headerAddress + ShaderInputSemanticsOffset) ||
             !RelocatePointerField(ctx, headerAddress + ShaderOutputSemanticsOffset) ||
-            !ctx.TryWriteUInt64(headerAddress + ShaderCodeOffset, codeAddress))
+            !TryWriteUInt64(ctx, headerAddress + ShaderCodeOffset, codeAddress))
         {
             return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
@@ -788,7 +811,7 @@ public static partial class AgcExports
         }
 
         if (destinationAddress != 0 &&
-            !ctx.TryWriteUInt64(destinationAddress, headerAddress))
+            !TryWriteUInt64(ctx, destinationAddress, headerAddress))
         {
             return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
@@ -801,6 +824,456 @@ public static partial class AgcExports
         TraceCreateShader(destinationAddress, headerAddress, codeAddress, "ok");
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "BfBDZGbti7A",
+        ExportName = "sceAgcGetIsTrinityMode",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int GetIsTrinityMode(CpuContext ctx)
+    {
+        // This is a void firmware ABI. SharpEmu currently models base Prospero,
+        // so write one false byte. Mark the incoming RAX value as explicitly
+        // preserved so ModuleManager/native dispatch does not replace it with
+        // this handler's internal return value.
+        var preservedRax = ctx[CpuRegister.Rax];
+        Span<byte> mode = stackalloc byte[1];
+        mode[0] = 0;
+        _ = ctx.Memory.TryWrite(ctx[CpuRegister.Rdi], mode);
+        ctx[CpuRegister.Rax] = preservedRax;
+        return 0;
+    }
+
+    // Human-readable names for these exports have not been recovered. Keep
+    // explicit placeholders and dispatch solely by the verified NIDs.
+#pragma warning disable SHEM004, SHEM006
+    [SysAbiExport(
+        Nid = "dolOmWH+huQ",
+        ExportName = "unknown_dolOmWH_huQ",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int UnknownGetCombinedShaderRegisterStorageSize(CpuContext ctx)
+    {
+        var outputAddress = ctx[CpuRegister.Rdi];
+        var firstShaderAddress = ctx[CpuRegister.Rsi];
+        var secondShaderAddress = ctx[CpuRegister.Rdx];
+
+        if (!TryReadByte(ctx, firstShaderAddress + ShaderTypeOffset, out var firstType))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        var requiredSecondType = firstType switch
+        {
+            5 => (byte)7,
+            4 => (byte)6,
+            _ => byte.MaxValue,
+        };
+        if (requiredSecondType == byte.MaxValue ||
+            !TryReadByte(ctx, secondShaderAddress + ShaderTypeOffset, out var secondType))
+        {
+            return requiredSecondType == byte.MaxValue
+                ? ctx.SetReturn(AgcErrorIncompatibleShaderPair)
+                : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        if (secondType != requiredSecondType)
+        {
+            return ctx.SetReturn(AgcErrorIncompatibleShaderPair);
+        }
+
+        if (!TryReadByte(
+                ctx,
+                secondShaderAddress + ShaderNumShRegistersOffset,
+                out var registerCount) ||
+            !ctx.TryWriteUInt64(outputAddress, (ulong)registerCount * 8) ||
+            !ctx.TryWriteUInt64(outputAddress + sizeof(ulong), 4))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        return ctx.SetReturn(0);
+    }
+
+    [SysAbiExport(
+        Nid = "fd5Bp5tGTgo",
+        ExportName = "unknown_fd5Bp5tGTgo",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int UnknownCreateCombinedShader(CpuContext ctx)
+    {
+        var outputAddress = ctx[CpuRegister.Rdi];
+        var firstShaderAddress = ctx[CpuRegister.Rsi];
+        var secondShaderAddress = ctx[CpuRegister.Rdx];
+        var registerBufferAddress = ctx[CpuRegister.Rcx];
+
+        if (!TryReadByte(ctx, firstShaderAddress + ShaderTypeOffset, out var firstType))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        var requiredSecondType = firstType switch
+        {
+            5 => (byte)7,
+            4 => (byte)6,
+            _ => byte.MaxValue,
+        };
+        var combinedType = firstType == 5 ? (byte)3 : (byte)2;
+        if (requiredSecondType == byte.MaxValue ||
+            !TryReadByte(ctx, secondShaderAddress + ShaderTypeOffset, out var secondType))
+        {
+            return requiredSecondType == byte.MaxValue
+                ? ctx.SetReturn(AgcErrorIncompatibleShaderPair)
+                : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        if (secondType != requiredSecondType)
+        {
+            return ctx.SetReturn(AgcErrorIncompatibleShaderPair);
+        }
+
+        Span<byte> descriptor = stackalloc byte[ShaderDescriptorSize];
+        if (!ctx.Memory.TryRead(secondShaderAddress, descriptor) ||
+            !ctx.Memory.TryWrite(outputAddress, descriptor))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        Span<byte> type = stackalloc byte[1];
+        type[0] = combinedType;
+        if (!ctx.Memory.TryWrite(outputAddress + ShaderTypeOffset, type) ||
+            !TryShaderPairCompatibility(
+                ctx,
+                firstShaderAddress,
+                descriptor,
+                firstType == 5,
+                out var compatible))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        // Firmware has already copied the descriptor and changed its type when
+        // this check fails. Preserve that deliberately non-atomic behavior.
+        if (!compatible)
+        {
+            return ctx.SetReturn(AgcErrorIncompatibleShaderPair);
+        }
+
+        if (registerBufferAddress != 0 &&
+            !CopyCombinedShaderRegisters(
+                ctx,
+                outputAddress,
+                descriptor,
+                registerBufferAddress))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        if (!TryReconcileCombinedShaderRegisters(
+                ctx,
+                outputAddress,
+                firstShaderAddress,
+                firstType == 5) ||
+            !ctx.TryWriteUInt64(outputAddress + sizeof(ulong), 0))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        return ctx.SetReturn(0);
+    }
+#pragma warning restore SHEM004, SHEM006
+
+    private static bool TryShaderPairCompatibility(
+        CpuContext ctx,
+        ulong firstShaderAddress,
+        ReadOnlySpan<byte> secondDescriptor,
+        bool hullLocalPair,
+        out bool compatible)
+    {
+        compatible = false;
+        if (!TryReadUInt64(
+                ctx,
+                firstShaderAddress + ShaderSpecialsOffset,
+                out var firstSpecialsAddress))
+        {
+            return false;
+        }
+
+        var secondSpecialsAddress = BinaryPrimitives.ReadUInt64LittleEndian(
+            secondDescriptor[(int)ShaderSpecialsOffset..]);
+        if (!TryReadUInt64(ctx, firstSpecialsAddress + 8, out var firstFlags) ||
+            !TryReadUInt64(ctx, secondSpecialsAddress + 8, out var secondFlags))
+        {
+            return false;
+        }
+
+        var compatibilityBit = hullLocalPair ? 53 : 54;
+        compatible = (((firstFlags ^ secondFlags) >> compatibilityBit) & 1) == 0;
+        return true;
+    }
+
+    private static bool CopyCombinedShaderRegisters(
+        CpuContext ctx,
+        ulong outputAddress,
+        ReadOnlySpan<byte> secondDescriptor,
+        ulong registerBufferAddress)
+    {
+        var sourceAddress = BinaryPrimitives.ReadUInt64LittleEndian(
+            secondDescriptor[(int)ShaderShRegistersOffset..]);
+        var byteCount = secondDescriptor[(int)ShaderNumShRegistersOffset] * 8;
+        if (byteCount != 0)
+        {
+            var registers = new byte[byteCount];
+            if (!ctx.Memory.TryRead(sourceAddress, registers) ||
+                !ctx.Memory.TryWrite(registerBufferAddress, registers))
+            {
+                return false;
+            }
+        }
+
+        return ctx.TryWriteUInt64(
+            outputAddress + ShaderShRegistersOffset,
+            registerBufferAddress);
+    }
+
+    private static bool TryReconcileCombinedShaderRegisters(
+        CpuContext ctx,
+        ulong outputAddress,
+        ulong firstShaderAddress,
+        bool hullLocalPair)
+    {
+        if (!TryReadUInt64(
+                ctx,
+                firstShaderAddress + ShaderShRegistersOffset,
+                out var firstRegistersAddress) ||
+            !TryReadByte(
+                ctx,
+                firstShaderAddress + ShaderNumShRegistersOffset,
+                out var firstRegisterCount) ||
+            !TryReadUInt64(
+                ctx,
+                outputAddress + ShaderShRegistersOffset,
+                out var outputRegistersAddress) ||
+            !TryReadByte(
+                ctx,
+                outputAddress + ShaderNumShRegistersOffset,
+                out var outputRegisterCount))
+        {
+            return false;
+        }
+
+        var internalRegister = hullLocalPair
+            ? InternalHsRegister
+            : InternalGsRegister;
+        var resource1Register = hullLocalPair
+            ? SpiShaderPgmRsrc1Hs
+            : SpiShaderPgmRsrc1Gs;
+        var resource2Register = hullLocalPair
+            ? SpiShaderPgmRsrc2Hs
+            : SpiShaderPgmRsrc2Gs;
+        var programLoRegister = hullLocalPair
+            ? SpiShaderPgmLoLs
+            : SpiShaderPgmLoEs;
+
+        if (!TryFindShaderRegister(
+                ctx,
+                firstRegistersAddress,
+                firstRegisterCount,
+                internalRegister,
+                0,
+                out var firstInternal0) ||
+            !TryFindShaderRegister(
+                ctx,
+                firstRegistersAddress,
+                firstRegisterCount,
+                internalRegister,
+                1,
+                out var firstInternal1) ||
+            !TryFindShaderRegister(
+                ctx,
+                outputRegistersAddress,
+                outputRegisterCount,
+                internalRegister,
+                0,
+                out var outputInternal0) ||
+            !TryFindShaderRegister(
+                ctx,
+                outputRegistersAddress,
+                outputRegisterCount,
+                internalRegister,
+                1,
+                out var outputInternal1) ||
+            !TryReadUInt32(ctx, firstInternal0 + sizeof(uint), out var firstInternalValue0) ||
+            !TryReadUInt32(ctx, firstInternal1 + sizeof(uint), out var firstInternalValue1) ||
+            !TryWriteUInt32(ctx, outputInternal0 + sizeof(uint), firstInternalValue0) ||
+            !TryWriteUInt32(ctx, outputInternal1 + sizeof(uint), firstInternalValue1) ||
+            !TryFindShaderRegister(
+                ctx,
+                firstRegistersAddress,
+                firstRegisterCount,
+                resource1Register,
+                0,
+                out var firstResource1) ||
+            !TryFindShaderRegister(
+                ctx,
+                firstRegistersAddress,
+                firstRegisterCount,
+                resource2Register,
+                0,
+                out var firstResource2) ||
+            !TryFindShaderRegister(
+                ctx,
+                outputRegistersAddress,
+                outputRegisterCount,
+                resource1Register,
+                0,
+                out var outputResource1) ||
+            !TryFindShaderRegister(
+                ctx,
+                outputRegistersAddress,
+                outputRegisterCount,
+                resource2Register,
+                0,
+                out var outputResource2) ||
+            !TryReadUInt32(ctx, firstResource1 + sizeof(uint), out var firstResourceValue1) ||
+            !TryReadUInt32(ctx, firstResource2 + sizeof(uint), out var firstResourceValue2) ||
+            !TryReadUInt32(ctx, outputResource1 + sizeof(uint), out var outputResourceValue1) ||
+            !TryReadUInt32(ctx, outputResource2 + sizeof(uint), out var outputResourceValue2))
+        {
+            return false;
+        }
+
+        ReconcileShaderResourceRegisters(
+            hullLocalPair,
+            firstResourceValue1,
+            firstResourceValue2,
+            ref outputResourceValue1,
+            ref outputResourceValue2);
+        if (!TryWriteUInt32(
+                ctx,
+                outputResource1 + sizeof(uint),
+                outputResourceValue1) ||
+            !TryWriteUInt32(
+                ctx,
+                outputResource2 + sizeof(uint),
+                outputResourceValue2) ||
+            !TryFindShaderRegister(
+                ctx,
+                outputRegistersAddress,
+                outputRegisterCount,
+                programLoRegister,
+                0,
+                out var programLoAddress) ||
+            !TryReadUInt64(
+                ctx,
+                firstShaderAddress + ShaderCodeOffset,
+                out var codeAddress))
+        {
+            return false;
+        }
+
+        Span<byte> programHi = stackalloc byte[1];
+        programHi[0] = (byte)(codeAddress >> 40);
+        return ctx.Memory.TryWrite(programLoAddress + 12, programHi) &&
+               TryWriteUInt32(
+                   ctx,
+                   programLoAddress + sizeof(uint),
+                   (uint)(codeAddress >> 8));
+    }
+
+    private static bool TryFindShaderRegister(
+        CpuContext ctx,
+        ulong registersAddress,
+        byte registerCount,
+        uint register,
+        int occurrence,
+        out ulong registerAddress)
+    {
+        for (var index = 0; index < registerCount; index++)
+        {
+            var candidateAddress = registersAddress + ((ulong)index * 8);
+            if (!TryReadUInt32(ctx, candidateAddress, out var candidate))
+            {
+                registerAddress = 0;
+                return false;
+            }
+
+            if (candidate != register)
+            {
+                continue;
+            }
+
+            if (occurrence-- == 0)
+            {
+                registerAddress = candidateAddress;
+                return true;
+            }
+        }
+
+        registerAddress = 0;
+        return false;
+    }
+
+    private static void ReconcileShaderResourceRegisters(
+        bool hullLocalPair,
+        uint firstResource1,
+        uint firstResource2,
+        ref uint outputResource1,
+        ref uint outputResource2)
+    {
+        var firstWidth = (firstResource1 & 0x3F) * 8 + 8;
+        var outputWidth = (outputResource1 & 0x3F) * 8 + 8;
+        var mergedWidth = Math.Max(firstWidth, outputWidth);
+        var firstRequirement =
+            (firstWidth >> 1) + ((firstResource2 >> 28) * 8);
+        var outputRequirement =
+            (outputWidth >> 1) + ((outputResource2 >> 28) * 8);
+        var mergedRequirement = Math.Max(firstRequirement, outputRequirement);
+        uint mergedRingSize = 0;
+        if ((mergedWidth >> 1) < mergedRequirement)
+        {
+            var minimumRequirement = Math.Min(
+                firstRequirement,
+                outputRequirement);
+            mergedRingSize =
+                ((mergedRequirement - minimumRequirement) * 0x0040_0000u +
+                 0x01C0_0000u) &
+                0xF000_0000u;
+        }
+
+        outputResource1 =
+            (((mergedWidth >> 3) - 1) & 0x3F) |
+            (outputResource1 & 0xFFFF_FFC0u);
+        outputResource2 =
+            (outputResource2 & 0x0FFF_FFFFu) | mergedRingSize;
+
+        if (hullLocalPair)
+        {
+            var mergedMode = Math.Max(
+                (firstResource1 >> 28) & 3,
+                (outputResource1 >> 28) & 3);
+            outputResource1 =
+                (mergedMode << 28) | (outputResource1 & 0xCFFF_FFFFu);
+            outputResource2 =
+                (firstResource2 & 0x0800_003Eu) |
+                (outputResource2 & 0xF7FF_FFC1u);
+            return;
+        }
+
+        var mergedGsMode = Math.Max(
+            (firstResource1 >> 29) & 3,
+            (outputResource1 >> 29) & 3);
+        outputResource1 =
+            (mergedGsMode << 29) | (outputResource1 & 0x9FFF_FFFFu);
+        var mergedComponentCount = Math.Max(
+            (firstResource2 >> 16) & 3,
+            (outputResource2 >> 16) & 3) << 16;
+        outputResource2 =
+            (firstResource2 & 0x0800_003Eu) |
+            mergedComponentCount |
+            (outputResource2 & 0xF7F8_FFC1u) |
+            (firstResource2 & 0x0004_0000u);
     }
 
     [SysAbiExport(
@@ -1121,7 +1594,7 @@ public static partial class AgcExports
                 : commandAddress + 4;
         }
 
-        if (!ctx.TryWriteUInt64(outputAddress, payloadAddress))
+        if (!TryWriteUInt64(ctx, outputAddress, payloadAddress))
         {
             return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
@@ -1937,6 +2410,58 @@ public static partial class AgcExports
         TraceAgc(
             $"agc.dcb_acquire_mem buf=0x{commandBufferAddress:X16} cmd=0x{commandAddress:X16} " +
             $"engine={engine} cbdb=0x{cbDbOp:X8} gcr=0x{gcrControl:X8} base=0x{baseAddress:X16} size=0x{sizeBytes:X16}");
+        return ReturnPointer(ctx, commandAddress);
+    }
+
+    [SysAbiExport(
+        Nid = "1rZSWUv1IRc",
+        ExportName = "sceAgcDcbCopyData",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int DcbCopyData(CpuContext ctx)
+    {
+        var commandBufferAddress = ctx[CpuRegister.Rdi];
+        var destinationSelector = (uint)(ctx[CpuRegister.Rsi] & 0xFF);
+        var destinationCachePolicy = (uint)(ctx[CpuRegister.Rdx] & 0xFF);
+        var destinationAddress = ctx[CpuRegister.Rcx];
+        var sourceAndEngineSelector = (uint)ctx[CpuRegister.R8];
+        var sourceCachePolicy = (uint)ctx[CpuRegister.R9];
+        var stackAddress = ctx[CpuRegister.Rsp];
+        if (!TryReadUInt64(ctx, stackAddress + sizeof(ulong), out var sourceAddress) ||
+            !TryReadUInt64(ctx, stackAddress + (2 * sizeof(ulong)), out var countSelectRaw) ||
+            !TryReadUInt64(ctx, stackAddress + (3 * sizeof(ulong)), out var writeConfirmRaw))
+        {
+            return ReturnPointer(ctx, 0);
+        }
+
+        if (commandBufferAddress == 0)
+        {
+            return ReturnPointer(ctx, 0);
+        }
+
+        var countSelect = (uint)(countSelectRaw & 0xFF);
+        var writeConfirm = (uint)(writeConfirmRaw & 0xFF);
+        var control =
+            ((sourceAndEngineSelector & 1u) << 30) |
+            ((destinationCachePolicy & 3u) << 25) |
+            ((writeConfirm & 1u) << 20) |
+            ((countSelect & 1u) << 16) |
+            ((sourceCachePolicy & 3u) << 13) |
+            (((destinationSelector >> 1) & 0xFu) << 8) |
+            ((sourceAndEngineSelector >> 1) & 0xFu);
+
+        if (!TryAllocateCommandDwords(ctx, commandBufferAddress, 6, out var commandAddress) ||
+            !TryWriteUInt32(ctx, commandAddress, Pm4(6, ItCopyData, 0)) ||
+            !TryWriteUInt32(ctx, commandAddress + 4, control) ||
+            !ctx.TryWriteUInt64(commandAddress + 8, sourceAddress) ||
+            !ctx.TryWriteUInt64(commandAddress + 16, destinationAddress))
+        {
+            return ReturnPointer(ctx, 0);
+        }
+
+        TraceAgc(
+            $"agc.dcb_copy_data buf=0x{commandBufferAddress:X16} cmd=0x{commandAddress:X16} " +
+            $"src=0x{sourceAddress:X16} dst=0x{destinationAddress:X16} control=0x{control:X8}");
         return ReturnPointer(ctx, commandAddress);
     }
 
@@ -6210,6 +6735,7 @@ public static partial class AgcExports
             textures.Add(new TranslatedImageBinding(
                 texture,
                 Gen5ShaderTranslator.IsStorageImageOperation(binding.Opcode),
+                Gen5ShaderTranslator.IsImageWriteOperation(binding.Opcode),
                 binding.MipLevel ?? 0,
                 binding.SamplerDescriptor));
         }
@@ -6309,6 +6835,19 @@ public static partial class AgcExports
             _shaderHeadersByCode.TryGetValue(exportShaderAddress, out exportShaderHeader);
             _shaderHeadersByCode.TryGetValue(pixelShaderAddress, out pixelShaderHeader);
         }
+
+        DumpShaderProgramIfRequested(
+            ctx,
+            "es",
+            exportShaderAddress,
+            exportShaderHeader,
+            "requested-capture");
+        DumpShaderProgramIfRequested(
+            ctx,
+            "ps",
+            pixelShaderAddress,
+            pixelShaderHeader,
+            "requested-capture");
 
         // Sequential (not short-circuited into one condition) so a failure
         // after an evaluation succeeded can return that evaluation's pooled
@@ -6505,6 +7044,9 @@ public static partial class AgcExports
         var pixelStateFingerprint = _bakeScalars
             ? ComputeShaderStateFingerprint(pixelEvaluation)
             : ComputeShaderStructuralFingerprint(pixelEvaluation);
+        var usesGds = pixelState.Program.Instructions.Any(static instruction =>
+            instruction.Opcode == "DsAppend" &&
+            instruction.Control is Gen5DataShareControl { Gds: true });
         var shaderKey = (
             exportShaderAddress,
             exportStateFingerprint,
@@ -6519,16 +7061,21 @@ public static partial class AgcExports
             psInputEna,
             psInputAddr,
             inputControlsFingerprint,
+            usesGds,
             VulkanVideoPresenter.GuestStorageBufferOffsetAlignment);
 
         var guestGlobalBuffers =
             pixelEvaluation.GlobalMemoryBindings.Count +
             exportEvaluation.GlobalMemoryBindings.Count;
-        // Two per-draw initial-scalar buffers ride after the guest buffers:
-        // [pixel guest][vertex guest][pixel sgprs][vertex sgprs].
-        var totalGlobalBuffers = _bakeScalars
+        // Runtime scalar blocks and the optional GDS allocation ride after the
+        // guest buffers: [pixel guest][vertex guest][pixel sgprs][vertex sgprs][gds].
+        var scalarBufferCount = _bakeScalars ? 0 : 2;
+        var gdsBufferIndex = usesGds
+            ? guestGlobalBuffers + scalarBufferCount
+            : -1;
+        var totalGlobalBuffers = (_bakeScalars
             ? guestGlobalBuffers
-            : guestGlobalBuffers + 2;
+            : guestGlobalBuffers + 2) + (usesGds ? 1 : 0);
         _graphicsShaderCache.TryGetValue(shaderKey, out var compiled);
 
         if (compiled.Vertex is null || compiled.Pixel is null)
@@ -6557,7 +7104,8 @@ public static partial class AgcExports
                     pixelInputAddress: psInputAddr,
                     storageBufferOffsetAlignment:
                         VulkanVideoPresenter.GuestStorageBufferOffsetAlignment,
-                    pixelInputControls: pixelInputControls) ||
+                    pixelInputControls: pixelInputControls,
+                    gdsBufferIndex: gdsBufferIndex) ||
                 !GuestGpu.Current.TryCompileVertexShader(
                     exportState,
                     exportEvaluation,
@@ -6713,7 +7261,8 @@ public static partial class AgcExports
                 ? rawInfo
                 : 0,
             pixelEvaluation.InitialScalarRegisters,
-            exportEvaluation.InitialScalarRegisters);
+            exportEvaluation.InitialScalarRegisters,
+            UsesGds: usesGds);
         return true;
     }
 
@@ -6743,6 +7292,12 @@ public static partial class AgcExports
                 .Skip(16)
                 .Take(20)
                 .Select((value, index) => $"s{index + 16}={value:X8}"));
+        var evaluatedVertexInputs = string.Join(
+            ',',
+            evaluation.ScalarRegisters
+                .Skip(68)
+                .Take(4)
+                .Select((value, index) => $"s{index + 68}={value:X8}"));
         var bindings = string.Join(
             ';',
             evaluation.GlobalMemoryBindings.Select((binding, index) =>
@@ -6793,7 +7348,10 @@ public static partial class AgcExports
         Console.Error.WriteLine(
             $"[AGC][VERTEX-BUFFER-STATE] " +
             $"es=0x{exportShaderAddress:X16} ps=0x{pixelShaderAddress:X16} " +
+            $"draw_count={drawCount} instances={state.InstanceCount} " +
+            $"indexed={(indexed ? 1 : 0)} " +
             $"initial=[{initialScalars}] evaluated=[{evaluatedScalars}] " +
+            $"vertex_inputs=[{evaluatedVertexInputs}] " +
             $"bindings=[{bindings}]");
 
         state.CxRegisters.TryGetValue(VgtShaderStagesEn, out var shaderStages);
@@ -7154,6 +7712,9 @@ public static partial class AgcExports
             var descriptorStride = descriptorWords.Length == 4
                 ? (descriptorWords[1] >> 16) & 0x3FFFu
                 : 0;
+            var initialDescriptorStride = initialDescriptorWords.Length == 4
+                ? (initialDescriptorWords[1] >> 16) & 0x3FFFu
+                : 0;
             var descriptorRecords = descriptorWords.Length == 4
                 ? descriptorWords[2]
                 : 0;
@@ -7161,10 +7722,71 @@ public static partial class AgcExports
                 ? descriptorRecords
                 : (ulong)descriptorStride * descriptorRecords;
 
+            var recordSample = "none";
+            if (stage == "vertex" &&
+                initialDescriptorStride != 0 &&
+                uint.TryParse(
+                    Environment.GetEnvironmentVariable(
+                        "SHARPEMU_TRACE_VERTEX_BUFFER_RECORD"),
+                    out var record))
+            {
+                var recordOffset = (ulong)record * initialDescriptorStride;
+                if (recordOffset < (ulong)binding.DataLength)
+                {
+                    var sampleLength = Math.Min(
+                        checked((int)initialDescriptorStride),
+                        Math.Min(64, binding.DataLength - checked((int)recordOffset)));
+                    recordSample =
+                        $"record={record}:offset={recordOffset}:" +
+                        Convert.ToHexString(binding.Data.AsSpan(
+                            checked((int)recordOffset),
+                            sampleLength));
+                }
+            }
+
+            var recordSummary = "none";
+            if (stage == "vertex" &&
+                _traceVertexShaderAddress == shaderAddress &&
+                Environment.GetEnvironmentVariable(
+                    "SHARPEMU_TRACE_VERTEX_BUFFER_RECORD_SUMMARY") == "1" &&
+                initialDescriptorStride is >= 32 and <= 256)
+            {
+                var stride = checked((int)initialDescriptorStride);
+                var recordCount = binding.DataLength / stride;
+                var first16Count = 0;
+                var first32Count = 0;
+                var upper32Count = 0;
+                var firstActive = new List<string>(8);
+                for (var recordIndex = 0; recordIndex < recordCount; recordIndex++)
+                {
+                    var recordBytes = binding.Data.AsSpan(
+                        recordIndex * stride,
+                        Math.Min(stride, 64));
+                    var first16 = ContainsNonzero(recordBytes[..Math.Min(16, recordBytes.Length)]);
+                    var first32 = ContainsNonzero(recordBytes[..Math.Min(32, recordBytes.Length)]);
+                    var upper32 = recordBytes.Length > 32 &&
+                        ContainsNonzero(recordBytes[32..]);
+                    first16Count += first16 ? 1 : 0;
+                    first32Count += first32 ? 1 : 0;
+                    upper32Count += upper32 ? 1 : 0;
+                    if (first32 && firstActive.Count < 8)
+                    {
+                        firstActive.Add(
+                            $"{recordIndex}:" + Convert.ToHexString(recordBytes));
+                    }
+                }
+
+                recordSummary =
+                    $"records={recordCount}:first16={first16Count}:" +
+                    $"first32={first32Count}:upper32={upper32Count}:" +
+                    $"active=[{string.Join(';', firstActive)}]";
+            }
+
             var key =
                 $"{stage}|{shaderAddress:X16}|{binding.BaseAddress:X16}|" +
                 $"{binding.ScalarAddress}|{binding.Writable}|" +
-                $"{descriptorText}|" + string.Join(',', binding.InstructionPcs);
+                $"{descriptorText}|{initialDescriptorText}|" +
+                string.Join(',', binding.InstructionPcs);
             lock (_submitTraceGate)
             {
                 if (_tracedGlobalBufferLengthStates.Count >= 512 ||
@@ -7186,7 +7808,8 @@ public static partial class AgcExports
                 $"writable={(binding.Writable ? 1 : 0)} " +
                 $"writeback={(binding.WriteBackToGuest ? 1 : 0)} " +
                 $"descriptor=[{descriptorText}] initial=[{initialDescriptorText}] " +
-                $"stride={descriptorStride} records={descriptorRecords} " +
+                $"stride={descriptorStride} initial_stride={initialDescriptorStride} " +
+                $"records={descriptorRecords} " +
                 $"descriptor_bytes={descriptorBytes} " +
                 $"nonzero_bytes={content.NonzeroBytes}/{binding.DataLength} " +
                 $"first_nonzero={content.FirstNonzeroOffset} " +
@@ -7195,7 +7818,8 @@ public static partial class AgcExports
                 $"match={(lengthMatch ? "length" : "address")}:" +
                 $"{string.Join(',', addressMatches.Select(address => $"0x{address:X16}"))} " +
                 $"pcs={string.Join(',', binding.InstructionPcs.Select(pc => $"0x{pc:X}"))} " +
-                $"head={head}");
+                $"head={head} record_sample={recordSample} " +
+                $"record_summary={recordSummary}");
         }
     }
 
@@ -7659,6 +8283,7 @@ public static partial class AgcExports
                 new TranslatedImageBinding(
                     texture,
                     isStorage,
+                    Gen5ShaderTranslator.IsImageWriteOperation(binding.Opcode),
                     binding.MipLevel ?? 0,
                     binding.SamplerDescriptor));
         }
@@ -8759,6 +9384,7 @@ public static partial class AgcExports
                     ctx,
                     binding.Descriptor,
                     binding.IsStorage,
+                    binding.WritesImage,
                     binding.MipLevel,
                     binding.SamplerDescriptor,
                     out var texture))
@@ -8783,29 +9409,44 @@ public static partial class AgcExports
         TranslatedGuestDraw translatedDraw)
     {
         var buffers = CreateGuestMemoryBuffers(translatedDraw.GlobalMemoryBindings);
-        if (_bakeScalars)
+        if (_bakeScalars && !translatedDraw.UsesGds)
         {
             return buffers;
         }
 
-        var combined = new List<GuestMemoryBuffer>(buffers.Count + 2);
+        var combined = new List<GuestMemoryBuffer>(
+            buffers.Count + (_bakeScalars ? 0 : 2) + (translatedDraw.UsesGds ? 1 : 0));
         combined.AddRange(buffers);
-        var runtimeStateLength = GetRuntimeScalarBufferLength(
-            translatedDraw.GlobalMemoryBindings.Count);
-        combined.Add(new GuestMemoryBuffer(
-            0,
-            PackRuntimeScalarState(
-                translatedDraw.PixelInitialScalars,
-                translatedDraw.GlobalMemoryBindings),
-            runtimeStateLength,
-            Pooled: true));
-        combined.Add(new GuestMemoryBuffer(
-            0,
-            PackRuntimeScalarState(
-                translatedDraw.VertexInitialScalars,
-                translatedDraw.GlobalMemoryBindings),
-            runtimeStateLength,
-            Pooled: true));
+        if (!_bakeScalars)
+        {
+            var runtimeStateLength = GetRuntimeScalarBufferLength(
+                translatedDraw.GlobalMemoryBindings.Count);
+            combined.Add(new GuestMemoryBuffer(
+                0,
+                PackRuntimeScalarState(
+                    translatedDraw.PixelInitialScalars,
+                    translatedDraw.GlobalMemoryBindings),
+                runtimeStateLength,
+                Pooled: true));
+            combined.Add(new GuestMemoryBuffer(
+                0,
+                PackRuntimeScalarState(
+                    translatedDraw.VertexInitialScalars,
+                    translatedDraw.GlobalMemoryBindings),
+                runtimeStateLength,
+                Pooled: true));
+        }
+
+        if (translatedDraw.UsesGds)
+        {
+            combined.Add(new GuestMemoryBuffer(
+                SyntheticGdsBaseAddress,
+                _persistentGds,
+                Gen5SpirvTranslator.GdsByteSize,
+                Pooled: false,
+                Writable: true,
+                WriteBackToGuest: false));
+        }
         return combined;
     }
 
@@ -8838,7 +9479,8 @@ public static partial class AgcExports
         TranslatedGuestDraw translatedDraw)
     {
         var bindings = translatedDraw.GlobalMemoryBindings;
-        var combined = new List<GuestMemoryBuffer>(bindings.Count + 2);
+        var combined = new List<GuestMemoryBuffer>(
+            bindings.Count + (_bakeScalars ? 0 : 2) + (translatedDraw.UsesGds ? 1 : 0));
         foreach (var binding in bindings)
         {
             var data = new byte[Math.Max(binding.DataLength, sizeof(uint))];
@@ -8876,6 +9518,17 @@ public static partial class AgcExports
                     bindings),
                 runtimeStateLength,
                 Pooled: false));
+        }
+
+        if (translatedDraw.UsesGds)
+        {
+            combined.Add(new GuestMemoryBuffer(
+                SyntheticGdsBaseAddress,
+                _persistentGds,
+                Gen5SpirvTranslator.GdsByteSize,
+                Pooled: false,
+                Writable: true,
+                WriteBackToGuest: false));
         }
 
         return combined;
@@ -9218,6 +9871,7 @@ public static partial class AgcExports
         CpuContext ctx,
         TextureDescriptor descriptor,
         bool isStorage,
+        bool writesImage,
         uint mipLevel,
         IReadOnlyList<uint> samplerDescriptor,
         out GuestDrawTexture texture)
@@ -9231,7 +9885,11 @@ public static partial class AgcExports
             descriptor.Height > 8192)
         {
             TraceTextureFallback(descriptor, "invalid-descriptor");
-            texture = CreateFallbackGuestDrawTexture(isStorage, descriptor.Format, descriptor.NumberType);
+            texture = CreateFallbackGuestDrawTexture(
+                isStorage,
+                writesImage,
+                descriptor.Format,
+                descriptor.NumberType);
             return true;
         }
 
@@ -9252,7 +9910,11 @@ public static partial class AgcExports
             TraceTextureFallback(
                 descriptor,
                 $"invalid-byte-count:{sourceByteCount}");
-            texture = CreateFallbackGuestDrawTexture(isStorage, descriptor.Format, descriptor.NumberType);
+            texture = CreateFallbackGuestDrawTexture(
+                isStorage,
+                writesImage,
+                descriptor.Format,
+                descriptor.NumberType);
             return true;
         }
 
@@ -9277,7 +9939,11 @@ public static partial class AgcExports
         if (physicalSourceByteCount > MaxPresentedTextureBytes ||
             physicalSourceByteCount > int.MaxValue)
         {
-            texture = CreateFallbackGuestDrawTexture(isStorage, descriptor.Format, descriptor.NumberType);
+            texture = CreateFallbackGuestDrawTexture(
+                isStorage,
+                writesImage,
+                descriptor.Format,
+                descriptor.NumberType);
             return true;
         }
 
@@ -9309,7 +9975,8 @@ public static partial class AgcExports
                 Pitch: sourceWidth,
                 TileMode: descriptor.TileMode,
                 DstSelect: descriptor.DstSelect,
-                Sampler: ToGuestSampler(samplerDescriptor));
+                Sampler: ToGuestSampler(samplerDescriptor),
+                WritesImage: writesImage);
             return true;
         }
 
@@ -9385,7 +10052,8 @@ public static partial class AgcExports
                     Pitch: sourceWidth,
                     TileMode: descriptor.TileMode,
                     DstSelect: descriptor.DstSelect,
-                    Sampler: ToGuestSampler(samplerDescriptor));
+                    Sampler: ToGuestSampler(samplerDescriptor),
+                    WritesImage: writesImage);
                 return true;
             }
 
@@ -9430,7 +10098,8 @@ public static partial class AgcExports
                     Pitch: sourceWidth,
                     TileMode: descriptor.TileMode,
                     DstSelect: descriptor.DstSelect,
-                    Sampler: sampler);
+                    Sampler: sampler,
+                    WritesImage: writesImage);
                 return true;
             }
 
@@ -9440,7 +10109,11 @@ public static partial class AgcExports
                 TraceTextureFallback(
                     descriptor,
                     $"guest-read-failed:{sourceByteCount}");
-                texture = CreateFallbackGuestDrawTexture(isStorage, descriptor.Format, descriptor.NumberType);
+                texture = CreateFallbackGuestDrawTexture(
+                    isStorage,
+                    writesImage,
+                    descriptor.Format,
+                    descriptor.NumberType);
                 return true;
             }
 
@@ -9490,7 +10163,8 @@ public static partial class AgcExports
                 Pitch: sourceWidth,
                 TileMode: descriptor.TileMode,
                 DstSelect: descriptor.DstSelect,
-                Sampler: ToGuestSampler(samplerDescriptor));
+                Sampler: ToGuestSampler(samplerDescriptor),
+                WritesImage: writesImage);
             dirtyGuestImageSnapshotSucceeded = true;
             return true;
         }
@@ -9799,6 +10473,7 @@ public static partial class AgcExports
 
     private static GuestDrawTexture CreateFallbackGuestDrawTexture(
         bool isStorage,
+        bool writesImage,
         uint format,
         uint numberType)
     {
@@ -9814,7 +10489,8 @@ public static partial class AgcExports
             IsFallback: true,
             IsStorage: isStorage,
             MipLevels: 1,
-            MipLevel: 0);
+            MipLevel: 0,
+            WritesImage: writesImage);
     }
 
     private static GuestSampler ToGuestSampler(IReadOnlyList<uint> descriptor) =>
@@ -10155,6 +10831,13 @@ public static partial class AgcExports
             _shaderHeadersByCode.TryGetValue(shaderAddress, out shaderHeader);
         }
 
+        DumpShaderProgramIfRequested(
+            ctx,
+            "cs",
+            shaderAddress,
+            shaderHeader,
+            "requested-capture");
+
         var computeSystemRegisters = DecodeComputeSystemRegisters(state.ShRegisters);
         if (!Gen5ShaderTranslator.TryCreateState(
                 ctx,
@@ -10255,6 +10938,7 @@ public static partial class AgcExports
         foreach (var binding in bindings)
         {
             var isStorage = Gen5ShaderTranslator.IsStorageImageOperation(binding.Opcode);
+            var writesImage = Gen5ShaderTranslator.IsImageWriteOperation(binding.Opcode);
             var descriptorValid = TryDecodeTextureDescriptor(binding.ResourceDescriptor, out var texture);
             if (!descriptorValid)
             {
@@ -10266,8 +10950,9 @@ public static partial class AgcExports
                 AvPlayerExports.ShouldTraceVideoBufferAddress(texture.Address);
             var matchesExplicitAddress =
                 Array.IndexOf(_traceGuestImageAddresses, texture.Address) >= 0;
+            var matchesTracedShader = _traceComputeShaderAddress == shaderAddress;
             if (texture.Address != 0 &&
-                (matchesAvPlayerBuffer || matchesExplicitAddress))
+                (matchesAvPlayerBuffer || matchesExplicitAddress || matchesTracedShader))
             {
                 lock (_submitTraceGate)
                 {
@@ -10302,7 +10987,9 @@ public static partial class AgcExports
                     $"storage={(isStorage ? 1 : 0)} descriptor_valid={(descriptorValid ? 1 : 0)} " +
                     $"matched={(matchesAvPlayerBuffer ? "avplayer" : string.Empty)}" +
                     $"{(matchesAvPlayerBuffer && matchesExplicitAddress ? "+" : string.Empty)}" +
-                    $"{(matchesExplicitAddress ? "explicit" : string.Empty)} " +
+                    $"{(matchesExplicitAddress ? "explicit" : string.Empty)}" +
+                    $"{((matchesAvPlayerBuffer || matchesExplicitAddress) && matchesTracedShader ? "+" : string.Empty)}" +
+                    $"{(matchesTracedShader ? "shader" : string.Empty)} " +
                     $"decoded={FormatTextureDescriptor(texture)} " +
                     $"raw={FormatShaderDwords(binding.ResourceDescriptor)} " +
                     $"sampler={FormatShaderDwords(binding.SamplerDescriptor)} " +
@@ -10315,6 +11002,7 @@ public static partial class AgcExports
                 new TranslatedImageBinding(
                     texture,
                     isStorage,
+                    writesImage,
                     binding.MipLevel ?? 0,
                     binding.SamplerDescriptor));
             hasStorageBinding |= isStorage;
@@ -11256,6 +11944,27 @@ public static partial class AgcExports
         // unsupported translation reason needed to fix the game.
         if (firstFailure)
         {
+            ulong exportShaderHeader;
+            ulong pixelShaderHeader;
+            lock (_submitTraceGate)
+            {
+                _shaderHeadersByCode.TryGetValue(exportShaderAddress, out exportShaderHeader);
+                _shaderHeadersByCode.TryGetValue(pixelShaderAddress, out pixelShaderHeader);
+            }
+
+            DumpShaderProgramIfRequested(
+                ctx,
+                "es",
+                exportShaderAddress,
+                exportShaderHeader,
+                translationError!);
+            DumpShaderProgramIfRequested(
+                ctx,
+                "ps",
+                pixelShaderAddress,
+                pixelShaderHeader,
+                translationError!);
+
             Console.Error.WriteLine(
                 $"[COMPAT][SHADER] ps=0x{pixelShaderAddress:X16} " +
                 $"es=0x{exportShaderAddress:X16} error={translationError}");
@@ -12065,7 +12774,7 @@ public static partial class AgcExports
         }
 
         var nextCursor = cursorUp + ((ulong)sizeDwords * sizeof(uint));
-        if (!ctx.TryWriteUInt64(commandBufferAddress + CommandBufferCursorUpOffset, nextCursor))
+        if (!TryWriteUInt64(ctx, commandBufferAddress + CommandBufferCursorUpOffset, nextCursor))
         {
             return false;
         }
@@ -12111,7 +12820,7 @@ public static partial class AgcExports
             return true;
         }
 
-        return ctx.TryWriteUInt64(fieldAddress, fieldAddress + relativeAddress);
+        return TryWriteUInt64(ctx, fieldAddress, fieldAddress + relativeAddress);
     }
 
     private static int ReturnRegisterDefaults(CpuContext ctx, bool internalDefaults)
@@ -12138,6 +12847,7 @@ public static partial class AgcExports
             RegisterDefaultsVersion7 or
             RegisterDefaultsVersion8 or
             RegisterDefaultsVersion10 or
+            RegisterDefaultsVersion11 or
             RegisterDefaultsVersion13;
     }
 
@@ -12339,22 +13049,12 @@ public static partial class AgcExports
             return true;
         }
 
-        Span<byte> buffer = stackalloc byte[sizeof(uint)];
-        if (!ctx.Memory.TryRead(address, buffer))
-        {
-            value = 0;
-            return false;
-        }
-
-        value = BinaryPrimitives.ReadUInt32LittleEndian(buffer);
-        return true;
+        return KernelMemoryCompatExports.TryReadUInt32Compat(ctx, address, out value);
     }
 
     private static bool TryWriteUInt32(CpuContext ctx, ulong address, uint value)
     {
-        Span<byte> buffer = stackalloc byte[sizeof(uint)];
-        BinaryPrimitives.WriteUInt32LittleEndian(buffer, value);
-        return ctx.Memory.TryWrite(address, buffer);
+        return KernelMemoryCompatExports.TryWriteUInt32Compat(ctx, address, value);
     }
 
     private static bool TryReadUInt64(CpuContext ctx, ulong address, out ulong value)
@@ -12368,16 +13068,11 @@ public static partial class AgcExports
             return true;
         }
 
-        Span<byte> buffer = stackalloc byte[sizeof(ulong)];
-        if (!ctx.Memory.TryRead(address, buffer))
-        {
-            value = 0;
-            return false;
-        }
-
-        value = BinaryPrimitives.ReadUInt64LittleEndian(buffer);
-        return true;
+        return KernelMemoryCompatExports.TryReadUInt64Compat(ctx, address, out value);
     }
+
+    private static bool TryWriteUInt64(CpuContext ctx, ulong address, ulong value) =>
+        KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, address, value);
 
     private static bool TryReadGuestCString(
         CpuContext ctx,
@@ -12740,7 +13435,14 @@ public static partial class AgcExports
 
         var addressFilter = Environment.GetEnvironmentVariable(
             "SHARPEMU_DUMP_SPIRV_ADDRESS");
-        if (!string.IsNullOrWhiteSpace(addressFilter))
+        if (_dumpSpirvAddresses.Length > 0)
+        {
+            if (!_dumpSpirvAddresses.Contains(shaderAddress))
+            {
+                return;
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(addressFilter))
         {
             var span = addressFilter.AsSpan();
             if (span.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
@@ -12786,9 +13488,10 @@ public static partial class AgcExports
     }
 
     /// <summary>
-    /// Captures a bounded raw guest shader window when translation fails. Both
-    /// the output directory and an exact address allow-list are required so a
-    /// broad shader trace cannot accidentally dump every program in a title.
+    /// Captures a bounded raw guest shader window for an explicitly requested
+    /// program. Both the output directory and an exact address allow-list are
+    /// required so a broad shader trace cannot accidentally dump every program
+    /// in a title.
     /// </summary>
     private static void DumpShaderProgramIfRequested(
         CpuContext ctx,

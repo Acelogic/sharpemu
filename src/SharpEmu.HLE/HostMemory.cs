@@ -5,6 +5,10 @@ using System.Runtime.InteropServices;
 
 namespace SharpEmu.HLE;
 
+// Attribution: substantial fixed-address guest-memory portions in this file were originally
+// authored by @xnetcat and later adapted in PR #216. Source snapshot:
+// https://github.com/xnetcat/sharpemu/tree/2497ea6799432ac2385a50f739eff2ce922d6fd4
+
 /// <summary>
 /// Cross-platform host virtual memory API with Win32 semantics.
 /// On Windows this forwards directly to kernel32. On POSIX systems it is

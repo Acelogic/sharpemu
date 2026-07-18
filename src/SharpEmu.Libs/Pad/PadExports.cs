@@ -3,6 +3,7 @@
 
 using SharpEmu.HLE;
 using SharpEmu.HLE.Host;
+using SharpEmu.Libs.Kernel;
 using System.Buffers.Binary;
 using System.Diagnostics;
 
@@ -10,6 +11,7 @@ namespace SharpEmu.Libs.Pad;
 
 public static class PadExports
 {
+    private const int OrbisPadErrorInvalidArgument = unchecked((int)0x80920001);
     private const int OrbisPadErrorInvalidHandle = unchecked((int)0x80920003);
     private const int OrbisPadErrorNotInitialized = unchecked((int)0x80920005);
     private const int OrbisPadErrorDeviceNotConnected = unchecked((int)0x80920007);
@@ -36,8 +38,14 @@ public static class PadExports
     [ThreadStatic]
     private static PadState _cachedInputState;
 
-    private static bool _initialized;
+    private static int _initialized;
+    private static int _primaryPadDeviceState;
     private static int _controlsAnnouncementLogged;
+    private static readonly object PadStateGate = new();
+    private static readonly HashSet<int> ActivePadHandles = [];
+    private static Func<int, (int Result, byte LeftState, byte RightState)>
+        _queryTriggerEffectState = QueryUnsupportedTriggerEffectState;
+    private static IHostInput? _hostInputForTests;
 
     [SysAbiExport(
         Nid = "hv1luiJrqQM",
@@ -46,10 +54,135 @@ public static class PadExports
         LibraryName = "libScePad")]
     public static int PadInit(CpuContext ctx)
     {
-        _initialized = true;
-        HostPlatform.Current.Input.EnsureStarted();
+        lock (PadStateGate)
+        {
+            ActivePadHandles.Clear();
+            Volatile.Write(ref _initialized, 1);
+        }
+
+        GetHostInput().EnsureStarted();
         return ctx.SetReturn(0);
     }
+
+    [SysAbiExport(
+        Nid = "znaWI0gpuo8",
+        ExportName = "scePadGetTriggerEffectState",
+        Target = Generation.Gen5,
+        LibraryName = "libScePad")]
+    public static int PadGetTriggerEffectState(CpuContext ctx)
+    {
+        var handle = unchecked((int)ctx[CpuRegister.Rdi]);
+        var stateAddress = ctx[CpuRegister.Rsi];
+        if (Volatile.Read(ref _initialized) == 0)
+        {
+            return ctx.SetReturn(OrbisPadErrorNotInitialized);
+        }
+
+        if (stateAddress == 0)
+        {
+            return ctx.SetReturn(OrbisPadErrorInvalidArgument);
+        }
+
+        lock (PadStateGate)
+        {
+            if (!IsPrimaryPadHandle(handle) || !ActivePadHandles.Contains(handle))
+            {
+                return ctx.SetReturn(OrbisPadErrorInvalidHandle);
+            }
+
+            if (_primaryPadDeviceState is 3 or 4)
+            {
+                return ctx.SetReturn(OrbisPadErrorInvalidArgument);
+            }
+
+            Span<byte> state = stackalloc byte[2 * sizeof(uint)];
+            state.Clear();
+            if (!KernelMemoryCompatExports.TryWriteCompat(ctx, stateAddress, state))
+            {
+                return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            var backend = _queryTriggerEffectState(handle);
+            if (backend.Result == unchecked((int)0x803B0003))
+            {
+                return ctx.SetReturn(0);
+            }
+
+            if (backend.Result != 0)
+            {
+                return ctx.SetReturn(backend.Result);
+            }
+
+            BinaryPrimitives.WriteUInt32LittleEndian(
+                state,
+                backend.LeftState == byte.MaxValue
+                    ? uint.MaxValue
+                    : backend.LeftState);
+            BinaryPrimitives.WriteUInt32LittleEndian(
+                state[sizeof(uint)..],
+                backend.RightState == byte.MaxValue
+                    ? uint.MaxValue
+                    : backend.RightState);
+            return KernelMemoryCompatExports.TryWriteCompat(ctx, stateAddress, state)
+                ? ctx.SetReturn(0)
+                : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+    }
+
+    internal static void ResetTriggerEffectStateForTests(
+        bool initialized = false,
+        int deviceState = 0)
+    {
+        lock (PadStateGate)
+        {
+            ActivePadHandles.Clear();
+            Volatile.Write(ref _initialized, initialized ? 1 : 0);
+            _primaryPadDeviceState = deviceState;
+            _queryTriggerEffectState = QueryUnsupportedTriggerEffectState;
+            _hostInputForTests = null;
+        }
+    }
+
+    internal static void SetPrimaryPadOpenForTests(bool open)
+    {
+        lock (PadStateGate)
+        {
+            if (open)
+            {
+                ActivePadHandles.Add(PrimaryPadHandle);
+            }
+            else
+            {
+                ActivePadHandles.Remove(PrimaryPadHandle);
+            }
+        }
+    }
+
+    internal static void SetTriggerEffectStateBackendForTests(
+        Func<int, (int Result, byte LeftState, byte RightState)> backend)
+    {
+        ArgumentNullException.ThrowIfNull(backend);
+        lock (PadStateGate)
+        {
+            _queryTriggerEffectState = backend;
+        }
+    }
+
+    internal static void SetHostInputForTests(IHostInput hostInput)
+    {
+        ArgumentNullException.ThrowIfNull(hostInput);
+        lock (PadStateGate)
+        {
+            _hostInputForTests = hostInput;
+        }
+    }
+
+    private static (int Result, byte LeftState, byte RightState)
+        QueryUnsupportedTriggerEffectState(int handle) =>
+            (unchecked((int)0x803B0003), 0, 0);
+
+    private static IHostInput GetHostInput() =>
+        _hostInputForTests ?? HostPlatform.Current.Input;
 
     [SysAbiExport(
         Nid = "xk0AcarP3V4",
@@ -73,7 +206,7 @@ public static class PadExports
         var type = unchecked((int)ctx[CpuRegister.Rsi]);
         var index = unchecked((int)ctx[CpuRegister.Rdx]);
         var parameterAddress = ctx[CpuRegister.Rcx];
-        if (!_initialized)
+        if (Volatile.Read(ref _initialized) == 0)
         {
             return ctx.SetReturn(OrbisPadErrorNotInitialized);
         }
@@ -89,13 +222,19 @@ public static class PadExports
             return ctx.SetReturn(OrbisPadErrorDeviceNotConnected);
         }
 
-        var input = HostPlatform.Current.Input;
+        var input = GetHostInput();
         input.EnsureStarted();
         if (Interlocked.Exchange(ref _controlsAnnouncementLogged, 1) == 0)
         {
             Console.Error.WriteLine(input.DescribeConnectedGamepad() is { } gamepadName
                 ? $"[LOADER][INFO] Controls: {gamepadName} connected (keyboard fallback also active)."
                 : "[LOADER][INFO] Keyboard controls: Arrow keys = D-pad, WASD = left stick, IJKL = right stick, Z/Enter = Cross, X/Esc = Circle, C = Square, V = Triangle, Q = L1, E = R1, R = L2, F = R2, Tab/Backspace = Options. A DualSense or Xbox controller will be used automatically when plugged in.");
+        }
+
+        lock (PadStateGate)
+        {
+            ActivePadHandles.Add(PrimaryPadHandle);
+            _primaryPadDeviceState = 0;
         }
 
         return ctx.SetReturn(PrimaryPadHandle);
@@ -109,9 +248,17 @@ public static class PadExports
     public static int PadClose(CpuContext ctx)
     {
         var handle = unchecked((int)ctx[CpuRegister.Rdi]);
-        return IsPrimaryPadHandle(handle)
-            ? ctx.SetReturn(0)
-            : ctx.SetReturn(OrbisPadErrorInvalidHandle);
+        if (!IsPrimaryPadHandle(handle))
+        {
+            return ctx.SetReturn(OrbisPadErrorInvalidHandle);
+        }
+
+        lock (PadStateGate)
+        {
+            ActivePadHandles.Remove(handle);
+        }
+
+        return ctx.SetReturn(0);
     }
 
     [SysAbiExport(
@@ -170,7 +317,7 @@ public static class PadExports
         information[0x0C] = 1;
         BinaryPrimitives.WriteInt32LittleEndian(information[0x10..], 0);
 
-        return ctx.Memory.TryWrite(informationAddress, information)
+        return KernelMemoryCompatExports.TryWriteCompat(ctx, informationAddress, information)
             ? ctx.SetReturn(0)
             : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
     }
@@ -211,7 +358,7 @@ public static class PadExports
         information[0x1D] = 1;   // connected (ext)
         information[0x1E] = 0;   // connectionType: local
 
-        return ctx.Memory.TryWrite(informationAddress, information)
+        return KernelMemoryCompatExports.TryWriteCompat(ctx, informationAddress, information)
             ? ctx.SetReturn(0)
             : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
     }
@@ -295,7 +442,7 @@ public static class PadExports
         }
 
         Span<byte> parameter = stackalloc byte[120];
-        if (!ctx.Memory.TryRead(parameterAddress, parameter))
+        if (!KernelMemoryCompatExports.TryReadCompat(ctx, parameterAddress, parameter))
         {
             return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
@@ -340,7 +487,7 @@ public static class PadExports
 
         // ScePadVibrationParam: { uint8_t largeMotor; uint8_t smallMotor; }
         Span<byte> parameter = stackalloc byte[2];
-        if (!ctx.Memory.TryRead(parameterAddress, parameter))
+        if (!KernelMemoryCompatExports.TryReadCompat(ctx, parameterAddress, parameter))
         {
             return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
@@ -370,7 +517,7 @@ public static class PadExports
 
         // ScePadColor: { uint8_t r; uint8_t g; uint8_t b; uint8_t reserved; }
         Span<byte> color = stackalloc byte[4];
-        if (!ctx.Memory.TryRead(parameterAddress, color))
+        if (!KernelMemoryCompatExports.TryReadCompat(ctx, parameterAddress, color))
         {
             return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
@@ -427,7 +574,7 @@ public static class PadExports
             timestampMicroseconds);
         data[0x68] = 1;
 
-        return ctx.Memory.TryWrite(dataAddress, data);
+        return KernelMemoryCompatExports.TryWriteCompat(ctx, dataAddress, data);
     }
 
     private static PadState ReadHostInputState()
@@ -438,7 +585,7 @@ public static class PadExports
             return _cachedInputState;
         }
 
-        var input = HostPlatform.Current.Input;
+        var input = GetHostInput();
         var acceptsKeyboardInput = input.IsHostWindowFocused();
         var buttons = acceptsKeyboardInput ? ReadKeyboardButtons(input) : 0;
         var leftX = acceptsKeyboardInput ? ReadAnalogStick(input.IsKeyDown(0x41), input.IsKeyDown(0x44)) : (byte)128;

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 using SharpEmu.HLE;
 using SharpEmu.Libs.Kernel;
 using Xunit;
@@ -97,6 +98,31 @@ public sealed class AgcEventQueueTests
             0x07);
 
         Assert.Equal(0, triggered);
+    }
+
+    [Fact]
+    public void CreateEqueue_WritesHandleToNativeMappedGuestMemory()
+    {
+        var ctx = new CpuContext(new FakeCpuMemory(BaseAddress, MemorySize), Generation.Gen5);
+        ctx[CpuRegister.Rdi] = sizeof(ulong);
+        Assert.Equal(0, KernelMemoryCompatExports.Malloc(ctx));
+        var handleOutAddress = ctx[CpuRegister.Rax];
+        try
+        {
+            Marshal.WriteInt64(unchecked((nint)handleOutAddress), 0);
+            ctx[CpuRegister.Rdi] = handleOutAddress;
+            Assert.Equal(0, KernelEventQueueCompatExports.KernelCreateEqueue(ctx));
+
+            var handle = unchecked((ulong)Marshal.ReadInt64(unchecked((nint)handleOutAddress)));
+            Assert.NotEqual(0UL, handle);
+            ctx[CpuRegister.Rdi] = handle;
+            Assert.Equal(0, KernelEventQueueCompatExports.KernelDeleteEqueue(ctx));
+        }
+        finally
+        {
+            ctx[CpuRegister.Rdi] = handleOutAddress;
+            Assert.Equal(0, KernelMemoryCompatExports.Free(ctx));
+        }
     }
 
     private static ulong ReadUInt64(FakeCpuMemory memory, ulong address)

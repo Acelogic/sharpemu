@@ -3,6 +3,7 @@
 
 using SharpEmu.HLE;
 using SharpEmu.Libs.Gpu;
+using SharpEmu.Libs.Kernel;
 using SharpEmu.Libs.VideoOut;
 using System.Buffers.Binary;
 
@@ -40,7 +41,7 @@ public static class SystemServiceExports
         // No system notice screen to skip in the emulator; report "do not skip".
         Span<byte> flagBytes = stackalloc byte[sizeof(int)];
         BinaryPrimitives.WriteInt32LittleEndian(flagBytes, 0);
-        return ctx.Memory.TryWrite(flagAddress, flagBytes)
+        return KernelMemoryCompatExports.TryWriteCompat(ctx, flagAddress, flagBytes)
             ? ctx.SetReturn(0)
             : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
     }
@@ -66,7 +67,7 @@ public static class SystemServiceExports
         Span<byte> titleIdBytes = stackalloc byte[TitleIdFieldSize];
         titleIdBytes.Clear();
         System.Text.Encoding.ASCII.GetBytes(titleId.AsSpan(0, length), titleIdBytes);
-        return ctx.Memory.TryWrite(titleIdAddress, titleIdBytes[..(length + 1)])
+        return KernelMemoryCompatExports.TryWriteCompat(ctx, titleIdAddress, titleIdBytes[..(length + 1)])
             ? ctx.SetReturn(0)
             : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
     }
@@ -94,7 +95,7 @@ public static class SystemServiceExports
 
         Span<byte> valueBytes = stackalloc byte[sizeof(int)];
         BinaryPrimitives.WriteInt32LittleEndian(valueBytes, value);
-        return ctx.Memory.TryWrite(valueAddress, valueBytes)
+        return KernelMemoryCompatExports.TryWriteCompat(ctx, valueAddress, valueBytes)
             ? ctx.SetReturn(0)
             : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
     }
@@ -123,7 +124,7 @@ public static class SystemServiceExports
         Span<byte> output = stackalloc byte[writeLength + 1];
         value.AsSpan(0, writeLength).CopyTo(output);
         output[writeLength] = 0;
-        return ctx.Memory.TryWrite(bufferAddress, output)
+        return KernelMemoryCompatExports.TryWriteCompat(ctx, bufferAddress, output)
             ? ctx.SetReturn(0)
             : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
     }
@@ -146,7 +147,7 @@ public static class SystemServiceExports
         BinaryPrimitives.WriteInt32LittleEndian(status, 0);
         status[0x06] = 1;
 
-        return ctx.Memory.TryWrite(statusAddress, status)
+        return KernelMemoryCompatExports.TryWriteCompat(ctx, statusAddress, status)
             ? ctx.SetReturn(0)
             : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
     }
@@ -168,7 +169,7 @@ public static class SystemServiceExports
         info.Clear();
         BinaryPrimitives.WriteSingleLittleEndian(info, 1.0f);
 
-        return ctx.Memory.TryWrite(infoAddress, info)
+        return KernelMemoryCompatExports.TryWriteCompat(ctx, infoAddress, info)
             ? ctx.SetReturn(0)
             : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
     }
@@ -190,7 +191,7 @@ public static class SystemServiceExports
         BinaryPrimitives.WriteSingleLittleEndian(luminance, 1000.0f);
         BinaryPrimitives.WriteSingleLittleEndian(luminance[sizeof(float)..], 1000.0f);
         BinaryPrimitives.WriteSingleLittleEndian(luminance[(sizeof(float) * 2)..], 0.01f);
-        return ctx.Memory.TryWrite(luminanceAddress, luminance)
+        return KernelMemoryCompatExports.TryWriteCompat(ctx, luminanceAddress, luminance)
             ? ctx.SetReturn(0)
             : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
     }

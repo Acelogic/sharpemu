@@ -8,6 +8,10 @@ using SharpEmu.HLE;
 
 namespace SharpEmu.Core.Cpu.Native;
 
+// Attribution: substantial POSIX signal-bridge portions in this file were originally
+// authored by @xnetcat and later adapted in PR #216. Source snapshot:
+// https://github.com/xnetcat/sharpemu/tree/2497ea6799432ac2385a50f739eff2ce922d6fd4
+
 public sealed unsafe partial class DirectExecutionBackend
 {
 	// POSIX bridge for the Windows vectored-exception-handler logic. A

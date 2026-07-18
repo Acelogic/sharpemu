@@ -36,6 +36,12 @@ public static class VideoOutExports
     private const int VideoOutBuffersEntrySize = 0x20;
     private const int VideoOutOutputStatusSize = 0x30;
     private const int VideoOutVblankStatusSize = 0x28;
+    private const int VideoOutSystemPipelineStatusSize = 0x20;
+    private const int VideoOutSystemResolutionStatus2Size = 0x20;
+    private const uint VideoOutSystemWidth = 1920;
+    private const uint VideoOutSystemHeight = 1080;
+    // SceVideoOutRefreshRate enum value used by PSM for 59.94 Hz.
+    private const ulong VideoOutSystemRefreshRate = 3;
     private const ulong SceVideoOutPixelFormatA8R8G8B8Srgb = 0x80000000;
     private const ulong SceVideoOutPixelFormatA8B8G8R8Srgb = 0x80002200;
     private const ulong SceVideoOutPixelFormatA2R10G10B10 = 0x88060000;
@@ -53,6 +59,7 @@ public static class VideoOutExports
     private const ulong SceVideoOutPixelFormat2R10G10B10A2Bt2100Pq = 0x8100070422000000;
     private const ulong SceVideoOutPixelFormat2B10G10R10A2Bt2100Pq = 0x8100070400000000;
     private const ulong SceVideoOutInternalEventFlip = 0x6;
+    private const ulong SceVideoOutInternalEventSetMode = 0x7;
     // Distinct internal ident for vblank events. Games interpret events through
     // sceVideoOutGetEventId (mapped below), so the exact value is internal; only
     // its distinctness from the flip ident matters for GetEventId/GetEventData.
@@ -65,12 +72,17 @@ public static class VideoOutExports
     private static int _presentationWindowCloseNotified;
     private static int _vblankStopRequested;
     private static readonly Dictionary<(int Handle, int BufferIndex, ulong Address), ulong> _lastFrameFingerprints = new();
+    private static readonly List<FlipEventRegistration> _systemVblankEvents = new();
     private static int _nextHandle = 1;
     private static int _frameDumpCount;
     private static long _nextFrameDumpIndex;
     private static string _windowTitle = "SharpEmu VideoOut";
     private static readonly bool _logFrameRate = string.Equals(
         Environment.GetEnvironmentVariable("SHARPEMU_LOG_VIDEOOUT_FPS"),
+        "1",
+        StringComparison.Ordinal);
+    private static readonly bool _logVideoOutSync = string.Equals(
+        Environment.GetEnvironmentVariable("SHARPEMU_LOG_VIDEOOUT_SYNC"),
         "1",
         StringComparison.Ordinal);
     private static long _frameRateWindowStart = Stopwatch.GetTimestamp();
@@ -85,6 +97,10 @@ public static class VideoOutExports
             ? Math.Max(1, holdFlip)
             : 1;
     private static long _presentedFrameCount;
+    private static long _vblankSignalCount;
+    private static long _flipSubmitCount;
+    private static long _systemVblankSignalCount;
+    private static Timer? _systemVblankTimer;
 
     static VideoOutExports()
     {
@@ -118,6 +134,30 @@ public static class VideoOutExports
         {
             return _windowTitle;
         }
+    }
+
+    /// <summary>
+    /// Starts the firmware splash presenter for an explicitly requested
+    /// ShellCore cold-boot diagnostic. Normal application launches remain
+    /// demand-driven by VideoOut buffer registration.
+    /// </summary>
+    public static bool TryStartBootSplash()
+    {
+        if (!string.Equals(
+                Environment.GetEnvironmentVariable("SHARPEMU_BOOT_SPLASH"),
+                "1",
+                StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        lock (_stateGate)
+        {
+            _windowTitle = "SharpEmu - PS5 Cold Boot";
+        }
+
+        VulkanVideoPresenter.EnsureStarted(1280, 720);
+        return true;
     }
 
     internal static void SetSelectedGpuName(string gpuName)
@@ -156,15 +196,29 @@ public static class VideoOutExports
     private static void RequestHostShutdown(string reason)
     {
         Console.Error.WriteLine($"[LOADER][INFO] Host shutdown requested: {reason}");
-        VulkanVideoPresenter.RequestClose();
+        var embedded = VulkanVideoHost.IsEmbedded;
         AudioOutExports.ShutdownAllPorts();
         Interlocked.Exchange(ref _vblankStopRequested, 1);
         HostSessionControl.RequestShutdown(reason);
-        ThreadPool.QueueUserWorkItem(static _ =>
+
+        // A hosted game can still be issuing AGC work after it requests its
+        // own shutdown. Keep the Vulkan resources alive until the GUI session
+        // reaches its guest-safe exit path and disposes the host surface.
+        if (!embedded)
         {
-            Thread.Sleep(2000);
-            Environment.Exit(0);
-        });
+            VulkanVideoPresenter.RequestClose();
+        }
+
+        // The embedded GUI owns the process lifetime. A guest shutdown should
+        // end only that session rather than terminating the launcher itself.
+        if (!embedded)
+        {
+            ThreadPool.QueueUserWorkItem(static _ =>
+            {
+                Thread.Sleep(2000);
+                Environment.Exit(0);
+            });
+        }
     }
 
     private sealed class VideoOutPortState
@@ -273,6 +327,80 @@ public static class VideoOutExports
         // The emulator supports any output configuration on the main bus.
         // Return 1 (supported) for SceVideoOutBusTypeMain, 0 otherwise.
         return busType == SceVideoOutBusTypeMain ? 1 : 0;
+    }
+
+    [SysAbiExport(
+        Nid = "O57F5ikhGxo",
+        ExportName = "sceVideoOutSysIsUserStatusSystemDefault",
+        Target = Generation.Gen5,
+        LibraryName = "libSceVideoOut")]
+    public static int VideoOutSysIsUserStatusSystemDefault(CpuContext ctx)
+    {
+        _ = ctx[CpuRegister.Rdi]; // userId (ShellCore uses 0xff)
+        _ = ctx[CpuRegister.Rsi]; // reserved
+        return 1;
+    }
+
+    [SysAbiExport(
+        Nid = "4XsQdhiOaAc",
+        ExportName = "sceVideoOutSysIsUserStatusVr",
+        Target = Generation.Gen5,
+        LibraryName = "libSceVideoOut")]
+    public static int VideoOutSysIsUserStatusVr(CpuContext ctx)
+    {
+        _ = ctx[CpuRegister.Rdi]; // userId
+        _ = ctx[CpuRegister.Rsi]; // reserved
+        return 0;
+    }
+
+    [SysAbiExport(
+        Nid = "dFhciCfO31s",
+        ExportName = "sceVideoOutSysGetPipelineStatus",
+        Target = Generation.Gen5,
+        LibraryName = "libSceVideoOut")]
+    public static int VideoOutSysGetPipelineStatus(CpuContext ctx)
+    {
+        var statusAddress = ctx[CpuRegister.Rdi];
+        if (statusAddress == 0)
+        {
+            return OrbisVideoOutErrorInvalidAddress;
+        }
+
+        Span<byte> status = stackalloc byte[VideoOutSystemPipelineStatusSize];
+        status.Clear();
+        return ctx.Memory.TryWrite(statusAddress, status)
+            ? (int)OrbisGen2Result.ORBIS_GEN2_OK
+            : (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+    }
+
+    [SysAbiExport(
+        Nid = "qLDCAl8ygCw",
+        ExportName = "sceVideoOutSysGetResolutionStatus2",
+        Target = Generation.Gen5,
+        LibraryName = "libSceVideoOut")]
+    public static int VideoOutSysGetResolutionStatus2(CpuContext ctx)
+    {
+        var outputIndex = unchecked((int)ctx[CpuRegister.Rdi]);
+        var statusAddress = ctx[CpuRegister.Rsi];
+        if (statusAddress == 0)
+        {
+            return OrbisVideoOutErrorInvalidAddress;
+        }
+        if (outputIndex is < 0 or > 1)
+        {
+            return OrbisVideoOutErrorInvalidIndex;
+        }
+
+        // KawaiiDra's 12.70 libScePsm call site consumes width at +0x00,
+        // height at +0x04, and the refresh-rate enum at +0x10.
+        Span<byte> status = stackalloc byte[VideoOutSystemResolutionStatus2Size];
+        status.Clear();
+        BinaryPrimitives.WriteUInt32LittleEndian(status[0x00..0x04], VideoOutSystemWidth);
+        BinaryPrimitives.WriteUInt32LittleEndian(status[0x04..0x08], VideoOutSystemHeight);
+        BinaryPrimitives.WriteUInt64LittleEndian(status[0x10..0x18], VideoOutSystemRefreshRate);
+        return ctx.Memory.TryWrite(statusAddress, status)
+            ? (int)OrbisGen2Result.ORBIS_GEN2_OK
+            : (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
     }
 
     [SysAbiExport(
@@ -506,6 +634,60 @@ public static class VideoOutExports
         return ctx.Memory.TryWrite(statusAddress, status)
             ? (int)OrbisGen2Result.ORBIS_GEN2_OK
             : (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+    }
+
+    [SysAbiExport(
+        Nid = "Ek+VR4lcJQI",
+        ExportName = "sceVideoOutSysAddVblankEvent",
+        Target = Generation.Gen5,
+        LibraryName = "libSceVideoOut")]
+    public static int VideoOutSysAddVblankEvent(CpuContext ctx) =>
+        RegisterSystemVblankEvent(ctx, "sceVideoOutSysAddVblankEvent");
+
+    [SysAbiExport(
+        Nid = "Am8Hlr7tlxA",
+        ExportName = "sceVideoOutSysAddVblankEvent2",
+        Target = Generation.Gen5,
+        LibraryName = "libSceVideoOut")]
+    public static int VideoOutSysAddVblankEvent2(CpuContext ctx) =>
+        RegisterSystemVblankEvent(ctx, "sceVideoOutSysAddVblankEvent2");
+
+    [SysAbiExport(
+        Nid = "fYWVVDKZOCk",
+        ExportName = "sceVideoOutSysAddSetModeEvent2",
+        Target = Generation.Gen5,
+        LibraryName = "libSceVideoOut")]
+    public static int VideoOutSysAddSetModeEvent2(CpuContext ctx)
+    {
+        var equeue = ctx[CpuRegister.Rdi];
+        if (!KernelEventQueueCompatExports.IsValidEqueue(equeue))
+        {
+            return OrbisVideoOutErrorInvalidEventQueue;
+        }
+
+        // ShellCore registers the display-mode event before it opens a normal
+        // VideoOut port. In explicit boot-screen diagnostic mode, use that
+        // first real display milestone to bring up the existing Vulkan
+        // presenter and its firmware-derived splash frame.
+        if (string.Equals(
+                Environment.GetEnvironmentVariable("SHARPEMU_BOOT_SPLASH"),
+                "1",
+                StringComparison.Ordinal))
+        {
+            VulkanVideoPresenter.EnsureStarted(1280, 720);
+        }
+
+        var userData = ctx[CpuRegister.Rdx];
+        _ = KernelEventQueueCompatExports.TriggerDisplayEvent(
+            equeue,
+            SceVideoOutInternalEventSetMode,
+            OrbisKernelEventFilterVideoOut,
+            SceVideoOutInternalEventSetMode,
+            userData);
+        TraceVideoOut(
+            $"videoout.sys_add_set_mode_event2 eq=0x{equeue:X16} mode={ctx[CpuRegister.Rsi]} udata=0x{userData:X16}");
+
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
     [SysAbiExport(
@@ -1057,6 +1239,99 @@ public static class VideoOutExports
         return groupIndex < 0 ? groupIndex : setIndex;
     }
 
+    private static void SignalVblank(VideoOutPortState port)
+    {
+        List<FlipEventRegistration> vblankEvents;
+        ulong eventHint;
+        lock (_stateGate)
+        {
+            port.VblankCount++;
+            eventHint = SceVideoOutInternalEventVblank |
+                ((port.VblankCount & 0x0000_FFFF_FFFF_FFFFUL) << 16);
+            vblankEvents = new List<FlipEventRegistration>(port.VblankEvents);
+        }
+
+        var signalCount = Interlocked.Increment(ref _vblankSignalCount);
+
+        foreach (var vblankEvent in vblankEvents)
+        {
+            _ = KernelEventQueueCompatExports.TriggerDisplayEvent(
+                vblankEvent.Equeue,
+                SceVideoOutInternalEventVblank,
+                OrbisKernelEventFilterVideoOut,
+                eventHint,
+                vblankEvent.UserData);
+        }
+
+        if (_logVideoOutSync && (signalCount <= 8 || signalCount % 60 == 0))
+        {
+            Console.Error.WriteLine(
+                $"[LOADER][SYNC] vblank#{signalCount} handle={port.Handle} count={port.VblankCount} " +
+                $"queues={vblankEvents.Count} hint=0x{eventHint:X16}");
+        }
+    }
+
+    private static int RegisterSystemVblankEvent(CpuContext ctx, string exportName)
+    {
+        var equeue = ctx[CpuRegister.Rdi];
+        if (!KernelEventQueueCompatExports.IsValidEqueue(equeue))
+        {
+            return OrbisVideoOutErrorInvalidEventQueue;
+        }
+
+        // These system events are not attached to an application VideoOut port. PSM
+        // registers them before its display buffers exist, so provide a 60 Hz source
+        // that can drive its event/render thread through startup.
+        var userData = ctx[CpuRegister.Rdx];
+        lock (_stateGate)
+        {
+            var existingIndex = _systemVblankEvents.FindIndex(
+                registration => registration.Equeue == equeue);
+            var registration = new FlipEventRegistration(equeue, userData);
+            if (existingIndex >= 0)
+            {
+                _systemVblankEvents[existingIndex] = registration;
+            }
+            else
+            {
+                _systemVblankEvents.Add(registration);
+            }
+
+            _systemVblankTimer ??= new Timer(
+                static _ => SignalSystemVblank(),
+                null,
+                TimeSpan.Zero,
+                TimeSpan.FromMilliseconds(16));
+        }
+
+        TraceVideoOut(
+            $"videoout.{exportName} eq=0x{equeue:X16} option={ctx[CpuRegister.Rsi]} udata=0x{userData:X16}");
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    private static void SignalSystemVblank()
+    {
+        List<FlipEventRegistration> registrations;
+        ulong eventHint;
+        lock (_stateGate)
+        {
+            var count = unchecked((ulong)Interlocked.Increment(ref _systemVblankSignalCount));
+            eventHint = SceVideoOutInternalEventVblank |
+                ((count & 0x0000_FFFF_FFFF_FFFFUL) << 16);
+            registrations = new List<FlipEventRegistration>(_systemVblankEvents);
+        }
+
+        foreach (var registration in registrations)
+        {
+            _ = KernelEventQueueCompatExports.TriggerDisplayEvent(
+                registration.Equeue,
+                SceVideoOutInternalEventVblank,
+                OrbisKernelEventFilterVideoOut,
+                eventHint,
+                registration.UserData);
+        }
+    }
+
     private static int SubmitFlip(
         CpuContext ctx,
         int handle,
@@ -1171,7 +1446,43 @@ public static class VideoOutExports
                 $"[LOADER][INFO] Holding guest flip #{diagnosticFlipNumber} for {_holdFirstFlipMilliseconds} ms for visual verification.");
             Thread.Sleep(_holdFirstFlipMilliseconds);
         }
+        var flipCount = Interlocked.Increment(ref _flipSubmitCount);
+        if (_logVideoOutSync && (flipCount <= 8 || flipCount % 60 == 0))
+        {
+            Console.Error.WriteLine(
+                $"[LOADER][SYNC] flip#{flipCount} handle={handle} buffer={bufferIndex} " +
+                $"addr=0x{guestImageAddress:X16} submitted={guestImageSubmitted} " +
+                $"flipQueues={flipEventCount}");
+        }
+        if (string.Equals(
+                Environment.GetEnvironmentVariable("SHARPEMU_LOG_VIDEOOUT_THREADS"),
+                "1",
+                StringComparison.Ordinal) &&
+            GuestThreadExecution.Scheduler is { } scheduler)
+        {
+            TraceGuestThreadsAtFlip(scheduler, "submit");
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+                TraceGuestThreadsAtFlip(scheduler, "after_1s");
+                await Task.Delay(TimeSpan.FromSeconds(4)).ConfigureAwait(false);
+                TraceGuestThreadsAtFlip(scheduler, "after_5s");
+            });
+        }
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    private static void TraceGuestThreadsAtFlip(IGuestThreadScheduler scheduler, string stage)
+    {
+        foreach (var snapshot in scheduler.SnapshotThreads())
+        {
+            Console.Error.WriteLine(
+                $"[LOADER][TRACE] videoout.guest_thread stage={stage} handle=0x{snapshot.ThreadHandle:X16} name='{snapshot.Name}' " +
+                $"state={snapshot.State} imports={snapshot.ImportCount} nid={snapshot.LastImportNid ?? "none"} " +
+                $"ret=0x{snapshot.LastReturnRip:X16} block={snapshot.BlockReason ?? "none"}");
+        }
+
+        Console.Error.WriteLine($"[LOADER][TRACE] videoout.guest_threads_end stage={stage}");
     }
 
     internal static void ReportPresentedFrame() =>

@@ -59,6 +59,7 @@ public sealed class AprStreamingContractTests
             context[CpuRegister.Rdx] = 0x100;
 
             Assert.Equal(0, AmprExports.CommandBufferConstructor(context));
+            Assert.Equal(0, AmprExports.CommandBufferSetBuffer(context));
 
             const ulong readOffset = 2;
             const ulong readSize = 4;
