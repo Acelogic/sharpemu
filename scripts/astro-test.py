@@ -261,7 +261,10 @@ def publish(root: Path, configuration: str, rid: str, restore: bool) -> Path:
     print(f"[astro-test] publishing {rid}; full output: {log_path}")
     with log_path.open("w", encoding="utf-8") as handle:
         if restore:
-            restore_command = [dotnet, "restore", project, "-r", rid, "--locked-mode"]
+            # Restore the complete RuntimeIdentifiers set recorded in the lock
+            # file. Passing a single RID changes NuGet's evaluated RID set and
+            # makes a valid multi-platform lock file fail locked-mode restore.
+            restore_command = [dotnet, "restore", project, "--locked-mode"]
             restore_result = subprocess.run(
                 restore_command,
                 cwd=root,

@@ -183,5 +183,48 @@ class PsStudiosSequenceTests(unittest.TestCase):
         self.assertIsNone(result)
 
 
+class PublishTests(unittest.TestCase):
+    def test_locked_restore_uses_the_complete_project_runtime_set(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / "src" / "SharpEmu.CLI" / "SharpEmu.CLI.csproj"
+            project.parent.mkdir(parents=True)
+            project.write_text("<Project />\n", encoding="utf-8")
+            binary = (
+                root
+                / "artifacts"
+                / "publish"
+                / "SharpEmu.CLI"
+                / "Release"
+                / "net10.0"
+                / "osx-x64"
+                / "SharpEmu"
+            )
+            commands: list[list[str]] = []
+
+            def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+                commands.append(command)
+                if "publish" in command:
+                    binary.parent.mkdir(parents=True, exist_ok=True)
+                    binary.touch()
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            with mock.patch.object(HARNESS, "find_dotnet", return_value="/dotnet"), \
+                 mock.patch.object(HARNESS.subprocess, "run", side_effect=fake_run):
+                self.assertEqual(
+                    binary,
+                    HARNESS.publish(root, "Release", "osx-x64", restore=True),
+                )
+
+        restore_command = next(command for command in commands if "restore" in command)
+        publish_command = next(command for command in commands if "publish" in command)
+        self.assertEqual(
+            ["/dotnet", "restore", str(project), "--locked-mode"],
+            restore_command,
+        )
+        self.assertIn("-r", publish_command)
+        self.assertIn("osx-x64", publish_command)
+
+
 if __name__ == "__main__":
     unittest.main()
