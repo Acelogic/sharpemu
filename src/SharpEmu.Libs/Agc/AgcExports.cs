@@ -695,6 +695,9 @@ public static partial class AgcExports
         public bool TfRingConfigured { get; set; }
         public ulong TfRingAddress { get; set; }
         public uint TfRingSize { get; set; }
+        public bool HsOffchipParamConfigured { get; set; }
+        // Firmware payload layout: low16(second) at +0, low16(first) at +2.
+        public uint HsOffchipParamPayload { get; set; }
     }
 
     private readonly record struct RegisteredAgcResource(
@@ -3549,6 +3552,71 @@ public static partial class AgcExports
             ringAddress = gpuState.TfRingAddress;
             ringSize = gpuState.TfRingSize;
             return gpuState.TfRingConfigured;
+        }
+    }
+
+    // Ghidra: libSceAgcDriver.sprx
+    // SHA-256 bc2ca28f3632ce69e25ab44991ed1f49bc1624fe39c2fc81f2efc6e705876348,
+    // public export 0x70B0 -> selected Prospero callback 0x6FC0 -> helper
+    // 0x9D00. The helper submits a four-byte payload with low16(second) at
+    // offset 0 and low16(first) at offset 2, mapping driver failure to
+    // 0x8A6DFFFF. GTA V calls this as (0, 0x1FF) immediately after TFRing.
+    [SysAbiExport(
+        Nid = "MM4IZSEYytQ",
+        ExportName = "sceAgcDriverSetHsOffchipParam",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgcDriver")]
+    public static int DriverSetHsOffchipParam(CpuContext ctx)
+    {
+        var requestedFirst = (uint)ctx[CpuRegister.Rdi];
+        var requestedSecond = (uint)ctx[CpuRegister.Rsi];
+        var first = (ushort)requestedFirst;
+        var second = (ushort)requestedSecond;
+
+        // The firmware call is stateful and can fail at the driver boundary.
+        // Require the per-process AGC state established by the preceding setup
+        // instead of creating state here and returning blind success.
+        if (!_submittedGpuStates.TryGetValue(ctx.Memory, out var gpuState))
+        {
+            TraceAgc(
+                $"agc.driver_set_hs_offchip_param unavailable " +
+                $"first=0x{requestedFirst:X8} second=0x{requestedSecond:X8}");
+            return ctx.SetReturn(AgcDriverErrorInvalidArgument);
+        }
+
+        lock (gpuState.Gate)
+        {
+            gpuState.HsOffchipParamPayload = (uint)second | ((uint)first << 16);
+            gpuState.HsOffchipParamConfigured = true;
+        }
+
+        TraceAgc(
+            $"agc.driver_set_hs_offchip_param " +
+            $"first=0x{requestedFirst:X8}->0x{first:X4} " +
+            $"second=0x{requestedSecond:X8}->0x{second:X4}");
+        return ctx.SetReturn(0);
+    }
+
+    internal static bool TryGetDriverHsOffchipParamState(
+        ICpuMemory memory,
+        out ushort first,
+        out ushort second,
+        out uint payload)
+    {
+        if (!_submittedGpuStates.TryGetValue(memory, out var gpuState))
+        {
+            first = 0;
+            second = 0;
+            payload = 0;
+            return false;
+        }
+
+        lock (gpuState.Gate)
+        {
+            payload = gpuState.HsOffchipParamPayload;
+            first = (ushort)(payload >> 16);
+            second = (ushort)payload;
+            return gpuState.HsOffchipParamConfigured;
         }
     }
 
