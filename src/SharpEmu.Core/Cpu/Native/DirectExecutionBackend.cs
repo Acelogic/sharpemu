@@ -1201,11 +1201,6 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	internal void RequestHostShutdown(string reason)
 	{
 		_forcedGuestExit = true;
-		// Unwind guest threads parked in-place on host primitives (see
-		// GuestThreadBlocking); they slice their waits and observe this.
-		// NOTE: must NOT be signaled from the Execute() finally — Execute runs
-		// once per module initializer during boot, long before teardown.
-		GuestThreadBlocking.RequestShutdown();
 		LastError = string.IsNullOrWhiteSpace(reason)
 			? "Host shutdown requested."
 			: $"Host shutdown requested: {reason}";
