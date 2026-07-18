@@ -12,6 +12,7 @@ namespace SharpEmu.Libs.SaveData;
 public static class SaveDataExports
 {
     private const int OrbisSaveDataErrorParameter = unchecked((int)0x809F0000);
+    private const int OrbisSaveDataErrorNotInitialized = unchecked((int)0x809F0001);
     private const int OrbisSaveDataErrorExists = unchecked((int)0x809F0007);
     private const int OrbisSaveDataErrorNotFound = unchecked((int)0x809F0008);
     private const int OrbisSaveDataErrorInternal = unchecked((int)0x809F000B);
@@ -50,6 +51,9 @@ public static class SaveDataExports
     private const uint MountModeCreate = 1u << 2;
     private const uint MountModeCreate2 = 1u << 5;
     private const int MountResultSize = 0x40;
+    private const int TransferringMountReservedOffset = 0x20;
+    private const int TransferringMountReservedSize = 0x20;
+    private const int SaveDataMountSlotCount = 16;
     // Emulator guard against corrupt or misread sizes, not a platform limit.
     private const ulong SaveDataMemoryMaxSize = 64UL * 1024 * 1024;
     private static readonly object _stateGate = new();
@@ -59,12 +63,14 @@ public static class SaveDataExports
     private static readonly Dictionary<string, string> _mountedSavePaths =
         new(StringComparer.OrdinalIgnoreCase);
     private static string? _titleId;
+    private static bool _initialized;
 
     public static void ConfigureApplicationInfo(string? titleId)
     {
         lock (_stateGate)
         {
             _titleId = string.IsNullOrWhiteSpace(titleId) ? null : SanitizePathSegment(titleId.Trim());
+            _initialized = false;
             _preparedTransactionResources.Clear();
             _mountedSavePaths.Clear();
         }
@@ -80,6 +86,11 @@ public static class SaveDataExports
         try
         {
             Directory.CreateDirectory(ResolveSaveDataRoot());
+            lock (_stateGate)
+            {
+                _initialized = true;
+            }
+
             return SetReturn(ctx, 0);
         }
         catch (IOException)
@@ -275,6 +286,127 @@ public static class SaveDataExports
         }
         catch (ArgumentException)
         {
+            return SetReturn(ctx, OrbisSaveDataErrorParameter);
+        }
+    }
+
+    [SysAbiExport(
+        Nid = "WAzWTZm1H+I",
+        ExportName = "sceSaveDataTransferringMount",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceSaveData")]
+    public static int SaveDataTransferringMount(CpuContext ctx)
+    {
+        // PS5 firmware forwards this 0x40-byte request to the SaveData service as
+        // operation 0x3D. Unlike a normal mount, the title ID is explicit and the
+        // resulting mount is read-only: it is used to inspect an existing save from
+        // another title during data transfer, never to create one.
+        if (!IsInitialized())
+        {
+            return SetReturn(ctx, OrbisSaveDataErrorNotInitialized);
+        }
+
+        var mountAddress = ctx[CpuRegister.Rdi];
+        var resultAddress = ctx[CpuRegister.Rsi];
+        if (mountAddress == 0 || resultAddress == 0)
+        {
+            return SetReturn(ctx, OrbisSaveDataErrorParameter);
+        }
+
+        if (!TryReadInt32(ctx, mountAddress, out var userId) ||
+            !KernelMemoryCompatExports.TryReadUInt64Compat(ctx, mountAddress + 0x08, out var titleIdAddress) ||
+            !KernelMemoryCompatExports.TryReadUInt64Compat(ctx, mountAddress + 0x10, out var dirNameAddress) ||
+            !KernelMemoryCompatExports.TryReadUInt64Compat(ctx, mountAddress + 0x18, out var fingerprintAddress) ||
+            !TryReadReservedZeros(
+                ctx,
+                mountAddress + TransferringMountReservedOffset,
+                TransferringMountReservedSize,
+                out var reservedAreZero))
+        {
+            return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        if (!reservedAreZero || userId < 0 || titleIdAddress == 0 || dirNameAddress == 0)
+        {
+            return SetReturn(ctx, OrbisSaveDataErrorParameter);
+        }
+
+        if (!TryReadFixedAscii(ctx, titleIdAddress, SaveDataTitleIdSize, out var titleId) ||
+            !TryReadFixedAscii(ctx, dirNameAddress, SaveDataDirNameSize, out var dirName))
+        {
+            return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        if (string.IsNullOrWhiteSpace(titleId) || string.IsNullOrWhiteSpace(dirName))
+        {
+            return SetReturn(ctx, OrbisSaveDataErrorParameter);
+        }
+
+        string? mountPoint = null;
+        try
+        {
+            var savePath = Path.Combine(
+                ResolveTitleSaveRoot(userId, titleId),
+                SanitizePathSegment(dirName));
+            if (!Directory.Exists(savePath))
+            {
+                TraceSaveData(
+                    $"transferring_mount user={userId} title={titleId} dir={dirName} " +
+                    $"fingerprint=0x{fingerprintAddress:X} result=not_found root='{savePath}'");
+                return SetReturn(ctx, OrbisSaveDataErrorNotFound);
+            }
+
+            if (!TryReserveMountPoint(savePath, out var reservedMountPoint))
+            {
+                return SetReturn(ctx, OrbisSaveDataErrorInternal);
+            }
+
+            mountPoint = reservedMountPoint;
+
+            Span<byte> result = stackalloc byte[MountResultSize];
+            result.Clear();
+            WriteAscii(result[..16], reservedMountPoint);
+            if (!KernelMemoryCompatExports.TryWriteCompat(ctx, resultAddress, result))
+            {
+                ReleaseMountPoint(reservedMountPoint);
+                mountPoint = null;
+                return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            // The host save directory is already plaintext, so the firmware PFS
+            // fingerprint is not dereferenced. Preserve the important contract:
+            // transferred saves are exposed read-only and cannot be mutated by the guest.
+            KernelMemoryCompatExports.RegisterGuestPathMount(reservedMountPoint, savePath, readOnly: true);
+            TraceSaveData(
+                $"transferring_mount user={userId} title={titleId} dir={dirName} " +
+                $"fingerprint=0x{fingerprintAddress:X} mount_point={reservedMountPoint} root='{savePath}'");
+            return SetReturn(ctx, 0);
+        }
+        catch (IOException)
+        {
+            if (mountPoint is not null)
+            {
+                ReleaseMountPoint(mountPoint);
+            }
+
+            return SetReturn(ctx, OrbisSaveDataErrorInternal);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            if (mountPoint is not null)
+            {
+                ReleaseMountPoint(mountPoint);
+            }
+
+            return SetReturn(ctx, OrbisSaveDataErrorInternal);
+        }
+        catch (ArgumentException)
+        {
+            if (mountPoint is not null)
+            {
+                ReleaseMountPoint(mountPoint);
+            }
+
             return SetReturn(ctx, OrbisSaveDataErrorParameter);
         }
     }
@@ -653,6 +785,41 @@ public static class SaveDataExports
     private static string ResolveTitleSaveRoot(int userId, string titleId) =>
         Path.Combine(ResolveSaveDataRoot(), userId.ToString(), SanitizePathSegment(titleId));
 
+    private static bool IsInitialized()
+    {
+        lock (_stateGate)
+        {
+            return _initialized;
+        }
+    }
+
+    private static bool TryReserveMountPoint(string savePath, out string mountPoint)
+    {
+        lock (_stateGate)
+        {
+            for (var slot = 0; slot < SaveDataMountSlotCount; slot++)
+            {
+                var candidate = $"/savedata{slot}";
+                if (_mountedSavePaths.TryAdd(candidate, savePath))
+                {
+                    mountPoint = candidate;
+                    return true;
+                }
+            }
+        }
+
+        mountPoint = string.Empty;
+        return false;
+    }
+
+    private static void ReleaseMountPoint(string mountPoint)
+    {
+        lock (_stateGate)
+        {
+            _mountedSavePaths.Remove(mountPoint);
+        }
+    }
+
     private static string ResolveSaveDataMemoryPath(int userId) =>
         Path.Combine(ResolveTitleSaveRoot(userId, ResolveConfiguredTitleId()), "sce_sdmemory", "memory.dat");
 
@@ -806,6 +973,32 @@ public static class SaveDataExports
         }
 
         value = Encoding.ASCII.GetString(buffer[..stringLength]);
+        return true;
+    }
+
+    private static bool TryReadReservedZeros(
+        CpuContext ctx,
+        ulong address,
+        int length,
+        out bool allZero)
+    {
+        Span<byte> reserved = stackalloc byte[length];
+        if (!KernelMemoryCompatExports.TryReadCompat(ctx, address, reserved))
+        {
+            allZero = false;
+            return false;
+        }
+
+        allZero = true;
+        foreach (var value in reserved)
+        {
+            if (value != 0)
+            {
+                allZero = false;
+                break;
+            }
+        }
+
         return true;
     }
 
