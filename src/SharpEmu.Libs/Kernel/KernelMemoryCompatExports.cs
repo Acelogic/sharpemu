@@ -4530,7 +4530,7 @@ public static partial class KernelMemoryCompatExports
     public static int KernelDirectMemoryQuery(CpuContext ctx)
     {
         var offset = ctx[CpuRegister.Rdi];
-        _ = ctx[CpuRegister.Rsi]; // flags
+        var flags = ctx[CpuRegister.Rsi];
         var infoAddress = ctx[CpuRegister.Rdx];
         var infoSize = ctx[CpuRegister.Rcx];
         if (infoAddress == 0 || infoSize < 24)
@@ -4540,16 +4540,27 @@ public static partial class KernelMemoryCompatExports
 
         lock (_memoryGate)
         {
+            DirectAllocation? selectedBlock = null;
             foreach (var block in _directAllocations.Values)
             {
-                if (offset < block.Start || offset >= block.Start + block.Length)
+                if (offset >= block.Start && offset < block.Start + block.Length)
                 {
-                    continue;
+                    selectedBlock = block;
+                    break;
                 }
 
-                if (!ctx.TryWriteUInt64(infoAddress, block.Start) ||
-                    !ctx.TryWriteUInt64(infoAddress + sizeof(ulong), block.Start + block.Length) ||
-                    !TryWriteInt32(ctx, infoAddress + (sizeof(ulong) * 2), block.MemoryType))
+                if (flags == 1 && block.Start > offset &&
+                    (!selectedBlock.HasValue || block.Start < selectedBlock.Value.Start))
+                {
+                    selectedBlock = block;
+                }
+            }
+
+            if (selectedBlock is { } selected)
+            {
+                if (!ctx.TryWriteUInt64(infoAddress, selected.Start) ||
+                    !ctx.TryWriteUInt64(infoAddress + sizeof(ulong), selected.Start + selected.Length) ||
+                    !TryWriteInt32(ctx, infoAddress + (sizeof(ulong) * 2), selected.MemoryType))
                 {
                     return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
                 }
@@ -4558,7 +4569,12 @@ public static partial class KernelMemoryCompatExports
             }
         }
 
-        return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
+        // GTA V uses flag 1 to enumerate direct-memory blocks. It advances the
+        // next query to info.end and recognizes EACCES (0x8002000D) as the only
+        // end-of-enumeration result.
+        return flags == 1
+            ? unchecked((int)0x8002000D)
+            : (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
     }
 
     [SysAbiExport(

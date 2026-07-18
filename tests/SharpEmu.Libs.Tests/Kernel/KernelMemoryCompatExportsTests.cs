@@ -23,6 +23,7 @@ public sealed class KernelMemoryCompatExportsTests
     private const ulong AllocationOutAddress = GuestMemoryBase + 0x100;
     private const ulong SpanStartOutAddress = GuestMemoryBase + 0x108;
     private const ulong SpanSizeOutAddress = GuestMemoryBase + 0x110;
+    private const ulong DirectQueryInfoAddress = GuestMemoryBase + 0x200;
 
     [Fact]
     public void PosixStat_MissingFileReturnsMinusOne()
@@ -131,6 +132,85 @@ public sealed class KernelMemoryCompatExportsTests
         {
             ReleaseDirectMemory(context, firstAllocationStart, firstAllocationLength);
             ReleaseDirectMemory(context, secondAllocationStart, secondAllocationLength);
+        }
+    }
+
+    [Fact]
+    public void DirectMemoryQuery_FlagOneEnumeratesContainingAndNextAllocations()
+    {
+        const ulong firstStart = 0x0020_0000;
+        const ulong firstLength = 0x0000_8000;
+        const int firstMemoryType = 0x0C;
+        const ulong secondStart = 0x0040_0000;
+        const ulong secondLength = 0x0000_C000;
+        const int secondMemoryType = 0x0F;
+        var memory = new FakeCpuMemory(GuestMemoryBase, 0x1000);
+        var context = new CpuContext(memory, Generation.Gen5);
+
+        try
+        {
+            AllocateDirectMemory(context, firstStart, firstLength, firstMemoryType);
+            AllocateDirectMemory(context, secondStart, secondLength, secondMemoryType);
+
+            Assert.Equal(0, QueryDirectMemory(context, firstStart + 0x4000, flags: 1));
+            AssertDirectMemoryInfo(memory, firstStart, firstStart + firstLength, firstMemoryType);
+
+            Assert.Equal(0, QueryDirectMemory(context, firstStart + firstLength, flags: 1));
+            AssertDirectMemoryInfo(memory, secondStart, secondStart + secondLength, secondMemoryType);
+        }
+        finally
+        {
+            ReleaseDirectMemory(context, firstStart, firstLength);
+            ReleaseDirectMemory(context, secondStart, secondLength);
+        }
+    }
+
+    [Fact]
+    public void DirectMemoryQuery_FlagOneReturnsEaccesAtEndWithoutTouchingInfo()
+    {
+        var memory = new FakeCpuMemory(GuestMemoryBase, 0x1000);
+        var context = new CpuContext(memory, Generation.Gen5);
+        var sentinel = new byte[24];
+        Array.Fill(sentinel, (byte)0xA5);
+        Assert.True(memory.TryWrite(DirectQueryInfoAddress, sentinel));
+
+        Assert.Equal(
+            unchecked((int)0x8002000D),
+            QueryDirectMemory(context, offset: 0, flags: 1));
+
+        Span<byte> actual = stackalloc byte[24];
+        Assert.True(memory.TryRead(DirectQueryInfoAddress, actual));
+        Assert.Equal(sentinel, actual.ToArray());
+    }
+
+    [Fact]
+    public void DirectMemoryQuery_ValidatesInfoAndReportsWriteFault()
+    {
+        const ulong allocationStart = 0x0060_0000;
+        const ulong allocationLength = 0x0000_4000;
+        var context = new CpuContext(new FakeCpuMemory(GuestMemoryBase, 0x1000), Generation.Gen5);
+
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT,
+            QueryDirectMemory(context, 0, flags: 1, infoAddress: 0));
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT,
+            QueryDirectMemory(context, 0, flags: 1, infoSize: 23));
+
+        try
+        {
+            AllocateDirectMemory(context, allocationStart, allocationLength);
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+                QueryDirectMemory(
+                    context,
+                    allocationStart,
+                    flags: 1,
+                    infoAddress: GuestMemoryBase + 0x1000));
+        }
+        finally
+        {
+            ReleaseDirectMemory(context, allocationStart, allocationLength);
         }
     }
 
@@ -580,18 +660,47 @@ public sealed class KernelMemoryCompatExportsTests
         }
     }
 
-    private static void AllocateDirectMemory(CpuContext context, ulong start, ulong length)
+    private static void AllocateDirectMemory(CpuContext context, ulong start, ulong length, int memoryType = 0)
     {
         context[CpuRegister.Rdi] = start;
         context[CpuRegister.Rsi] = start + length;
         context[CpuRegister.Rdx] = length;
         context[CpuRegister.Rcx] = 0x4000;
-        context[CpuRegister.R8] = 0;
+        context[CpuRegister.R8] = unchecked((ulong)memoryType);
         context[CpuRegister.R9] = AllocationOutAddress;
 
         Assert.Equal(0, KernelMemoryCompatExports.KernelAllocateDirectMemory(context));
         Assert.True(context.TryReadUInt64(AllocationOutAddress, out var allocatedAddress));
         Assert.Equal(start, allocatedAddress);
+    }
+
+    private static int QueryDirectMemory(
+        CpuContext context,
+        ulong offset,
+        ulong flags,
+        ulong infoAddress = DirectQueryInfoAddress,
+        ulong infoSize = 24)
+    {
+        context[CpuRegister.Rdi] = offset;
+        context[CpuRegister.Rsi] = flags;
+        context[CpuRegister.Rdx] = infoAddress;
+        context[CpuRegister.Rcx] = infoSize;
+
+        return KernelMemoryCompatExports.KernelDirectMemoryQuery(context);
+    }
+
+    private static void AssertDirectMemoryInfo(
+        FakeCpuMemory memory,
+        ulong expectedStart,
+        ulong expectedEnd,
+        int expectedMemoryType)
+    {
+        Span<byte> info = stackalloc byte[(sizeof(ulong) * 2) + sizeof(int)];
+        Assert.True(memory.TryRead(DirectQueryInfoAddress, info));
+
+        Assert.Equal(expectedStart, BitConverter.ToUInt64(info[..sizeof(ulong)]));
+        Assert.Equal(expectedEnd, BitConverter.ToUInt64(info.Slice(sizeof(ulong), sizeof(ulong))));
+        Assert.Equal(expectedMemoryType, BitConverter.ToInt32(info[(sizeof(ulong) * 2)..]));
     }
 
     private static void QueryAvailableDirectMemory(
