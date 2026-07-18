@@ -11,7 +11,15 @@ public static class NpManagerExports
 {
     private const int NpTitleIdSize = 16;
     private const int NpTitleSecretSize = 128;
+    private const int NpErrorNotInitialized = unchecked((int)0x80550002);
+    private const int NpErrorInvalidArgument = unchecked((int)0x80550003);
+    private const int NpErrorCallbackAlreadyRegistered = unchecked((int)0x80550008);
+    private const int NpErrorCallbackNotRegistered = unchecked((int)0x80550009);
+
+    private static readonly object ManagerGate = new();
     private static ulong _managerAllocatorAddress;
+    private static ulong _premiumEventCallback;
+    private static ulong _premiumEventCallbackUserData;
 
     [SysAbiExport(
         Nid = "fHGhS3uP52k",
@@ -27,10 +35,17 @@ public static class NpManagerExports
             return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
 
-        if (_managerAllocatorAddress == 0 &&
-            !NpCommonExports.TryCreateHleAllocator(ctx, poolSize, out _managerAllocatorAddress))
+        lock (ManagerGate)
         {
-            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            if (_managerAllocatorAddress == 0)
+            {
+                if (!NpCommonExports.TryCreateHleAllocator(ctx, poolSize, out _managerAllocatorAddress))
+                {
+                    return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+                }
+
+                ClearPremiumEventCallbackUnderLock();
+            }
         }
 
         // Firmware 12.70's implementation (libSceNpManager +0x14950)
@@ -48,18 +63,22 @@ public static class NpManagerExports
         LibraryName = "libSceNpManager")]
     public static int NpManagerGetAllocatorCallbacksCompat1270(CpuContext ctx)
     {
-        if (_managerAllocatorAddress == 0)
+        lock (ManagerGate)
         {
-            ctx[CpuRegister.Rax] = 0;
-            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+            if (_managerAllocatorAddress == 0)
+            {
+                ctx[CpuRegister.Rax] = 0;
+                return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+            }
+
+            ctx[CpuRegister.Rax] = _managerAllocatorAddress;
         }
 
         // The firmware table contains malloc, realloc, free, and a null user
         // pointer. Its address is consumed throughout ShellCore as allocator
         // identity; the shared executable no-op entries keep indirect cleanup
         // calls safe while the module-private pool remains HLE-owned.
-        ctx[CpuRegister.Rax] = _managerAllocatorAddress;
-        TraceNp($"manager_allocator_callbacks table=0x{_managerAllocatorAddress:X}");
+        TraceNp($"manager_allocator_callbacks table=0x{ctx[CpuRegister.Rax]:X}");
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
@@ -70,8 +89,15 @@ public static class NpManagerExports
         LibraryName = "libSceNpManager")]
     public static int NpManagerGlobalTerminateCompat1270(CpuContext ctx)
     {
-        NpCommonExports.ReleaseHleAllocator(_managerAllocatorAddress);
-        _managerAllocatorAddress = 0;
+        ulong allocatorAddress;
+        lock (ManagerGate)
+        {
+            allocatorAddress = _managerAllocatorAddress;
+            _managerAllocatorAddress = 0;
+            ClearPremiumEventCallbackUnderLock();
+        }
+
+        NpCommonExports.ReleaseHleAllocator(allocatorAddress);
         TraceNp("manager_global_term");
         return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
     }
@@ -163,7 +189,79 @@ public static class NpManagerExports
         TraceNp($"callback_slot_dtor object=0x{objectAddress:X}");
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
-    private const int NpErrorInvalidArgument = unchecked((int)0x80550003);
+
+    [SysAbiExport(
+        Nid = "+yqjab2fUJA",
+        ExportName = "sceNpRegisterPremiumEventCallback",
+        Target = Generation.Gen5,
+        LibraryName = "libSceNpManager")]
+    public static int NpRegisterPremiumEventCallback(CpuContext ctx)
+    {
+        var callback = ctx[CpuRegister.Rdi];
+        var userData = ctx[CpuRegister.Rsi];
+
+        // Firmware 12.70 first checks the manager lifecycle, then protects the
+        // single callback/user-data slot with its manager mutex. Preserve that
+        // ordering: an uninitialized manager wins even when callback is null.
+        lock (ManagerGate)
+        {
+            if (_managerAllocatorAddress == 0)
+            {
+                return SetReturn(ctx, NpErrorNotInitialized);
+            }
+
+            if (callback == 0)
+            {
+                return SetReturn(ctx, NpErrorInvalidArgument);
+            }
+
+            if (_premiumEventCallback != 0)
+            {
+                return SetReturn(ctx, NpErrorCallbackAlreadyRegistered);
+            }
+
+            // The firmware subscribes its stored slot to a platform backend
+            // and rolls the slot back if that subscription fails. SharpEmu has
+            // no online premium backend: this synchronized slot is instead a
+            // real local subscription which receives only explicitly supplied
+            // emulator events through TryDispatchPremiumEvent. It fabricates
+            // neither premium state nor online events.
+            _premiumEventCallback = callback;
+            _premiumEventCallbackUserData = userData;
+        }
+
+        TraceNp($"register_premium_event_callback callback=0x{callback:X} userdata=0x{userData:X}");
+        return SetReturn(ctx, 0);
+    }
+
+    [SysAbiExport(
+        Nid = "-Rjp3-YViXc",
+        ExportName = "sceNpUnregisterPremiumEventCallback",
+        Target = Generation.Gen5,
+        LibraryName = "libSceNpManager")]
+    public static int NpUnregisterPremiumEventCallback(CpuContext ctx)
+    {
+        lock (ManagerGate)
+        {
+            if (_managerAllocatorAddress == 0)
+            {
+                return SetReturn(ctx, NpErrorNotInitialized);
+            }
+
+            if (_premiumEventCallback == 0)
+            {
+                return SetReturn(ctx, NpErrorCallbackNotRegistered);
+            }
+
+            // Firmware ignores backend-unsubscribe failure and always clears
+            // its local slot. There is no online backend to contact here, so
+            // clearing the HLE subscription is the complete local operation.
+            ClearPremiumEventCallbackUnderLock();
+        }
+
+        TraceNp("unregister_premium_event_callback");
+        return SetReturn(ctx, 0);
+    }
 
     [SysAbiExport(
         Nid = "3Zl8BePTh9Y",
@@ -359,6 +457,92 @@ public static class NpManagerExports
 
         TraceNp($"set_np_title_id title='{ReadTitleId(titleId)}'");
         return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    internal static bool TryDispatchPremiumEvent(
+        CpuContext ctx,
+        ulong eventType,
+        ulong eventValue,
+        out string? error)
+    {
+        ulong callback;
+        ulong userData;
+        lock (ManagerGate)
+        {
+            if (_managerAllocatorAddress == 0)
+            {
+                error = "NP manager is not initialized";
+                return false;
+            }
+
+            callback = _premiumEventCallback;
+            userData = _premiumEventCallbackUserData;
+            if (callback == 0)
+            {
+                error = "premium event callback is not registered";
+                return false;
+            }
+        }
+
+        // Firmware copies the callback pair while holding the manager mutex,
+        // then invokes callback(eventType, eventValue, userData) only after it
+        // has unlocked. Guest code may therefore unregister itself safely.
+        var scheduler = GuestThreadExecution.Scheduler;
+        if (scheduler is null)
+        {
+            error = "guest scheduler is unavailable";
+            return false;
+        }
+
+        var invoked = scheduler.TryCallGuestFunction(
+            ctx,
+            callback,
+            eventType,
+            eventValue,
+            userData,
+            0,
+            0,
+            $"np_premium_event_{eventType}",
+            out _,
+            out error);
+        if (invoked)
+        {
+            TraceNp(
+                $"premium_event callback=0x{callback:X} type={eventType} value={eventValue} userdata=0x{userData:X}");
+        }
+
+        return invoked;
+    }
+
+    internal static bool TryGetPremiumEventCallbackForTests(out ulong callback, out ulong userData)
+    {
+        lock (ManagerGate)
+        {
+            callback = _premiumEventCallback;
+            userData = _premiumEventCallbackUserData;
+            return callback != 0;
+        }
+    }
+
+    internal static bool IsPremiumEventGateHeldByCurrentThreadForTests => Monitor.IsEntered(ManagerGate);
+
+    internal static void ResetForTests()
+    {
+        ulong allocatorAddress;
+        lock (ManagerGate)
+        {
+            allocatorAddress = _managerAllocatorAddress;
+            _managerAllocatorAddress = 0;
+            ClearPremiumEventCallbackUnderLock();
+        }
+
+        NpCommonExports.ReleaseHleAllocator(allocatorAddress);
+    }
+
+    private static void ClearPremiumEventCallbackUnderLock()
+    {
+        _premiumEventCallback = 0;
+        _premiumEventCallbackUserData = 0;
     }
 
     private static int SetReturn(CpuContext ctx, int result)
