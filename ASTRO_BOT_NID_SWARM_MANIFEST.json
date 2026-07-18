@@ -4,6 +4,7 @@
     "source": "ASTRO_BOT_UNRESOLVED_NIDS.csv pre-implementation snapshot plus success-unmasked runtime imports",
     "created_at": "2026-07-17T08:26:57Z",
     "completed_at": "2026-07-17T11:55:18Z",
+    "followup_completed_at": "2026-07-18T02:43:38Z",
     "base_sha": "2e00076b244442487b59d1cbbfe5f5b677b525ae",
     "integration_branch": "codex/astro-nid-swarm",
     "integration_sha": "61cea567975317f6c839183feecd75a39dd9f744",
@@ -16,6 +17,21 @@
       "excluded_subsystem": "SaveData",
       "audio_failures": 0,
       "native_exceptions": 0
+    },
+    "followup_runtime": {
+      "run": "artifacts/astro-bot/runs/20260717-224009-savedata-transferring-mount-pass/run.json",
+      "log": "artifacts/astro-bot/runs/20260717-224009-savedata-transferring-mount-pass/attempt-01.log",
+      "milestone": "savedata.transferring_mount",
+      "request": {
+        "user_id": 268435456,
+        "title_id": "PPSA01325",
+        "directory": "sce_sdmemory",
+        "fingerprint": "non-null"
+      },
+      "result": "0x809F0008 source save not found",
+      "unresolved_nids": [],
+      "fatal_or_native_errors": 0,
+      "known_rendering_regression": "opening art followed by black frame; unchanged from pinned base"
     },
     "regressions": [
       {
@@ -45,7 +61,11 @@
       "libs": "419 passed",
       "shader_compiler": "27 passed",
       "source_generators": "33 passed",
-      "registration_audit": "20 of 20 target NIDs registered exactly once",
+      "registration_audit": "21 of 21 target NIDs registered exactly once",
+      "followup_libs": "567 passed",
+      "followup_shader_compiler": "34 passed",
+      "followup_source_generators": "33 passed",
+      "followup_release_osx_x64": "passed with zero warnings and errors",
       "format": "18 changed C# files verified; pre-existing AgcExports.cs formatting debt excluded",
       "diff_check": "passed"
     }
@@ -353,6 +373,94 @@
       "contract": {"signature": "int sceRudpEnableInternalIOThread(uint32_t stackSize, int priority)", "returns": ["0, not-initialized, invalid-context, or duplicate-enable via EAX"], "output_writes": [], "validation_rules": ["initialized, empty context, not already enabled; stack clamped to 0x4000 minimum"], "state_transitions": ["records enabled internal IO-thread configuration"], "ownership": ["module owns lifecycle until sceRudpEnd"], "synchronization": ["RUDP state lock"]},
       "implementation": {"worktree": "/Users/mcruz/.codex/worktrees/sharpemu-astro-font-nids", "branch": "codex/astro-nid-swarm", "commit": "091d869", "files": ["src/SharpEmu.Libs/Rudp/RudpExports.cs", "tests/SharpEmu.Libs.Tests/Rudp/RudpExportsTests.cs"]},
       "validation": {"branch": "focused RUDP tests passed", "integration": "exact suites passed at 61cea56", "games": [{"game": "ASTRO BOT", "passed": true, "run": "artifacts/astro-bot/runs/20260717-074330-all-nids-setrays/attempt-02.log"}]},
+      "blockers": []
+    },
+    {
+      "nid": "WAzWTZm1H+I",
+      "symbol": "sceSaveDataTransferringMount",
+      "component": "SaveData",
+      "library": "libSceSaveData",
+      "generation": "Gen4|Gen5",
+      "cluster": "savedata",
+      "observations": [
+        {
+          "game": "ASTRO BOT",
+          "calls": 1,
+          "source": "artifacts/astro-bot/runs/20260717-224009-savedata-transferring-mount-pass/attempt-01.log",
+          "importing_image": "eboot.bin",
+          "call_sites": ["return 0x0000000801082EE4"]
+        }
+      ],
+      "status": "game-verified",
+      "priority": {
+        "calls": 1,
+        "criticality": "optional prior-title save transfer",
+        "cross_game_fanout": 1
+      },
+      "evidence": {
+        "aerolib_name": "sceSaveDataTransferringMount",
+        "binary_hash": "237d302887e67818f179d299158413ac9eb4c1ec71b36767afd5141a52170386",
+        "reference_functions": [
+          "decrypted PS5 libSceSaveData.sprx export 0x33540",
+          "firmware SaveData service operation 0x3D"
+        ],
+        "call_sites": ["ASTRO BOT return 0x0000000801082EE4"],
+        "confidence": "medium",
+        "conflicts": [
+          "firmware service-internal error mapping is unavailable beyond observed wrapper behavior",
+          "plaintext host saves do not require proprietary PFS fingerprint authentication"
+        ]
+      },
+      "contract": {
+        "signature": "int sceSaveDataTransferringMount(const OrbisSaveDataTransferringMount *request, OrbisSaveDataMountResult *result)",
+        "returns": [
+          "0 on read-only mount success",
+          "0x809F0000 parameter",
+          "0x809F0001 not initialized",
+          "0x809F0008 source save not found",
+          "guest memory fault or internal host-filesystem error"
+        ],
+        "output_writes": ["writes one zero-initialized 0x40-byte mount result on success"],
+        "validation_rules": [
+          "initialization precedes pointer validation",
+          "request and result pointers required",
+          "nonnegative user ID and nonempty explicit title/directory required",
+          "request reserved[32] must be readable and zero"
+        ],
+        "state_transitions": ["reserves a mount slot and registers the existing source save read-only"],
+        "ownership": ["caller owns request/result memory; host save directory remains emulator-owned"],
+        "synchronization": ["SaveData state gate and kernel guest-mount lock"]
+      },
+      "implementation": {
+        "worktree": "/private/tmp/sharpemu-nid-savedata-transferring",
+        "branch": "codex/nid-savedata-transferring-mount",
+        "commit": "3ea3554",
+        "files": [
+          "src/SharpEmu.Libs/SaveData/SaveDataExports.cs",
+          "tests/SharpEmu.Libs.Tests/SaveData/SaveDataTransferringMountTests.cs",
+          "docs/astro-bot/savedata-transferring-mount.md"
+        ]
+      },
+      "validation": {
+        "branch": "7 focused, 567 library, 33 source-generator, and 34 shader tests passed; Release osx-x64 publish passed",
+        "integration": "commit 3ea3554 fast-forwarded into local main",
+        "games": [
+          {
+            "game": "ASTRO BOT",
+            "passed": true,
+            "run": "artifacts/astro-bot/runs/20260717-224009-savedata-transferring-mount-pass/attempt-01.log",
+            "milestone": "savedata.transferring_mount",
+            "unresolved_nids": []
+          },
+          {
+            "game": "Dreaming Sarah",
+            "passed": true,
+            "run": "artifacts/astro-bot/runs/20260717-224116-savedata-transferring-dreaming-sarah/attempt-01.log",
+            "milestone": "ON SAVEGAME MISSING",
+            "unresolved_nids": []
+          }
+        ]
+      },
       "blockers": []
     },
     {
