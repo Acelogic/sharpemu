@@ -11660,7 +11660,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -11670,33 +11670,60 @@
       },
       "evidence": {
         "aerolib_name": "sceAjmBatchJobDecode",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "4da65731b07fa2911b9468505b2f1fc0a56df7373356fdc1dfa886b00385d8d9",
+        "reference_functions": [
+          "libSceAjm.native.sprx Ghidra export 00001a10",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/Ajm-windows-ghidra.json selected-function record",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json independent matching Mac record"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "Mac and Windows Ghidra records agree exactly on provider hash, entry, and body hash",
+          "provider definition evidence does not establish a semantic HLE fallback contract"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
-        "ownership": [],
-        "synchronization": []
+        "signature": "provider-defined Gen5 ABI; no semantic signature is claimed by the registration fallback",
+        "returns": [
+          "the loaded guest provider result is authoritative when the exact export is mapped",
+          "the HLE fallback returns ORBIS_GEN2_ERROR_NOT_IMPLEMENTED when no guest provider export is available"
+        ],
+        "output_writes": [
+          "provider-defined; the fail-closed fallback performs no guest writes"
+        ],
+        "validation_rules": [
+          "exact NID, logical library, and Gen5 registration match both Ghidra packets"
+        ],
+        "state_transitions": [
+          "provider-defined; the fail-closed fallback changes no SharpEmu state"
+        ],
+        "ownership": [
+          "provider-defined"
+        ],
+        "synchronization": [
+          "provider-defined"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/Developer/sharpemu-gta-v-nids",
+        "branch": "codex/gta-v-nids",
+        "commit": "5edc5c708ebf75e2b2bae809ea4ee734c537b368",
+        "files": [
+          "src/SharpEmu.Libs/Lle/AjmNativeLleExports.cs",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/Ajm-windows-ghidra.json",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json",
+          "tests/SharpEmu.Libs.Tests/Lle/ProviderLleExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
+        "branch": "23/23 dual-host Ghidra records and 5/5 focused tests passed",
+        "integration": "757/757 library, 36/36 source-generator, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
         "games": []
       },
-      "blockers": []
+      "blockers": [
+        "functional behavior remains guest-provider-dependent; the fallback is intentionally fail-closed"
+      ]
     },
     {
       "nid": "5tOfnaClcqM",
@@ -11715,7 +11742,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -11725,33 +11752,60 @@
       },
       "evidence": {
         "aerolib_name": "sceAjmBatchStart",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "4da65731b07fa2911b9468505b2f1fc0a56df7373356fdc1dfa886b00385d8d9",
+        "reference_functions": [
+          "libSceAjm.native.sprx Ghidra export 00000e10",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/Ajm-windows-ghidra.json selected-function record",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json independent matching Mac record"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "Mac and Windows Ghidra records agree exactly on provider hash, entry, and body hash",
+          "provider definition evidence does not establish a semantic HLE fallback contract"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
-        "ownership": [],
-        "synchronization": []
+        "signature": "provider-defined Gen5 ABI; no semantic signature is claimed by the registration fallback",
+        "returns": [
+          "the loaded guest provider result is authoritative when the exact export is mapped",
+          "the HLE fallback returns ORBIS_GEN2_ERROR_NOT_IMPLEMENTED when no guest provider export is available"
+        ],
+        "output_writes": [
+          "provider-defined; the fail-closed fallback performs no guest writes"
+        ],
+        "validation_rules": [
+          "exact NID, logical library, and Gen5 registration match both Ghidra packets"
+        ],
+        "state_transitions": [
+          "provider-defined; the fail-closed fallback changes no SharpEmu state"
+        ],
+        "ownership": [
+          "provider-defined"
+        ],
+        "synchronization": [
+          "provider-defined"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/Developer/sharpemu-gta-v-nids",
+        "branch": "codex/gta-v-nids",
+        "commit": "5edc5c708ebf75e2b2bae809ea4ee734c537b368",
+        "files": [
+          "src/SharpEmu.Libs/Lle/AjmNativeLleExports.cs",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/Ajm-windows-ghidra.json",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json",
+          "tests/SharpEmu.Libs.Tests/Lle/ProviderLleExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
+        "branch": "23/23 dual-host Ghidra records and 5/5 focused tests passed",
+        "integration": "757/757 library, 36/36 source-generator, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
         "games": []
       },
-      "blockers": []
+      "blockers": [
+        "functional behavior remains guest-provider-dependent; the fallback is intentionally fail-closed"
+      ]
     },
     {
       "nid": "0BMj1hgG+kE",
@@ -15404,7 +15458,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -15414,33 +15468,60 @@
       },
       "evidence": {
         "aerolib_name": "sceAppContentDownloadDataGetAvailableSpaceKb",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "16ea1a4db751772ca5f0bacb440a95a20eaa2cb8b75f4d6b5999da178d8594fc",
+        "reference_functions": [
+          "libSceAppContent.sprx Ghidra export 00001740",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/AppContent-windows-ghidra.json selected-function record",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json independent matching Mac record"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "Mac and Windows Ghidra records agree exactly on provider hash, entry, and body hash",
+          "provider definition evidence does not establish a semantic HLE fallback contract"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
-        "ownership": [],
-        "synchronization": []
+        "signature": "provider-defined Gen5 ABI; no semantic signature is claimed by the registration fallback",
+        "returns": [
+          "the loaded guest provider result is authoritative when the exact export is mapped",
+          "the HLE fallback returns ORBIS_GEN2_ERROR_NOT_IMPLEMENTED when no guest provider export is available"
+        ],
+        "output_writes": [
+          "provider-defined; the fail-closed fallback performs no guest writes"
+        ],
+        "validation_rules": [
+          "exact NID, logical library, and Gen5 registration match both Ghidra packets"
+        ],
+        "state_transitions": [
+          "provider-defined; the fail-closed fallback changes no SharpEmu state"
+        ],
+        "ownership": [
+          "provider-defined"
+        ],
+        "synchronization": [
+          "provider-defined"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/Developer/sharpemu-gta-v-nids",
+        "branch": "codex/gta-v-nids",
+        "commit": "5edc5c708ebf75e2b2bae809ea4ee734c537b368",
+        "files": [
+          "src/SharpEmu.Libs/Lle/AppContentLleExports.cs",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/AppContent-windows-ghidra.json",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json",
+          "tests/SharpEmu.Libs.Tests/Lle/ProviderLleExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
+        "branch": "23/23 dual-host Ghidra records and 5/5 focused tests passed",
+        "integration": "757/757 library, 36/36 source-generator, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
         "games": []
       },
-      "blockers": []
+      "blockers": [
+        "functional behavior remains guest-provider-dependent; the fallback is intentionally fail-closed"
+      ]
     },
     {
       "nid": "wVwPU50pS1c",
@@ -15459,7 +15540,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -15469,33 +15550,60 @@
       },
       "evidence": {
         "aerolib_name": "sceAudioOutSetMixLevelPadSpk",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "948dfdc30b9c974c5447d9078853beb1555a2e548de6093b05a114e99445ab33",
+        "reference_functions": [
+          "libSceAudioOut.sprx Ghidra export 00002080",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/AudioOut-windows-ghidra.json selected-function record",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json independent matching Mac record"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "Mac and Windows Ghidra records agree exactly on provider hash, entry, and body hash",
+          "provider definition evidence does not establish a semantic HLE fallback contract"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
-        "ownership": [],
-        "synchronization": []
+        "signature": "provider-defined Gen5 ABI; no semantic signature is claimed by the registration fallback",
+        "returns": [
+          "the loaded guest provider result is authoritative when the exact export is mapped",
+          "the HLE fallback returns ORBIS_GEN2_ERROR_NOT_IMPLEMENTED when no guest provider export is available"
+        ],
+        "output_writes": [
+          "provider-defined; the fail-closed fallback performs no guest writes"
+        ],
+        "validation_rules": [
+          "exact NID, logical library, and Gen5 registration match both Ghidra packets"
+        ],
+        "state_transitions": [
+          "provider-defined; the fail-closed fallback changes no SharpEmu state"
+        ],
+        "ownership": [
+          "provider-defined"
+        ],
+        "synchronization": [
+          "provider-defined"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/Developer/sharpemu-gta-v-nids",
+        "branch": "codex/gta-v-nids",
+        "commit": "5edc5c708ebf75e2b2bae809ea4ee734c537b368",
+        "files": [
+          "src/SharpEmu.Libs/Lle/AudioOutLleExports.cs",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/AudioOut-windows-ghidra.json",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json",
+          "tests/SharpEmu.Libs.Tests/Lle/ProviderLleExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
+        "branch": "23/23 dual-host Ghidra records and 5/5 focused tests passed",
+        "integration": "757/757 library, 36/36 source-generator, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
         "games": []
       },
-      "blockers": []
+      "blockers": [
+        "functional behavior remains guest-provider-dependent; the fallback is intentionally fail-closed"
+      ]
     },
     {
       "nid": "+k91hoTuoA8",
@@ -15514,7 +15622,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -15524,33 +15632,60 @@
       },
       "evidence": {
         "aerolib_name": "sceAudioOut2SpeakerArrayCreate",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "948dfdc30b9c974c5447d9078853beb1555a2e548de6093b05a114e99445ab33",
+        "reference_functions": [
+          "libSceAudioOut.sprx Ghidra export 0004ec60",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/AudioOut2-windows-ghidra.json selected-function record",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json independent matching Mac record"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "Mac and Windows Ghidra records agree exactly on provider hash, entry, and body hash",
+          "provider definition evidence does not establish a semantic HLE fallback contract"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
-        "ownership": [],
-        "synchronization": []
+        "signature": "provider-defined Gen5 ABI; no semantic signature is claimed by the registration fallback",
+        "returns": [
+          "the loaded guest provider result is authoritative when the exact export is mapped",
+          "the HLE fallback returns ORBIS_GEN2_ERROR_NOT_IMPLEMENTED when no guest provider export is available"
+        ],
+        "output_writes": [
+          "provider-defined; the fail-closed fallback performs no guest writes"
+        ],
+        "validation_rules": [
+          "exact NID, logical library, and Gen5 registration match both Ghidra packets"
+        ],
+        "state_transitions": [
+          "provider-defined; the fail-closed fallback changes no SharpEmu state"
+        ],
+        "ownership": [
+          "provider-defined"
+        ],
+        "synchronization": [
+          "provider-defined"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/Developer/sharpemu-gta-v-nids",
+        "branch": "codex/gta-v-nids",
+        "commit": "5edc5c708ebf75e2b2bae809ea4ee734c537b368",
+        "files": [
+          "src/SharpEmu.Libs/Lle/AudioOut2LleExports.cs",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/AudioOut2-windows-ghidra.json",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json",
+          "tests/SharpEmu.Libs.Tests/Lle/ProviderLleExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
+        "branch": "23/23 dual-host Ghidra records and 5/5 focused tests passed",
+        "integration": "757/757 library, 36/36 source-generator, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
         "games": []
       },
-      "blockers": []
+      "blockers": [
+        "functional behavior remains guest-provider-dependent; the fallback is intentionally fail-closed"
+      ]
     },
     {
       "nid": "28QqMnuuJ9Y",
@@ -15569,7 +15704,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -15579,33 +15714,60 @@
       },
       "evidence": {
         "aerolib_name": "sceAudioOut2GetSpeakerArrayAmbisonicsCoefficients",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "948dfdc30b9c974c5447d9078853beb1555a2e548de6093b05a114e99445ab33",
+        "reference_functions": [
+          "libSceAudioOut.sprx Ghidra export 0004ee10",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/AudioOut2-windows-ghidra.json selected-function record",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json independent matching Mac record"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "Mac and Windows Ghidra records agree exactly on provider hash, entry, and body hash",
+          "provider definition evidence does not establish a semantic HLE fallback contract"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
-        "ownership": [],
-        "synchronization": []
+        "signature": "provider-defined Gen5 ABI; no semantic signature is claimed by the registration fallback",
+        "returns": [
+          "the loaded guest provider result is authoritative when the exact export is mapped",
+          "the HLE fallback returns ORBIS_GEN2_ERROR_NOT_IMPLEMENTED when no guest provider export is available"
+        ],
+        "output_writes": [
+          "provider-defined; the fail-closed fallback performs no guest writes"
+        ],
+        "validation_rules": [
+          "exact NID, logical library, and Gen5 registration match both Ghidra packets"
+        ],
+        "state_transitions": [
+          "provider-defined; the fail-closed fallback changes no SharpEmu state"
+        ],
+        "ownership": [
+          "provider-defined"
+        ],
+        "synchronization": [
+          "provider-defined"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/Developer/sharpemu-gta-v-nids",
+        "branch": "codex/gta-v-nids",
+        "commit": "5edc5c708ebf75e2b2bae809ea4ee734c537b368",
+        "files": [
+          "src/SharpEmu.Libs/Lle/AudioOut2LleExports.cs",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/AudioOut2-windows-ghidra.json",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json",
+          "tests/SharpEmu.Libs.Tests/Lle/ProviderLleExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
+        "branch": "23/23 dual-host Ghidra records and 5/5 focused tests passed",
+        "integration": "757/757 library, 36/36 source-generator, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
         "games": []
       },
-      "blockers": []
+      "blockers": [
+        "functional behavior remains guest-provider-dependent; the fallback is intentionally fail-closed"
+      ]
     },
     {
       "nid": "G1YOKDJYX2Y",
@@ -15624,7 +15786,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -15634,33 +15796,60 @@
       },
       "evidence": {
         "aerolib_name": "sceAudioOut2GetSpeakerArrayMemorySize",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "948dfdc30b9c974c5447d9078853beb1555a2e548de6093b05a114e99445ab33",
+        "reference_functions": [
+          "libSceAudioOut.sprx Ghidra export 0004ec40",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/AudioOut2-windows-ghidra.json selected-function record",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json independent matching Mac record"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "Mac and Windows Ghidra records agree exactly on provider hash, entry, and body hash",
+          "provider definition evidence does not establish a semantic HLE fallback contract"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
-        "ownership": [],
-        "synchronization": []
+        "signature": "provider-defined Gen5 ABI; no semantic signature is claimed by the registration fallback",
+        "returns": [
+          "the loaded guest provider result is authoritative when the exact export is mapped",
+          "the HLE fallback returns ORBIS_GEN2_ERROR_NOT_IMPLEMENTED when no guest provider export is available"
+        ],
+        "output_writes": [
+          "provider-defined; the fail-closed fallback performs no guest writes"
+        ],
+        "validation_rules": [
+          "exact NID, logical library, and Gen5 registration match both Ghidra packets"
+        ],
+        "state_transitions": [
+          "provider-defined; the fail-closed fallback changes no SharpEmu state"
+        ],
+        "ownership": [
+          "provider-defined"
+        ],
+        "synchronization": [
+          "provider-defined"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/Developer/sharpemu-gta-v-nids",
+        "branch": "codex/gta-v-nids",
+        "commit": "5edc5c708ebf75e2b2bae809ea4ee734c537b368",
+        "files": [
+          "src/SharpEmu.Libs/Lle/AudioOut2LleExports.cs",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/AudioOut2-windows-ghidra.json",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json",
+          "tests/SharpEmu.Libs.Tests/Lle/ProviderLleExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
+        "branch": "23/23 dual-host Ghidra records and 5/5 focused tests passed",
+        "integration": "757/757 library, 36/36 source-generator, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
         "games": []
       },
-      "blockers": []
+      "blockers": [
+        "functional behavior remains guest-provider-dependent; the fallback is intentionally fail-closed"
+      ]
     },
     {
       "nid": "erCWQR5eKiQ",
@@ -15679,7 +15868,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -15689,33 +15878,60 @@
       },
       "evidence": {
         "aerolib_name": "sceAudioOut2SpeakerArrayDestroy",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "948dfdc30b9c974c5447d9078853beb1555a2e548de6093b05a114e99445ab33",
+        "reference_functions": [
+          "libSceAudioOut.sprx Ghidra export 0004ecf0",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/AudioOut2-windows-ghidra.json selected-function record",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json independent matching Mac record"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "Mac and Windows Ghidra records agree exactly on provider hash, entry, and body hash",
+          "provider definition evidence does not establish a semantic HLE fallback contract"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
-        "ownership": [],
-        "synchronization": []
+        "signature": "provider-defined Gen5 ABI; no semantic signature is claimed by the registration fallback",
+        "returns": [
+          "the loaded guest provider result is authoritative when the exact export is mapped",
+          "the HLE fallback returns ORBIS_GEN2_ERROR_NOT_IMPLEMENTED when no guest provider export is available"
+        ],
+        "output_writes": [
+          "provider-defined; the fail-closed fallback performs no guest writes"
+        ],
+        "validation_rules": [
+          "exact NID, logical library, and Gen5 registration match both Ghidra packets"
+        ],
+        "state_transitions": [
+          "provider-defined; the fail-closed fallback changes no SharpEmu state"
+        ],
+        "ownership": [
+          "provider-defined"
+        ],
+        "synchronization": [
+          "provider-defined"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/Developer/sharpemu-gta-v-nids",
+        "branch": "codex/gta-v-nids",
+        "commit": "5edc5c708ebf75e2b2bae809ea4ee734c537b368",
+        "files": [
+          "src/SharpEmu.Libs/Lle/AudioOut2LleExports.cs",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/AudioOut2-windows-ghidra.json",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json",
+          "tests/SharpEmu.Libs.Tests/Lle/ProviderLleExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
+        "branch": "23/23 dual-host Ghidra records and 5/5 focused tests passed",
+        "integration": "757/757 library, 36/36 source-generator, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
         "games": []
       },
-      "blockers": []
+      "blockers": [
+        "functional behavior remains guest-provider-dependent; the fallback is intentionally fail-closed"
+      ]
     },
     {
       "nid": "5XLSih32qHA",
@@ -16919,7 +17135,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -16929,33 +17145,60 @@
       },
       "evidence": {
         "aerolib_name": "sceCoredumpWriteUserData",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "0d91281f1d2cdcf4d8c2f4b920766b645ea086e679bd95074f30510178a706b0",
+        "reference_functions": [
+          "libkernel.sprx Ghidra export 00013660",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/Coredump-windows-ghidra.json selected-function record",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json independent matching Mac record"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "Mac and Windows Ghidra records agree exactly on provider hash, entry, and body hash",
+          "provider definition evidence does not establish a semantic HLE fallback contract"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
-        "ownership": [],
-        "synchronization": []
+        "signature": "provider-defined Gen5 ABI; no semantic signature is claimed by the registration fallback",
+        "returns": [
+          "the loaded guest provider result is authoritative when the exact export is mapped",
+          "the HLE fallback returns ORBIS_GEN2_ERROR_NOT_IMPLEMENTED when no guest provider export is available"
+        ],
+        "output_writes": [
+          "provider-defined; the fail-closed fallback performs no guest writes"
+        ],
+        "validation_rules": [
+          "exact NID, logical library, and Gen5 registration match both Ghidra packets"
+        ],
+        "state_transitions": [
+          "provider-defined; the fail-closed fallback changes no SharpEmu state"
+        ],
+        "ownership": [
+          "provider-defined"
+        ],
+        "synchronization": [
+          "provider-defined"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/Developer/sharpemu-gta-v-nids",
+        "branch": "codex/gta-v-nids",
+        "commit": "5edc5c708ebf75e2b2bae809ea4ee734c537b368",
+        "files": [
+          "src/SharpEmu.Libs/Lle/CoredumpLleExports.cs",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/Coredump-windows-ghidra.json",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json",
+          "tests/SharpEmu.Libs.Tests/Lle/ProviderLleExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
+        "branch": "23/23 dual-host Ghidra records and 5/5 focused tests passed",
+        "integration": "757/757 library, 36/36 source-generator, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
         "games": []
       },
-      "blockers": []
+      "blockers": [
+        "functional behavior remains guest-provider-dependent; the fallback is intentionally fail-closed"
+      ]
     },
     {
       "nid": "fFkhOgztiCA",
@@ -16974,7 +17217,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -16984,33 +17227,60 @@
       },
       "evidence": {
         "aerolib_name": "sceCoredumpUnregisterCoredumpHandler",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "0d91281f1d2cdcf4d8c2f4b920766b645ea086e679bd95074f30510178a706b0",
+        "reference_functions": [
+          "libkernel.sprx Ghidra export 00013600",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/Coredump-windows-ghidra.json selected-function record",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json independent matching Mac record"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "Mac and Windows Ghidra records agree exactly on provider hash, entry, and body hash",
+          "provider definition evidence does not establish a semantic HLE fallback contract"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
-        "ownership": [],
-        "synchronization": []
+        "signature": "provider-defined Gen5 ABI; no semantic signature is claimed by the registration fallback",
+        "returns": [
+          "the loaded guest provider result is authoritative when the exact export is mapped",
+          "the HLE fallback returns ORBIS_GEN2_ERROR_NOT_IMPLEMENTED when no guest provider export is available"
+        ],
+        "output_writes": [
+          "provider-defined; the fail-closed fallback performs no guest writes"
+        ],
+        "validation_rules": [
+          "exact NID, logical library, and Gen5 registration match both Ghidra packets"
+        ],
+        "state_transitions": [
+          "provider-defined; the fail-closed fallback changes no SharpEmu state"
+        ],
+        "ownership": [
+          "provider-defined"
+        ],
+        "synchronization": [
+          "provider-defined"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/Developer/sharpemu-gta-v-nids",
+        "branch": "codex/gta-v-nids",
+        "commit": "5edc5c708ebf75e2b2bae809ea4ee734c537b368",
+        "files": [
+          "src/SharpEmu.Libs/Lle/CoredumpLleExports.cs",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/Coredump-windows-ghidra.json",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json",
+          "tests/SharpEmu.Libs.Tests/Lle/ProviderLleExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
+        "branch": "23/23 dual-host Ghidra records and 5/5 focused tests passed",
+        "integration": "757/757 library, 36/36 source-generator, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
         "games": []
       },
-      "blockers": []
+      "blockers": [
+        "functional behavior remains guest-provider-dependent; the fallback is intentionally fail-closed"
+      ]
     },
     {
       "nid": "9yK6Fk8mKOQ",
@@ -17187,7 +17457,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -17197,33 +17467,60 @@
       },
       "evidence": {
         "aerolib_name": "sceHttpUriEscape",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "fdb6ddc34e9d8c566421511c693294ca93ab1636f797f8fc705588b678fb1f6a",
+        "reference_functions": [
+          "libSceHttp.sprx Ghidra export 00020f90",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/Http-windows-ghidra.json selected-function record",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json independent matching Mac record"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "Mac and Windows Ghidra records agree exactly on provider hash, entry, and body hash",
+          "provider definition evidence does not establish a semantic HLE fallback contract"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
-        "ownership": [],
-        "synchronization": []
+        "signature": "provider-defined Gen5 ABI; no semantic signature is claimed by the registration fallback",
+        "returns": [
+          "the loaded guest provider result is authoritative when the exact export is mapped",
+          "the HLE fallback returns ORBIS_GEN2_ERROR_NOT_IMPLEMENTED when no guest provider export is available"
+        ],
+        "output_writes": [
+          "provider-defined; the fail-closed fallback performs no guest writes"
+        ],
+        "validation_rules": [
+          "exact NID, logical library, and Gen5 registration match both Ghidra packets"
+        ],
+        "state_transitions": [
+          "provider-defined; the fail-closed fallback changes no SharpEmu state"
+        ],
+        "ownership": [
+          "provider-defined"
+        ],
+        "synchronization": [
+          "provider-defined"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/Developer/sharpemu-gta-v-nids",
+        "branch": "codex/gta-v-nids",
+        "commit": "5edc5c708ebf75e2b2bae809ea4ee734c537b368",
+        "files": [
+          "src/SharpEmu.Libs/Lle/HttpLleExports.cs",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/Http-windows-ghidra.json",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json",
+          "tests/SharpEmu.Libs.Tests/Lle/ProviderLleExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
+        "branch": "23/23 dual-host Ghidra records and 5/5 focused tests passed",
+        "integration": "757/757 library, 36/36 source-generator, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
         "games": []
       },
-      "blockers": []
+      "blockers": [
+        "functional behavior remains guest-provider-dependent; the fallback is intentionally fail-closed"
+      ]
     },
     {
       "nid": "PMVehSlfZ94",
@@ -17242,7 +17539,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -17252,33 +17549,60 @@
       },
       "evidence": {
         "aerolib_name": "sceImeKeyboardClose",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "a9fb46b1809ab3f849b82b98b23c273b28e4794a4380185c3dcc472f06ec446e",
+        "reference_functions": [
+          "libSceIme.sprx Ghidra export 00005590",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/Ime-windows-ghidra.json selected-function record",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json independent matching Mac record"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "Mac and Windows Ghidra records agree exactly on provider hash, entry, and body hash",
+          "provider definition evidence does not establish a semantic HLE fallback contract"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
-        "ownership": [],
-        "synchronization": []
+        "signature": "provider-defined Gen5 ABI; no semantic signature is claimed by the registration fallback",
+        "returns": [
+          "the loaded guest provider result is authoritative when the exact export is mapped",
+          "the HLE fallback returns ORBIS_GEN2_ERROR_NOT_IMPLEMENTED when no guest provider export is available"
+        ],
+        "output_writes": [
+          "provider-defined; the fail-closed fallback performs no guest writes"
+        ],
+        "validation_rules": [
+          "exact NID, logical library, and Gen5 registration match both Ghidra packets"
+        ],
+        "state_transitions": [
+          "provider-defined; the fail-closed fallback changes no SharpEmu state"
+        ],
+        "ownership": [
+          "provider-defined"
+        ],
+        "synchronization": [
+          "provider-defined"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/Developer/sharpemu-gta-v-nids",
+        "branch": "codex/gta-v-nids",
+        "commit": "5edc5c708ebf75e2b2bae809ea4ee734c537b368",
+        "files": [
+          "src/SharpEmu.Libs/Lle/ImeLleExports.cs",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/Ime-windows-ghidra.json",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json",
+          "tests/SharpEmu.Libs.Tests/Lle/ProviderLleExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
+        "branch": "23/23 dual-host Ghidra records and 5/5 focused tests passed",
+        "integration": "757/757 library, 36/36 source-generator, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
         "games": []
       },
-      "blockers": []
+      "blockers": [
+        "functional behavior remains guest-provider-dependent; the fallback is intentionally fail-closed"
+      ]
     },
     {
       "nid": "CRD+jSErEJQ",
@@ -64062,7 +64386,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -64072,33 +64396,60 @@
       },
       "evidence": {
         "aerolib_name": "sceNpTrophy2GetTrophyInfo",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "fa81a4a54680504dbed9abe582c5a2b36d4279d4fd5d85e118018e1305c96106",
+        "reference_functions": [
+          "libSceNpTrophy2.sprx Ghidra export 00001970",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/NpTrophy2-windows-ghidra.json selected-function record",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json independent matching Mac record"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "Mac and Windows Ghidra records agree exactly on provider hash, entry, and body hash",
+          "provider definition evidence does not establish a semantic HLE fallback contract"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
-        "ownership": [],
-        "synchronization": []
+        "signature": "provider-defined Gen5 ABI; no semantic signature is claimed by the registration fallback",
+        "returns": [
+          "the loaded guest provider result is authoritative when the exact export is mapped",
+          "the HLE fallback returns ORBIS_GEN2_ERROR_NOT_IMPLEMENTED when no guest provider export is available"
+        ],
+        "output_writes": [
+          "provider-defined; the fail-closed fallback performs no guest writes"
+        ],
+        "validation_rules": [
+          "exact NID, logical library, and Gen5 registration match both Ghidra packets"
+        ],
+        "state_transitions": [
+          "provider-defined; the fail-closed fallback changes no SharpEmu state"
+        ],
+        "ownership": [
+          "provider-defined"
+        ],
+        "synchronization": [
+          "provider-defined"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/Developer/sharpemu-gta-v-nids",
+        "branch": "codex/gta-v-nids",
+        "commit": "5edc5c708ebf75e2b2bae809ea4ee734c537b368",
+        "files": [
+          "src/SharpEmu.Libs/Lle/NpTrophy2LleExports.cs",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/NpTrophy2-windows-ghidra.json",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json",
+          "tests/SharpEmu.Libs.Tests/Lle/ProviderLleExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
+        "branch": "23/23 dual-host Ghidra records and 5/5 focused tests passed",
+        "integration": "757/757 library, 36/36 source-generator, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
         "games": []
       },
-      "blockers": []
+      "blockers": [
+        "functional behavior remains guest-provider-dependent; the fallback is intentionally fail-closed"
+      ]
     },
     {
       "nid": "47UAEuQl+iI",
@@ -66250,7 +66601,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -66260,33 +66611,60 @@
       },
       "evidence": {
         "aerolib_name": "scePadResetOrientation",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "9396eb7947760db43eec22be66cc40f2a5e999be09645412cb92020b1e9dfe34",
+        "reference_functions": [
+          "libScePad.sprx Ghidra export 00003da0",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/Pad-windows-ghidra.json selected-function record",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json independent matching Mac record"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "Mac and Windows Ghidra records agree exactly on provider hash, entry, and body hash",
+          "provider definition evidence does not establish a semantic HLE fallback contract"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
-        "ownership": [],
-        "synchronization": []
+        "signature": "provider-defined Gen5 ABI; no semantic signature is claimed by the registration fallback",
+        "returns": [
+          "the loaded guest provider result is authoritative when the exact export is mapped",
+          "the HLE fallback returns ORBIS_GEN2_ERROR_NOT_IMPLEMENTED when no guest provider export is available"
+        ],
+        "output_writes": [
+          "provider-defined; the fail-closed fallback performs no guest writes"
+        ],
+        "validation_rules": [
+          "exact NID, logical library, and Gen5 registration match both Ghidra packets"
+        ],
+        "state_transitions": [
+          "provider-defined; the fail-closed fallback changes no SharpEmu state"
+        ],
+        "ownership": [
+          "provider-defined"
+        ],
+        "synchronization": [
+          "provider-defined"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/Developer/sharpemu-gta-v-nids",
+        "branch": "codex/gta-v-nids",
+        "commit": "5edc5c708ebf75e2b2bae809ea4ee734c537b368",
+        "files": [
+          "src/SharpEmu.Libs/Lle/PadLleExports.cs",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/Pad-windows-ghidra.json",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json",
+          "tests/SharpEmu.Libs.Tests/Lle/ProviderLleExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
+        "branch": "23/23 dual-host Ghidra records and 5/5 focused tests passed",
+        "integration": "757/757 library, 36/36 source-generator, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
         "games": []
       },
-      "blockers": []
+      "blockers": [
+        "functional behavior remains guest-provider-dependent; the fallback is intentionally fail-closed"
+      ]
     },
     {
       "nid": "gDm5a6GSE94",
@@ -66463,7 +66841,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -66473,33 +66851,60 @@
       },
       "evidence": {
         "aerolib_name": "scePlayerSelectionDialogTerminate",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "c2e61df112cf0a0b2405de812d7c0d9ae22cd1094a6531d5087703c0f4baacc6",
+        "reference_functions": [
+          "libScePlayerSelectionDialog.sprx Ghidra export 00000720",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/PlayerSelectionDialog-windows-ghidra.json selected-function record",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json independent matching Mac record"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "Mac and Windows Ghidra records agree exactly on provider hash, entry, and body hash",
+          "provider definition evidence does not establish a semantic HLE fallback contract"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
-        "ownership": [],
-        "synchronization": []
+        "signature": "provider-defined Gen5 ABI; no semantic signature is claimed by the registration fallback",
+        "returns": [
+          "the loaded guest provider result is authoritative when the exact export is mapped",
+          "the HLE fallback returns ORBIS_GEN2_ERROR_NOT_IMPLEMENTED when no guest provider export is available"
+        ],
+        "output_writes": [
+          "provider-defined; the fail-closed fallback performs no guest writes"
+        ],
+        "validation_rules": [
+          "exact NID, logical library, and Gen5 registration match both Ghidra packets"
+        ],
+        "state_transitions": [
+          "provider-defined; the fail-closed fallback changes no SharpEmu state"
+        ],
+        "ownership": [
+          "provider-defined"
+        ],
+        "synchronization": [
+          "provider-defined"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/Developer/sharpemu-gta-v-nids",
+        "branch": "codex/gta-v-nids",
+        "commit": "5edc5c708ebf75e2b2bae809ea4ee734c537b368",
+        "files": [
+          "src/SharpEmu.Libs/Lle/PlayerSelectionDialogLleExports.cs",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/PlayerSelectionDialog-windows-ghidra.json",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json",
+          "tests/SharpEmu.Libs.Tests/Lle/ProviderLleExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
+        "branch": "23/23 dual-host Ghidra records and 5/5 focused tests passed",
+        "integration": "757/757 library, 36/36 source-generator, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
         "games": []
       },
-      "blockers": []
+      "blockers": [
+        "functional behavior remains guest-provider-dependent; the fallback is intentionally fail-closed"
+      ]
     },
     {
       "nid": "5jRCs2axtr4",
@@ -67013,7 +67418,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -67023,33 +67428,60 @@
       },
       "evidence": {
         "aerolib_name": "sceRandomGetRandomNumber",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "4af0ac1f1dc40c45a267a13f623e87080bf11cdedc210c1062e474d59b98b8fd",
+        "reference_functions": [
+          "libSceRandom.sprx Ghidra export 000000d0",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/Random-windows-ghidra.json selected-function record",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json independent matching Mac record"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "Mac and Windows Ghidra records agree exactly on provider hash, entry, and body hash",
+          "provider definition evidence does not establish a semantic HLE fallback contract"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
-        "ownership": [],
-        "synchronization": []
+        "signature": "provider-defined Gen5 ABI; no semantic signature is claimed by the registration fallback",
+        "returns": [
+          "the loaded guest provider result is authoritative when the exact export is mapped",
+          "the HLE fallback returns ORBIS_GEN2_ERROR_NOT_IMPLEMENTED when no guest provider export is available"
+        ],
+        "output_writes": [
+          "provider-defined; the fail-closed fallback performs no guest writes"
+        ],
+        "validation_rules": [
+          "exact NID, logical library, and Gen5 registration match both Ghidra packets"
+        ],
+        "state_transitions": [
+          "provider-defined; the fail-closed fallback changes no SharpEmu state"
+        ],
+        "ownership": [
+          "provider-defined"
+        ],
+        "synchronization": [
+          "provider-defined"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/Developer/sharpemu-gta-v-nids",
+        "branch": "codex/gta-v-nids",
+        "commit": "5edc5c708ebf75e2b2bae809ea4ee734c537b368",
+        "files": [
+          "src/SharpEmu.Libs/Lle/RandomLleExports.cs",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/Random-windows-ghidra.json",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json",
+          "tests/SharpEmu.Libs.Tests/Lle/ProviderLleExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
+        "branch": "23/23 dual-host Ghidra records and 5/5 focused tests passed",
+        "integration": "757/757 library, 36/36 source-generator, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
         "games": []
       },
-      "blockers": []
+      "blockers": [
+        "functional behavior remains guest-provider-dependent; the fallback is intentionally fail-closed"
+      ]
     },
     {
       "nid": "9FowWFMEIM8",
@@ -67068,7 +67500,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -67078,33 +67510,60 @@
       },
       "evidence": {
         "aerolib_name": "sceRazorCpuJobManagerSequence",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "3f7958cd6c115830ebd151ef3d5daf0bdd898dd89e93c5612d8f7546d9254fe9",
+        "reference_functions": [
+          "libSceRazorCpu.sprx Ghidra export 00006e00",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/RazorCpu-windows-ghidra.json selected-function record",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json independent matching Mac record"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "Mac and Windows Ghidra records agree exactly on provider hash, entry, and body hash",
+          "provider definition evidence does not establish a semantic HLE fallback contract"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
-        "ownership": [],
-        "synchronization": []
+        "signature": "provider-defined Gen5 ABI; no semantic signature is claimed by the registration fallback",
+        "returns": [
+          "the loaded guest provider result is authoritative when the exact export is mapped",
+          "the HLE fallback returns ORBIS_GEN2_ERROR_NOT_IMPLEMENTED when no guest provider export is available"
+        ],
+        "output_writes": [
+          "provider-defined; the fail-closed fallback performs no guest writes"
+        ],
+        "validation_rules": [
+          "exact NID, logical library, and Gen5 registration match both Ghidra packets"
+        ],
+        "state_transitions": [
+          "provider-defined; the fail-closed fallback changes no SharpEmu state"
+        ],
+        "ownership": [
+          "provider-defined"
+        ],
+        "synchronization": [
+          "provider-defined"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/Developer/sharpemu-gta-v-nids",
+        "branch": "codex/gta-v-nids",
+        "commit": "5edc5c708ebf75e2b2bae809ea4ee734c537b368",
+        "files": [
+          "src/SharpEmu.Libs/Lle/RazorCpuLleExports.cs",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/RazorCpu-windows-ghidra.json",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json",
+          "tests/SharpEmu.Libs.Tests/Lle/ProviderLleExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
+        "branch": "23/23 dual-host Ghidra records and 5/5 focused tests passed",
+        "integration": "757/757 library, 36/36 source-generator, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
         "games": []
       },
-      "blockers": []
+      "blockers": [
+        "functional behavior remains guest-provider-dependent; the fallback is intentionally fail-closed"
+      ]
     },
     {
       "nid": "KP+TBWGHlgs",
@@ -67123,7 +67582,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -67133,33 +67592,60 @@
       },
       "evidence": {
         "aerolib_name": "sceRazorCpuJobManagerJob",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "3f7958cd6c115830ebd151ef3d5daf0bdd898dd89e93c5612d8f7546d9254fe9",
+        "reference_functions": [
+          "libSceRazorCpu.sprx Ghidra export 00007810",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/RazorCpu-windows-ghidra.json selected-function record",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json independent matching Mac record"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "Mac and Windows Ghidra records agree exactly on provider hash, entry, and body hash",
+          "provider definition evidence does not establish a semantic HLE fallback contract"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
-        "ownership": [],
-        "synchronization": []
+        "signature": "provider-defined Gen5 ABI; no semantic signature is claimed by the registration fallback",
+        "returns": [
+          "the loaded guest provider result is authoritative when the exact export is mapped",
+          "the HLE fallback returns ORBIS_GEN2_ERROR_NOT_IMPLEMENTED when no guest provider export is available"
+        ],
+        "output_writes": [
+          "provider-defined; the fail-closed fallback performs no guest writes"
+        ],
+        "validation_rules": [
+          "exact NID, logical library, and Gen5 registration match both Ghidra packets"
+        ],
+        "state_transitions": [
+          "provider-defined; the fail-closed fallback changes no SharpEmu state"
+        ],
+        "ownership": [
+          "provider-defined"
+        ],
+        "synchronization": [
+          "provider-defined"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/Developer/sharpemu-gta-v-nids",
+        "branch": "codex/gta-v-nids",
+        "commit": "5edc5c708ebf75e2b2bae809ea4ee734c537b368",
+        "files": [
+          "src/SharpEmu.Libs/Lle/RazorCpuLleExports.cs",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/RazorCpu-windows-ghidra.json",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json",
+          "tests/SharpEmu.Libs.Tests/Lle/ProviderLleExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
+        "branch": "23/23 dual-host Ghidra records and 5/5 focused tests passed",
+        "integration": "757/757 library, 36/36 source-generator, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
         "games": []
       },
-      "blockers": []
+      "blockers": [
+        "functional behavior remains guest-provider-dependent; the fallback is intentionally fail-closed"
+      ]
     },
     {
       "nid": "dnEdyY4+klQ",
@@ -67178,7 +67664,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -67188,33 +67674,60 @@
       },
       "evidence": {
         "aerolib_name": "sceRazorCpuJobManagerDispatch",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "3f7958cd6c115830ebd151ef3d5daf0bdd898dd89e93c5612d8f7546d9254fe9",
+        "reference_functions": [
+          "libSceRazorCpu.sprx Ghidra export 000072f0",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/RazorCpu-windows-ghidra.json selected-function record",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json independent matching Mac record"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "Mac and Windows Ghidra records agree exactly on provider hash, entry, and body hash",
+          "provider definition evidence does not establish a semantic HLE fallback contract"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
-        "ownership": [],
-        "synchronization": []
+        "signature": "provider-defined Gen5 ABI; no semantic signature is claimed by the registration fallback",
+        "returns": [
+          "the loaded guest provider result is authoritative when the exact export is mapped",
+          "the HLE fallback returns ORBIS_GEN2_ERROR_NOT_IMPLEMENTED when no guest provider export is available"
+        ],
+        "output_writes": [
+          "provider-defined; the fail-closed fallback performs no guest writes"
+        ],
+        "validation_rules": [
+          "exact NID, logical library, and Gen5 registration match both Ghidra packets"
+        ],
+        "state_transitions": [
+          "provider-defined; the fail-closed fallback changes no SharpEmu state"
+        ],
+        "ownership": [
+          "provider-defined"
+        ],
+        "synchronization": [
+          "provider-defined"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/Developer/sharpemu-gta-v-nids",
+        "branch": "codex/gta-v-nids",
+        "commit": "5edc5c708ebf75e2b2bae809ea4ee734c537b368",
+        "files": [
+          "src/SharpEmu.Libs/Lle/RazorCpuLleExports.cs",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/RazorCpu-windows-ghidra.json",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json",
+          "tests/SharpEmu.Libs.Tests/Lle/ProviderLleExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
+        "branch": "23/23 dual-host Ghidra records and 5/5 focused tests passed",
+        "integration": "757/757 library, 36/36 source-generator, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
         "games": []
       },
-      "blockers": []
+      "blockers": [
+        "functional behavior remains guest-provider-dependent; the fallback is intentionally fail-closed"
+      ]
     },
     {
       "nid": "BOwybKVa3Do",
@@ -68497,7 +69010,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -68507,33 +69020,60 @@
       },
       "evidence": {
         "aerolib_name": "sceSysmoduleGetModuleInfoForUnwind",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "ba80a6c669e034fae536f3ef97eda3704c658a56989be126a2e6086a3af83711",
+        "reference_functions": [
+          "libSceSysmodule.sprx Ghidra export 00000c90",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/Sysmodule-windows-ghidra.json selected-function record",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json independent matching Mac record"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "Mac and Windows Ghidra records agree exactly on provider hash, entry, and body hash",
+          "provider definition evidence does not establish a semantic HLE fallback contract"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
-        "ownership": [],
-        "synchronization": []
+        "signature": "provider-defined Gen5 ABI; no semantic signature is claimed by the registration fallback",
+        "returns": [
+          "the loaded guest provider result is authoritative when the exact export is mapped",
+          "the HLE fallback returns ORBIS_GEN2_ERROR_NOT_IMPLEMENTED when no guest provider export is available"
+        ],
+        "output_writes": [
+          "provider-defined; the fail-closed fallback performs no guest writes"
+        ],
+        "validation_rules": [
+          "exact NID, logical library, and Gen5 registration match both Ghidra packets"
+        ],
+        "state_transitions": [
+          "provider-defined; the fail-closed fallback changes no SharpEmu state"
+        ],
+        "ownership": [
+          "provider-defined"
+        ],
+        "synchronization": [
+          "provider-defined"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/Developer/sharpemu-gta-v-nids",
+        "branch": "codex/gta-v-nids",
+        "commit": "5edc5c708ebf75e2b2bae809ea4ee734c537b368",
+        "files": [
+          "src/SharpEmu.Libs/Lle/SysmoduleLleExports.cs",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/Sysmodule-windows-ghidra.json",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json",
+          "tests/SharpEmu.Libs.Tests/Lle/ProviderLleExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
+        "branch": "23/23 dual-host Ghidra records and 5/5 focused tests passed",
+        "integration": "757/757 library, 36/36 source-generator, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
         "games": []
       },
-      "blockers": []
+      "blockers": [
+        "functional behavior remains guest-provider-dependent; the fallback is intentionally fail-closed"
+      ]
     },
     {
       "nid": "656LMQSrg6U",
@@ -68947,7 +69487,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -68957,33 +69497,60 @@
       },
       "evidence": {
         "aerolib_name": "_sceUlobjmgrRegisterObject",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "82ee954d51f7d3eb9015b96bf4afcbb9f00ffff51afd99baaad5d90451f1b2a8",
+        "reference_functions": [
+          "ulobjmgr.sprx Ghidra export 00000140",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/UlObjMgr-windows-ghidra.json selected-function record",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json independent matching Mac record"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "Mac and Windows Ghidra records agree exactly on provider hash, entry, and body hash",
+          "provider definition evidence does not establish a semantic HLE fallback contract"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
-        "ownership": [],
-        "synchronization": []
+        "signature": "provider-defined Gen5 ABI; no semantic signature is claimed by the registration fallback",
+        "returns": [
+          "the loaded guest provider result is authoritative when the exact export is mapped",
+          "the HLE fallback returns ORBIS_GEN2_ERROR_NOT_IMPLEMENTED when no guest provider export is available"
+        ],
+        "output_writes": [
+          "provider-defined; the fail-closed fallback performs no guest writes"
+        ],
+        "validation_rules": [
+          "exact NID, logical library, and Gen5 registration match both Ghidra packets"
+        ],
+        "state_transitions": [
+          "provider-defined; the fail-closed fallback changes no SharpEmu state"
+        ],
+        "ownership": [
+          "provider-defined"
+        ],
+        "synchronization": [
+          "provider-defined"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/Developer/sharpemu-gta-v-nids",
+        "branch": "codex/gta-v-nids",
+        "commit": "5edc5c708ebf75e2b2bae809ea4ee734c537b368",
+        "files": [
+          "src/SharpEmu.Libs/Lle/UlObjMgrLleExports.cs",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/UlObjMgr-windows-ghidra.json",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json",
+          "tests/SharpEmu.Libs.Tests/Lle/ProviderLleExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
+        "branch": "23/23 dual-host Ghidra records and 5/5 focused tests passed",
+        "integration": "757/757 library, 36/36 source-generator, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
         "games": []
       },
-      "blockers": []
+      "blockers": [
+        "functional behavior remains guest-provider-dependent; the fallback is intentionally fail-closed"
+      ]
     },
     {
       "nid": "Smf+fUNblPc",
@@ -69002,7 +69569,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -69012,33 +69579,60 @@
       },
       "evidence": {
         "aerolib_name": "_sceUlobjmgrUnregisterObject",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "82ee954d51f7d3eb9015b96bf4afcbb9f00ffff51afd99baaad5d90451f1b2a8",
+        "reference_functions": [
+          "ulobjmgr.sprx Ghidra export 000001c0",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/UlObjMgr-windows-ghidra.json selected-function record",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json independent matching Mac record"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "Mac and Windows Ghidra records agree exactly on provider hash, entry, and body hash",
+          "provider definition evidence does not establish a semantic HLE fallback contract"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
-        "ownership": [],
-        "synchronization": []
+        "signature": "provider-defined Gen5 ABI; no semantic signature is claimed by the registration fallback",
+        "returns": [
+          "the loaded guest provider result is authoritative when the exact export is mapped",
+          "the HLE fallback returns ORBIS_GEN2_ERROR_NOT_IMPLEMENTED when no guest provider export is available"
+        ],
+        "output_writes": [
+          "provider-defined; the fail-closed fallback performs no guest writes"
+        ],
+        "validation_rules": [
+          "exact NID, logical library, and Gen5 registration match both Ghidra packets"
+        ],
+        "state_transitions": [
+          "provider-defined; the fail-closed fallback changes no SharpEmu state"
+        ],
+        "ownership": [
+          "provider-defined"
+        ],
+        "synchronization": [
+          "provider-defined"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/Developer/sharpemu-gta-v-nids",
+        "branch": "codex/gta-v-nids",
+        "commit": "5edc5c708ebf75e2b2bae809ea4ee734c537b368",
+        "files": [
+          "src/SharpEmu.Libs/Lle/UlObjMgrLleExports.cs",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/UlObjMgr-windows-ghidra.json",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json",
+          "tests/SharpEmu.Libs.Tests/Lle/ProviderLleExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
+        "branch": "23/23 dual-host Ghidra records and 5/5 focused tests passed",
+        "integration": "757/757 library, 36/36 source-generator, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
         "games": []
       },
-      "blockers": []
+      "blockers": [
+        "functional behavior remains guest-provider-dependent; the fallback is intentionally fail-closed"
+      ]
     },
     {
       "nid": "HuViW4HnrOw",
@@ -69057,7 +69651,7 @@
           "run_configuration": null
         }
       ],
-      "status": "named",
+      "status": "integrated",
       "priority": {
         "calls": 0,
         "criticality": "unknown",
@@ -69067,33 +69661,60 @@
       },
       "evidence": {
         "aerolib_name": "sceVideoOutSubmitChangeBufferAttribute2",
-        "binary_hash": null,
-        "reference_functions": [],
+        "binary_hash": "c1a1b5647a29d5d114fccbfe45487c6712e3f06ebadb78d52e5ccf5604e83412",
+        "reference_functions": [
+          "libSceVideoOut.sprx Ghidra export 000111e0",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/VideoOut-windows-ghidra.json selected-function record",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json independent matching Mac record"
+        ],
         "call_sites": [],
-        "confidence": "unknown",
-        "conflicts": []
+        "confidence": "high",
+        "conflicts": [
+          "Mac and Windows Ghidra records agree exactly on provider hash, entry, and body hash",
+          "provider definition evidence does not establish a semantic HLE fallback contract"
+        ]
       },
       "contract": {
-        "signature": null,
-        "returns": [],
-        "output_writes": [],
-        "validation_rules": [],
-        "state_transitions": [],
-        "ownership": [],
-        "synchronization": []
+        "signature": "provider-defined Gen5 ABI; no semantic signature is claimed by the registration fallback",
+        "returns": [
+          "the loaded guest provider result is authoritative when the exact export is mapped",
+          "the HLE fallback returns ORBIS_GEN2_ERROR_NOT_IMPLEMENTED when no guest provider export is available"
+        ],
+        "output_writes": [
+          "provider-defined; the fail-closed fallback performs no guest writes"
+        ],
+        "validation_rules": [
+          "exact NID, logical library, and Gen5 registration match both Ghidra packets"
+        ],
+        "state_transitions": [
+          "provider-defined; the fail-closed fallback changes no SharpEmu state"
+        ],
+        "ownership": [
+          "provider-defined"
+        ],
+        "synchronization": [
+          "provider-defined"
+        ]
       },
       "implementation": {
-        "worktree": null,
-        "branch": null,
-        "commit": null,
-        "files": []
+        "worktree": "/Users/mcruz/Developer/sharpemu-gta-v-nids",
+        "branch": "codex/gta-v-nids",
+        "commit": "5edc5c708ebf75e2b2bae809ea4ee734c537b368",
+        "files": [
+          "src/SharpEmu.Libs/Lle/VideoOutLleExports.cs",
+          "docs/gta-v/provider-evidence/provider23/windows/selected/VideoOut-windows-ghidra.json",
+          "docs/gta-v/provider-evidence/provider23/mac/selected.json",
+          "tests/SharpEmu.Libs.Tests/Lle/ProviderLleExportsTests.cs"
+        ]
       },
       "validation": {
-        "branch": null,
-        "integration": null,
+        "branch": "23/23 dual-host Ghidra records and 5/5 focused tests passed",
+        "integration": "757/757 library, 36/36 source-generator, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
         "games": []
       },
-      "blockers": []
+      "blockers": [
+        "functional behavior remains guest-provider-dependent; the fallback is intentionally fail-closed"
+      ]
     },
     {
       "nid": "7QoTYzVuzto",

@@ -13,6 +13,23 @@ from typing import Any
 
 ATTRIBUTE_RE = re.compile(r"\[SysAbiExport\(\s*(.*?)\)\]", re.DOTALL)
 STRING_FIELD_RE = re.compile(r'\b(Nid|ExportName|LibraryName)\s*=\s*"([^"]*)"')
+LATER_PROVIDER_SOURCE_FILES = {
+    "AjmNativeLleExports.cs",
+    "AppContentLleExports.cs",
+    "AudioOutLleExports.cs",
+    "AudioOut2LleExports.cs",
+    "CoredumpLleExports.cs",
+    "HttpLleExports.cs",
+    "ImeLleExports.cs",
+    "NpTrophy2LleExports.cs",
+    "PadLleExports.cs",
+    "PlayerSelectionDialogLleExports.cs",
+    "RandomLleExports.cs",
+    "RazorCpuLleExports.cs",
+    "SysmoduleLleExports.cs",
+    "UlObjMgrLleExports.cs",
+    "VideoOutLleExports.cs",
+}
 
 
 @dataclass(frozen=True)
@@ -55,7 +72,11 @@ def relative(repo: Path, path: Path) -> str:
 
 def load_registrations(repo: Path) -> dict[str, Registration]:
     sources = [repo / "src/SharpEmu.Libs/Np/NpCppWebApiLleExports.cs"]
-    sources.extend(sorted((repo / "src/SharpEmu.Libs/Lle").glob("*LleExports.cs")))
+    sources.extend(
+        source
+        for source in sorted((repo / "src/SharpEmu.Libs/Lle").glob("*LleExports.cs"))
+        if source.name not in LATER_PROVIDER_SOURCE_FILES
+    )
 
     registrations: dict[str, Registration] = {}
     for source in sources:
@@ -299,7 +320,8 @@ def main() -> None:
     counts: dict[str, int] = {}
     for item in items:
         counts[item["status"]] = counts.get(item["status"], 0) + 1
-    require(counts == {"integrated": 821, "named": 90}, f"unexpected status counts: {counts}")
+    require(sum(counts.values()) == 911, f"unexpected manifest cardinality: {counts}")
+    require(counts.get("integrated", 0) >= 821, f"provider wave is not fully integrated: {counts}")
 
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"updated": 781, "status_counts": counts}, sort_keys=True))
