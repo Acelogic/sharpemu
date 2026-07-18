@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import gzip
 import hashlib
 import json
 import re
@@ -213,15 +214,102 @@ def load_validation_evidence(
     require(bool(build.get("command")), "Release build command is missing")
 
     runtime = payload.get("runtime", {})
-    runtime_log = repo / runtime.get("log", "")
-    require(runtime_log.is_file(), "final GTA runtime log is missing")
-    require(sha256(runtime_log) == runtime.get("sha256"), "final GTA runtime log hash mismatch")
-    require(runtime.get("libc_direct") == 34 and runtime.get("libc_expected") == 34, "libc runtime routing mismatch")
-    require(runtime.get("libc_missing") == [], "libc runtime routing has missing NIDs")
-    require(runtime.get("object_callable_events") == 0, "data object was routed as a callable import")
-    require(int(runtime.get("max_import", 0)) >= 41_427, "GTA runtime regressed before the prior import checkpoint")
-    require(runtime.get("mm4_checkpoint_reached") is True, "GTA runtime missed the MM4 checkpoint")
+    runtime_log = repo / runtime.get("compressed_log", "")
+    require(runtime_log.is_file(), "compressed final GTA runtime log is missing")
+    require(sha256(runtime_log) == runtime.get("compressed_sha256"), "compressed GTA runtime log hash mismatch")
+    _, libc_rows = read_csv(repo / LIBC_QUEUE)
+    expected_libc_nids = {row["nid"] for row in libc_rows}
+    require(len(expected_libc_nids) == 34, "runtime validator libc queue drift")
+    expected_libc_targets: dict[str, set[str]] = {}
+    for row in libc_rows:
+        targets = {
+            address.lower()
+            for address in row["runtime_symbol_addresses"].split(";")
+            if address
+        }
+        computed_target = f"0x{int(row['runtime_load_base'], 16) + int(row['function_entry'], 16):016x}"
+        require(targets == {computed_target}, f"libc runtime target evidence mismatch for {row['nid']}")
+        expected_libc_targets[row["nid"]] = targets
+    object_nids = set(DATA_REGISTRATIONS)
+    callable_markers = (
+        "SetupImportStubs: Direct bridge for",
+        "[LOADER][INFO] LLE redirect:",
+        "SetupImportStubs: Trampoline for",
+    )
+    direct_targets: dict[str, set[str]] = {}
+    object_callable_events = 0
+    max_import = 0
+    mm4_checkpoint_reached = False
+    data_rebound = None
+    data_unresolved = None
+    terminal: tuple[str, str, str, str] | None = None
+    fault_thread: tuple[str, str] | None = None
+    raw_digest = hashlib.sha256()
+    raw_bytes = 0
+    raw_lines = 0
+    with gzip.open(runtime_log, "rb") as handle:
+        for raw_line in handle:
+            raw_digest.update(raw_line)
+            raw_bytes += len(raw_line)
+            raw_lines += 1
+            line = raw_line.decode("utf-8", errors="replace")
+            direct_match = re.search(
+                r"SetupImportStubs: Direct bridge for (\S+) -> (0x[0-9A-Fa-f]+)",
+                line,
+            )
+            if direct_match:
+                direct_targets.setdefault(direct_match.group(1), set()).add(direct_match.group(2).lower())
+            if any(nid in line for nid in object_nids) and any(marker in line for marker in callable_markers):
+                object_callable_events += 1
+            import_match = re.search(r"Import#(\d+)", line)
+            if import_match:
+                max_import = max(max_import, int(import_match.group(1)))
+            if "MM4IZSEYytQ" in line and import_match:
+                mm4_checkpoint_reached = True
+            rebind_match = re.search(r"Imported data rebind: rebound=(\d+), unresolved=(\d+)", line)
+            if rebind_match:
+                data_rebound = int(rebind_match.group(1))
+                data_unresolved = int(rebind_match.group(2))
+            terminal_match = re.search(
+                r"posix-signal#\d+: sig=(\d+) rip=(0x[0-9A-Fa-f]+) fault=(0x[0-9A-Fa-f]+) access=(\d+)",
+                line,
+            )
+            if terminal_match:
+                terminal = terminal_match.groups()
+            fault_thread_match = re.search(
+                r"Guest thread: .* name='([^']+)' state=\S+ last_import=(\S+) last_ret=",
+                line,
+            )
+            if fault_thread_match:
+                fault_thread = fault_thread_match.groups()
+
+    libc_mismatches = {
+        nid: {
+            "expected": sorted(expected_libc_targets[nid]),
+            "observed": sorted(direct_targets.get(nid, set())),
+        }
+        for nid in expected_libc_nids
+        if direct_targets.get(nid, set()) != expected_libc_targets[nid]
+    }
+    require(raw_digest.hexdigest() == runtime.get("raw_sha256"), "raw GTA runtime log hash mismatch")
+    require(raw_bytes == runtime.get("raw_bytes") and raw_lines == runtime.get("raw_lines"), "runtime size mismatch")
+    require(not libc_mismatches, f"libc provider-target routing mismatch: {libc_mismatches}")
+    require(object_callable_events == 0, "data object was routed as a callable import")
+    require(max_import >= 41_427, "GTA runtime regressed before the prior import checkpoint")
+    require(mm4_checkpoint_reached, "GTA runtime missed the MM4 checkpoint")
+    require(data_rebound == 11 and data_unresolved == 0, "GTA data relocation rebind mismatch")
+    require(terminal is not None, "GTA terminal signal evidence is missing")
+    require(list(terminal) == runtime.get("terminal_signal"), "GTA terminal signal evidence mismatch")
+    require(fault_thread is not None, "GTA faulting-thread evidence is missing")
+    require(fault_thread[0] == runtime.get("terminal_guest_thread"), "GTA faulting thread mismatch")
+    require(fault_thread[1] == runtime.get("terminal_last_import"), "GTA faulting-thread last import mismatch")
+    require(runtime.get("exit_code") == 139, "GTA final trace exit code mismatch")
+    require(runtime.get("exit_capture") == "rc=$?", "GTA runtime exit-capture recipe is missing")
     require(bool(runtime.get("command")), "GTA runtime command is missing")
+    require(
+        "> artifacts/gta-v-final-parity-x64.log 2>&1" in runtime["command"],
+        "GTA runtime log redirection is missing",
+    )
 
     integration_summary = (
         "53/53 focused GTA parity tests, 810/810 library tests, "
@@ -230,7 +318,8 @@ def load_validation_evidence(
     )
     runtime_summary = (
         f"GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, "
-        f"max import {runtime['max_import']}; {runtime.get('terminal_summary', 'terminal state recorded')}"
+        f"11 data relocations rebound with 0 unresolved, max import {max_import}; "
+        f"terminal sig={terminal[0]} RIP={terminal[1]} fault={terminal[2]} access={terminal[3]}"
     )
     return integration_summary, runtime_summary
 
@@ -415,12 +504,14 @@ def main() -> None:
     )
 
     manifest_path = repo / MANIFEST_RELATIVE
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    original_manifest_text = manifest_path.read_text(encoding="utf-8")
+    manifest = json.loads(original_manifest_text)
     by_nid = {item["nid"]: item for item in manifest["items"]}
     require(len(by_nid) == len(manifest["items"]) == 911, "manifest cardinality mismatch")
     require(final_wave_nids <= set(by_nid), "final wave NID absent from manifest")
     non_integrated = {item["nid"] for item in manifest["items"] if item["status"] != "integrated"}
     require(not non_integrated or non_integrated == final_wave_nids, "manifest non-integrated set mismatch")
+    input_already_final = not uncovered_nid_list and not non_integrated
 
     for nid, export in libc_exports.items():
         item = by_nid[nid]
@@ -475,7 +566,7 @@ def main() -> None:
             }
             item["blockers"] = ["semantic behavior remains guest-provider-dependent"]
         item["implementation"] = {
-            "worktree": str(repo),
+            "worktree": ".",
             "branch": "codex/gta-v-nids",
             "commit": commits["libc"],
             "files": [
@@ -523,7 +614,7 @@ def main() -> None:
             "synchronization": ["existing subsystem synchronization" if semantic else "none"],
         }
         item["implementation"] = {
-            "worktree": str(repo),
+            "worktree": ".",
             "branch": "codex/gta-v-nids",
             "commit": commits["kernel"],
             "files": [
@@ -572,7 +663,7 @@ def main() -> None:
             "synchronization": ["provider-defined object synchronization"],
         }
         item["implementation"] = {
-            "worktree": str(repo),
+            "worktree": ".",
             "branch": "codex/gta-v-nids",
             "commit": commits["data"],
             "hardening_commit": commits["hardening"],
@@ -600,9 +691,21 @@ def main() -> None:
     manifest["run"].setdefault("completed_at", datetime.now(timezone.utc).isoformat())
     manifest["run"]["pinned_inventory_sha256"] = INVENTORY_SHA256
     manifest["run"]["final_registration_coverage"] = "1432/1432"
+    serialized_manifest = json.dumps(manifest, indent=2) + "\n"
+    canonical_uncovered = ",".join(uncovered_header) + "\n"
+
+    if args.check_only and input_already_final:
+        require(
+            original_manifest_text == serialized_manifest,
+            "final manifest has drifted from the evidence-derived tracker output",
+        )
+        require(
+            uncovered_path.read_text(encoding="utf-8") == canonical_uncovered,
+            "completed uncovered CSV is not canonical header-only output",
+        )
 
     if not args.check_only:
-        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        manifest_path.write_text(serialized_manifest, encoding="utf-8")
         with uncovered_path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.DictWriter(handle, fieldnames=uncovered_header, lineterminator="\n")
             writer.writeheader()

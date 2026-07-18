@@ -14,10 +14,10 @@ Reach exact static Gen5 registration parity for all 1,432 GTA V application/runt
 - Coordinator manifest: `GTA_V_NID_SWARM_MANIFEST.json`
 - Initial Acelogic-main queue: 911 unique uncovered application/runtime imports
 - Pinned Aerolib symbol names: 1,418/1,432; the seven formerly catalog-unnamed queue entries now have exact Ghidra provider-function evidence without invented names
-- Integrated from that queue on this branch: 844
-- Remaining uncovered on this branch: 67
-- Current static registration coverage: 1,365/1,432 (95.32%), up from 521/1,432 (36.38%) on the pinned main base
-- Manifest lifecycle: 844 integrated, 67 named
+- Integrated from that queue on this branch: 911
+- Remaining uncovered on this branch: 0
+- Current static registration coverage: 1,432/1,432 (100.00%), up from 521/1,432 (36.38%) on the pinned main base
+- Manifest lifecycle: 911 integrated
 
 The queue is a static import inventory. It is not yet a runtime call-frequency trace; `calls=0` means no runtime count has been established.
 
@@ -25,28 +25,30 @@ The queue is a static import inventory. It is not yet a runtime call-frequency t
 
 | Importing image | Gen5-registered NIDs | Unique imported NIDs | Coverage |
 |---|---:|---:|---:|
-| `eboot.bin` | 1,252 | 1,301 | 96.23% |
-| `sce_module/libc.prx` | 91 | 104 | 87.50% |
-| `sce_module/libSceJobManager.prx` | 143 | 146 | 97.95% |
-| `sce_module/libSceNpCppWebApi.prx` | 89 | 95 | 93.68% |
+| `eboot.bin` | 1,301 | 1,301 | 100.00% |
+| `sce_module/libc.prx` | 104 | 104 | 100.00% |
+| `sce_module/libSceJobManager.prx` | 146 | 146 | 100.00% |
+| `sce_module/libSceNpCppWebApi.prx` | 95 | 95 | 100.00% |
 
 These image rows overlap because the same NID can be imported by more than one image; they must not be summed. The deduplicated application/runtime union is the 1,432-NID denominator above.
 
 ## Current checkpoint
 
-The generic blocked-SELF mapping fix, the expanded Variant-II static-TLS reservation, and the Ghidra-backed `sceKernelDirectMemoryQuery` enumeration fix are integrated. The current branch also contains 803 exact Gen5 provider-preferred registrations backed by selected Ghidra function records: 436 from GTA's shipped `libSceNpCppWebApi` provider and 367 from firmware providers analyzed on the Mac, rho, and Windows. The latest 23 records agree independently across Mac and Windows on provider hash, function entry, and body hash. Every generated HLE fallback is fail-closed; it returns `ORBIS_GEN2_ERROR_NOT_IMPLEMENTED` and does not invent provider behavior.
+The generic blocked-SELF mapping fix, the expanded Variant-II static-TLS reservation, and the Ghidra-backed `sceKernelDirectMemoryQuery` enumeration fix are integrated. The current branch contains 839 Gen5 provider-preferred registrations. Of those, 837 are exact evidence-wave registrations backed by selected Ghidra function records: 436 from GTA's shipped `libSceNpCppWebApi` provider and 401 from firmware providers analyzed on the Mac, rho, and Windows. The other two are semantic handlers (`MM4IZSEYytQ` and `UYPxv8MIzGo`) that also prefer an authoritative guest provider. Every generated HLE fallback is fail-closed; it returns `ORBIS_GEN2_ERROR_NOT_IMPLEMENTED` and does not invent provider behavior.
 
 Mac-local firmware Ghidra and an independent rho GTA-consumer Ghidra campaign proved the direct-memory-query contract used by GTA: flags `1`, a 24-byte output buffer, `[info+8]` continuation, and terminal result `0x8002000D`. The integrated fix returns containing-or-next direct allocations and uses that exact terminal result without inventing unproven coalescing or terminal-success behavior. On post-fix runs, all four GTA loops terminate at imports 419, 447, 463, and 473; execution advances beyond import 37,900.
 
 Mac-local and independent rho provider Ghidra recovered `XlNp7jzGiPo` (`sceAgcDriverSetTFRing`) and `MM4IZSEYytQ` (`sceAgcDriverSetHsOffchipParam`) from `libSceAgcDriver.sprx`. Both semantic implementations are integrated. The Hs-offchip call uses the recovered two-`uint32` ABI, low-16-bit packing order, state gate, and error mapping; it is also provider-preferred when the exact guest export is available.
 
-The post-provider x64 GTA run installed 1,956 direct bridges covering 482 unique NIDs. All 436 newly registered `libSceNpCppWebApi` NIDs resolved directly to GTA's shipped provider. The Hs-offchip call at import 39,003 received `(0, 0x1FF)`, returned zero, and cleared the former gate at `0x8002957516`; execution reached import 41,427. The other 344 provider registrations were not directly mapped because their firmware providers were absent in this run. Thirteen calls reached their explicit fail-closed fallback (12 AGC and one SystemService), with no invented success. The later stop is an unrelated, not-yet-attributed RenderThread access violation at guest RIP `0x805C273B7` while reading address zero. Full routing evidence is retained in [`docs/gta-v/provider-wave-runtime-20260718.md`](docs/gta-v/provider-wave-runtime-20260718.md); this is not a claim of full playability.
+The final 67-NID wave consists of 34 provider-preferred libc functions, one fail-closed `sceLibcInternalBacktraceForGame` HLE contract, 27 kernel/POSIX contracts, and five first-class data registrations. Nine of the kernel/POSIX contracts have semantic or deliberately partial implementations; 18 fail closed without output writes. The data registrations are resolved through a separate data-symbol path, not callable trampolines.
+
+The final x64 GTA run routed all 34 new libc registrations directly to their providers, produced zero callable-routing events for the five data NIDs, and rebound 11 imported data relocations with zero unresolved. The Hs-offchip call at import 39,003 still received `(0, 0x1FF)`, returned zero, and execution again reached import 41,427. The later stop remains the same unattributed RenderThread read from address zero at guest RIP `0x805C273B7`. Full final evidence is retained in [`docs/gta-v/final-parity-runtime-20260718.md`](docs/gta-v/final-parity-runtime-20260718.md); this is exact registration parity, not a claim of full semantic parity or playability.
 
 ## Active lanes
 
 | Lane | Branch/worktree | Ownership | Status |
 |---|---|---|---|
-| Integration | `codex/gta-v-nids` / `/Users/mcruz/Developer/sharpemu-gta-v-nids` | coordinator-owned manifest, queue, integration, regression | active |
+| Integration | `codex/gta-v-nids` / `/Users/mcruz/Developer/sharpemu-gta-v-nids` | coordinator-owned manifest, queue, integration, regression | exact 1,432-registration parity complete |
 | Loader prerequisite | `codex/nid-gta-loader` / `/Users/mcruz/.codex/worktrees/sharpemu-gta-loader` | `SelfLoader.cs` and focused loader tests only | integrated as `e6e71ac` |
 | TLS prerequisite | `codex/nid-gta-tls` / `/Users/mcruz/.codex/worktrees/sharpemu-gta-tls` | shared Variant-II reservation and focused TLS tests only | integrated as `84652f1` |
 | libc math implementation | `codex/nid-gta-libc` / `/Users/mcruz/.codex/worktrees/sharpemu-gta-libc` | 20 approved libc math exports and tests only | integrated as `0c84a2f` |
@@ -57,25 +59,26 @@ The post-provider x64 GTA run installed 1,956 direct bridges covering 482 unique
 | libc search/conversion | `codex/gta-v-libc-deferred` / `/Users/mcruz/Developer/sharpemu-gta-v-libc-deferred` | Ghidra-exact `bsearch` and `strtoull` contracts and tests | integrated as `eb7a842` plus errno-order fix `8302781`; independent review passed |
 | AGC TFRing | `codex/gta-v-agcdriver-tfring` / `/Users/mcruz/Developer/sharpemu-gta-v-agcdriver-tfring` | `sceAgcDriverSetTFRing` contract, state, and focused tests | integrated as `63f3515`; [Ghidra packet](docs/gta-v/agcdriver-settfring-ghidra.md) |
 | AGC Hs-offchip parameter | `codex/gta-v-nids` | Ghidra-recovered `sceAgcDriverSetHsOffchipParam` contract, state, tests, and runtime gate | integrated as `740915e`; [Ghidra packet](docs/gta-v/agc-driver-hs-offchip-param.md) |
-| Provider registration wave | `codex/gta-v-nids` | 803 exact Gen5, Ghidra-backed, provider-preferred registrations with fail-closed fallback | integrated as `0e4452d` plus dual-host provider23 commit `5edc5c7`; static coverage now 1,365/1,432 |
+| Provider registration waves | `codex/gta-v-nids` | 837 exact Gen5, Ghidra-backed, provider-preferred evidence-wave registrations with fail-closed fallback | integrated; total `PreferLle` count is 839 when the two semantic handlers are included; final libc lane commit `f46fc0c` |
+| Final kernel/POSIX contracts | `codex/gta-v-nids` | 27 exact Gen5 contracts, including nine semantic/partial and 18 fail-closed implementations | integrated as `9d8858f` |
+| Final data-symbol contracts | `codex/gta-v-nids` | five first-class object registrations and relocation/dlsym separation | integrated as `9508369`, hardened as `aed5201` |
 | Local reverse engineering | eight read-only Ghidra workers on the Mac | alternate/native variants for the 23 small-provider NIDs | complete 23/23; cleanup proof retained and zero campaign processes remain |
-| Remote reverse engineering (Linux) | 40 two-core jobs in unique `/dev/shm` roots on `rho.cs.oswego.edu` | remaining 67 kernel/libc/POSIX contracts and provider evidence | active near the measured 80-core saturation point |
+| Remote reverse engineering (Linux) | 40 two-core jobs plus targeted lanes in unique `/dev/shm` roots on `rho.cs.oswego.edu` | final kernel/libc/POSIX contracts and provider evidence | complete 121/121 with zero failures; peak measured use 85.719 cores; zero residue and zero Java workers |
 | Remote reverse engineering (Windows) | 16 one-core jobs in unique `%TEMP%` roots on `192.168.68.54` | independent 23-NID small-provider audit and alternate/native variants | complete 23/23; independent cleanup found zero residue and zero Java processes |
 
 No worker may edit this progress file, the central manifest, or the integration branch.
 
-## Static cluster queue
+## Final-wave disposition
 
-| Cluster | Uncovered NIDs | Current lane |
+| Contract class | NIDs | Final disposition |
 |---|---:|---|
-| Libc | 30 | rho Ghidra contract lane |
-| Kernel | 19 | rho Ghidra semantic-HLE lane; kernel exports remain HLE-bound |
-| POSIX | 9 | rho Ghidra contract lane |
-| LibcInternal | 5 | rho Ghidra contract lane |
-| LibcInternal;Libc | 3 | rho Ghidra contract lane |
-| LibcInternalExt | 1 | rho Ghidra contract lane |
+| Libc provider functions | 34 | Ghidra-backed provider-preferred registrations with fail-closed fallback |
+| LibcInternal backtrace | 1 | Ghidra-backed fail-closed HLE contract |
+| Kernel/POSIX | 27 | nine semantic/partial contracts and 18 fail-closed contracts |
+| Data objects | 5 | first-class data registrations with guest-first resolution |
+| **Total** | **67** | **integrated** |
 
-The remaining CSV contains exactly 67 unique NIDs, and its NID set is identical to the 67 non-integrated manifest items.
+`GTA_V_UNCOVERED_NIDS.csv` now contains the canonical header and zero data rows. All 911 manifest items are integrated.
 
 ## Implementation contract
 
@@ -112,6 +115,8 @@ The rho AGC campaign transferred only the 141,176-byte reconstructed `libSceAgcD
 
 The rho provider saturation campaign ran 40 two-core Ghidra jobs concurrently. It observed 80.35 cores in use with about 19.19 GiB peak aggregate RSS, no swap pressure, and no material I/O wait. It produced exact executable-body evidence for 191 AGC/AGC-driver/AMPR exports; 190 became provider registrations and the semantic `MM4IZSEYytQ` implementation was provider-preferred instead of duplicated. An independent cleanup check found zero campaign directories and zero Java workers. The evidence is retained in [`docs/gta-v/rho-provider-lle-ghidra.md`](docs/gta-v/rho-provider-lle-ghidra.md).
 
+The final rho contract campaign completed 121/121 Ghidra jobs with zero failures. Its kernel, libc, and deeper-analysis phases peaked at 79.655, 84.369, and 85.719 cores respectively, using unique RAM-backed roots. Both campaign roots were removed afterward, and independent checks found zero residual campaign directories and zero Java workers. The durable compact contract packet is retained under [`artifacts/gta-v-nid-evidence/rho-remaining90-contracts-20260718`](artifacts/gta-v-nid-evidence/rho-remaining90-contracts-20260718).
+
 The local Mac remains responsible for integration, builds, runtime capture, final regression, and additional read-only Ghidra evidence lanes. The two remote hosts add parallel workers; they do not replace the local coordinator.
 
 ## Validation gates
@@ -136,9 +141,10 @@ The local Mac remains responsible for integration, builds, runtime capture, fina
   - dual-host provider23 focused tests: 5/5 passed
 - NID manifest/registration uniqueness check
   - manifest validator: 911/911 unique items valid
-  - lifecycle: 844 integrated, 67 named
-  - remaining CSV: 67/67 unique NIDs with module attribution and exact set equality to non-integrated manifest items
-  - provider wave: exactly 803 Ghidra-backed `PreferLle` registrations plus one semantic HLE registration
+  - lifecycle: 911 integrated, 0 non-integrated
+  - remaining CSV: exact canonical header with zero data rows
+  - compiled parity test: exact 1,432/1,432 union, consisting of 1,427 callable registrations and five first-class data registrations
+  - provider preference: exactly 837 Ghidra-backed evidence-wave registrations plus two semantic provider-preferred handlers, for 839 total `PreferLle` registrations; fail-closed fallback behavior remains explicit
 - GTA V loader/import probe, then runtime unresolved trace
   - blocked-SELF `PT_DYNAMIC` translation: passed
   - static TLS reservation for the observed `0x13570` requirement: passed
@@ -147,11 +153,14 @@ The local Mac remains responsible for integration, builds, runtime capture, fina
   - `sceAgcDriverSetTFRing` (`XlNp7jzGiPo`): former fatal gate cleared in the final x64 run
   - `sceAgcDriverSetHsOffchipParam` (`MM4IZSEYytQ`): former import-39,003 gate cleared with `(0, 0x1FF)`
   - all 436 new NpCppWebApi registrations resolved to direct guest-provider bridges
+  - all 34 final libc registrations resolved to direct guest-provider bridges
+  - final five data NIDs produced zero callable-routing events; 11 data relocations rebound with zero unresolved
   - highest observed import ordinal: 41,427; later RenderThread access violation remains unattributed
 - SharpEmu library and source-generator tests
-  - SharpEmu.Libs.Tests after all current integrations: 757/757 passed
+  - focused final parity/libc/kernel/data tests: 53/53 passed
+  - SharpEmu.Libs.Tests after all integrations: 810/810 passed
   - Release solution build: passed with 0 warnings and 0 errors
   - SharpEmu.SourceGenerators.Tests: 36/36 passed
   - SharpEmu.ShaderCompiler.Tests: 34/34 passed
-- GTA V launch regression
-- Existing game regressions where the changed subsystem is shared
+- GTA V launch regression: prior 41,427-import checkpoint retained; exact terminal state recorded in the final evidence packet
+- Registration parity does not close semantic follow-up: 18 kernel/POSIX contracts and the backtrace contract intentionally fail closed, `recv`/`send` support only flags zero, and provider registrations require their guest providers for semantics

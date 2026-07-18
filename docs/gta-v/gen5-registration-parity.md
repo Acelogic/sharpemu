@@ -12,6 +12,14 @@ the extraction audit were applied.
 - Pinned Acelogic base represented by the snapshot columns: `615bae08c2613b6b8363203b8c40f58e2bf6eac6`
 - GTA `eboot.bin` SHA-256: `60d394626ac62acd1b20d205599b104bb51756d468d3878ad14c230bfe305c11`
 
+As of the final 2026-07-18 validation, the compiled Gen5 registry covers all
+1,432 pinned rows: 1,426 function imports and six object imports. The effective
+registration union is 1,427 callable entries (including the legacy callable
+`__stack_chk_guard` object) plus five first-class data entries, with no overlap.
+The manifest has 911/911 integrated queue items and the uncovered CSV has zero
+data rows. Runtime and regression evidence is recorded in
+[`final-parity-runtime-20260718.md`](final-parity-runtime-20260718.md).
+
 The `acelogic_*` columns are the immutable baseline snapshot, not live coverage
 fields. Current coverage is recomputed against SharpEmu's generated Gen5 export
 registry and tracked in `GTA_V_PROGRESS.md`, `GTA_V_NID_SWARM_MANIFEST.json`, and
