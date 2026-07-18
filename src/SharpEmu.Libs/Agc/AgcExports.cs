@@ -224,6 +224,7 @@ public static partial class AgcExports
     private static readonly HashSet<string> _tracedVertexBufferDistributions = new();
     private static readonly HashSet<string> _tracedGlobalBufferLengthStates = new();
     private static readonly HashSet<string> _tracedIndexedGlobalBufferStates = new();
+    private static readonly HashSet<string> _tracedIndexedGlobalBufferVertexDraws = new();
     private static readonly HashSet<(ulong Es, ulong Ps, ulong Target, ulong Texture, uint VertexCount)> _tracedShaderDraws = new();
     private static readonly HashSet<(ulong Ps, string Error)> _tracedShaderFailures = new();
     private static readonly ConcurrentDictionary<
@@ -312,6 +313,10 @@ public static partial class AgcExports
     private static readonly int[] _traceIndexedGlobalBufferSpec = ParseNonnegativeInts(
         Environment.GetEnvironmentVariable(
             "SHARPEMU_TRACE_INDEXED_GLOBAL_BUFFER_SPEC"));
+    private static readonly int? _traceIndexedGlobalBufferVertexBaseScalar =
+        ParseOptionalPositiveInt(
+            Environment.GetEnvironmentVariable(
+                "SHARPEMU_TRACE_INDEXED_GLOBAL_BUFFER_VERTEX_BASE_SGPR"));
     private static readonly int _traceIndexedGlobalBufferInterval =
         ParseOptionalPositiveInt(
             Environment.GetEnvironmentVariable(
@@ -6898,6 +6903,17 @@ public static partial class AgcExports
             "vertex",
             exportShaderAddress,
             exportEvaluation);
+        TraceIndexedGlobalBufferProbe(
+            ctx,
+            exportShaderAddress,
+            exportEvaluation);
+        TraceIndexedGlobalBufferVertexDrawProbe(
+            ctx,
+            state,
+            exportShaderAddress,
+            vertexCount,
+            indexed,
+            exportEvaluation);
 
         if (_traceVertexShaderAddress == exportShaderAddress)
         {
@@ -7410,13 +7426,17 @@ public static partial class AgcExports
             }
         }
 
+        var traceFullProgram =
+            Environment.GetEnvironmentVariable(
+                "SHARPEMU_TRACE_VERTEX_SHADER_FULL") == "1";
         foreach (var instruction in shaderState.Program.Instructions)
         {
             // The title failure is established by the first global accesses.
             // Retain every instruction through that setup region, then only
             // memory/export operations so this remains useful for other shaders
             // without producing an unbounded disassembly log.
-            if (instruction.Pc > 0x220 &&
+            if (!traceFullProgram &&
+                instruction.Pc > 0x220 &&
                 instruction.Control is not (
                     Gen5GlobalMemoryControl or
                     Gen5BufferMemoryControl or
@@ -7992,6 +8012,113 @@ public static partial class AgcExports
     }
 
     private static readonly HashSet<ulong> _tracedIndexedGlobalCpuContextBases = [];
+
+    private static void TraceIndexedGlobalBufferVertexDrawProbe(
+        CpuContext ctx,
+        SubmittedDcbState state,
+        ulong shaderAddress,
+        uint drawCount,
+        bool indexed,
+        Gen5ShaderEvaluation evaluation)
+    {
+        if (_traceIndexedGlobalBufferShaderAddress != shaderAddress ||
+            _traceIndexedGlobalBufferSpec.Length < 6 ||
+            _traceIndexedGlobalBufferVertexBaseScalar is not { } baseScalar ||
+            baseScalar >= evaluation.ScalarRegisters.Count)
+        {
+            return;
+        }
+
+        var sourceBindingIndex = _traceIndexedGlobalBufferSpec[0];
+        var sourceStride = _traceIndexedGlobalBufferSpec[1];
+        var indexByteOffset = _traceIndexedGlobalBufferSpec[2];
+        var targetBindingIndex = _traceIndexedGlobalBufferSpec[3];
+        var targetStride = _traceIndexedGlobalBufferSpec[4];
+        var fieldOffsets = _traceIndexedGlobalBufferSpec.AsSpan(5).ToArray();
+        if (sourceBindingIndex >= evaluation.GlobalMemoryBindings.Count ||
+            targetBindingIndex >= evaluation.GlobalMemoryBindings.Count ||
+            sourceStride <= 0 ||
+            targetStride <= 0 ||
+            indexByteOffset < 0 ||
+            indexByteOffset + sizeof(uint) > sourceStride ||
+            fieldOffsets.Any(offset =>
+                offset < 0 || offset + sizeof(uint) > targetStride))
+        {
+            return;
+        }
+
+        var source = evaluation.GlobalMemoryBindings[sourceBindingIndex];
+        var target = evaluation.GlobalMemoryBindings[targetBindingIndex];
+        var baseRecord = evaluation.ScalarRegisters[baseScalar];
+        var indices = ReadDiagnosticDrawIndices(
+            ctx,
+            state,
+            drawCount,
+            indexed,
+            out var indicesComplete);
+        var mappings = new List<string>();
+        foreach (var index in indices.Distinct().Take(128))
+        {
+            var sourceRecord = (ulong)baseRecord + index;
+            var sourceOffset = sourceRecord * (uint)sourceStride;
+            if (sourceOffset + (uint)indexByteOffset + sizeof(uint) >
+                (ulong)source.DataLength)
+            {
+                mappings.Add($"{index}->{sourceRecord}:source-oor");
+                continue;
+            }
+
+            var targetRecord = BinaryPrimitives.ReadUInt32LittleEndian(
+                source.Data.AsSpan(
+                    checked((int)sourceOffset) + indexByteOffset,
+                    sizeof(uint)));
+            var targetOffset = (ulong)targetRecord * (uint)targetStride;
+            if (targetOffset + (uint)targetStride > (ulong)target.DataLength)
+            {
+                mappings.Add($"{index}->{sourceRecord}->{targetRecord}:target-oor");
+                continue;
+            }
+
+            var targetBytes = target.Data.AsSpan(
+                checked((int)targetOffset),
+                targetStride);
+            var fieldValues = new List<string>(fieldOffsets.Length);
+            foreach (var offset in fieldOffsets)
+            {
+                fieldValues.Add(
+                    $"+{offset}=0x" +
+                    BinaryPrimitives.ReadUInt32LittleEndian(
+                        targetBytes.Slice(offset, sizeof(uint))).ToString("X8"));
+            }
+            var fields = string.Join(',', fieldValues);
+            mappings.Add(
+                $"{index}->{sourceRecord}->{targetRecord}:" +
+                $"{(ContainsNonzero(targetBytes) ? "nonzero" : "zero")}:" +
+                $"[{fields}]");
+        }
+
+        var key =
+            $"{shaderAddress:X16}|{source.BaseAddress:X16}|" +
+            $"{target.BaseAddress:X16}|{baseRecord}|{drawCount}|" +
+            string.Join(';', mappings);
+        lock (_submitTraceGate)
+        {
+            if (_tracedIndexedGlobalBufferVertexDraws.Count >= 256 ||
+                !_tracedIndexedGlobalBufferVertexDraws.Add(key))
+            {
+                return;
+            }
+        }
+
+        Console.Error.WriteLine(
+            $"[AGC][INDEXED-GLOBAL-BUFFER-VERTEX-DRAW] " +
+            $"shader=0x{shaderAddress:X16} base_s{baseScalar}={baseRecord} " +
+            $"draw_count={drawCount} indexed={(indexed ? 1 : 0)} " +
+            $"indices_complete={(indicesComplete ? 1 : 0)} " +
+            $"source=b{sourceBindingIndex}/0x{source.BaseAddress:X16}/{source.DataLength} " +
+            $"target=b{targetBindingIndex}/0x{target.BaseAddress:X16}/{target.DataLength} " +
+            $"mappings=[{string.Join(';', mappings)}]");
+    }
 
     private static void TraceIndexedGlobalBufferCpuContext(
         CpuContext ctx,

@@ -2917,6 +2917,7 @@ internal static unsafe class VulkanVideoPresenter
         private Presentation? _pendingHostSplashReplay;
         private bool _swapchainRecreateDeferred;
         private bool _tracedPresentedSwapchain;
+        private bool _traceAddressedPresentedSwapchain;
         private bool _swapchainReadbackPending;
         private long _presentedSwapchainCount;
         private static int _guestImageDumpSequence;
@@ -13205,6 +13206,7 @@ internal static unsafe class VulkanVideoPresenter
                 _directPresentationCount++;
                 var traceAddressedPresentation =
                     ShouldTraceAddressedPresentedGuestImage(presentedGuestImage);
+                _traceAddressedPresentedSwapchain = traceAddressedPresentation;
                 if (traceAddressedPresentation ||
                     ShouldTracePresentedGuestImageContentsForDiagnostics() &&
                     (_directPresentationCount is 1 or 30 or 120 ||
@@ -15352,9 +15354,11 @@ internal static unsafe class VulkanVideoPresenter
             var presentedCount = Interlocked.Increment(ref _presentedSwapchainCount);
             var periodicDumpInterval = SwapchainDumpInterval();
             var traceDestination =
+                _traceAddressedPresentedSwapchain ||
                 ShouldTracePresentedGuestImageContentsForDiagnostics() &&
                 (!_tracedPresentedSwapchain ||
                  periodicDumpInterval > 0 && presentedCount % periodicDumpInterval == 0);
+            _traceAddressedPresentedSwapchain = false;
             _tracedPresentedSwapchain |= traceDestination;
             BeginDebugLabel(
                 _commandBuffer,
