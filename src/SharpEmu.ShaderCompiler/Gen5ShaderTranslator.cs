@@ -1311,7 +1311,7 @@ public static class Gen5ShaderTranslator
 
         // Opcode numbers taken from LLVM's AMDGPU VOP3PInstructions.td and the
         // gfx9/gfx10 MC test encodings; they are unchanged across gfx9 and gfx10.
-        // Unhandled packed opcodes (integer, fma_mix, ...) stay opaque here and
+        // Unhandled packed opcodes (integer, remaining mix variants, ...) stay opaque here and
         // fail loudly at emission rather than being silently mis-emitted.
         name = opcode switch
         {
@@ -1320,6 +1320,7 @@ public static class Gen5ShaderTranslator
             0x10 => "VPkMulF16",
             0x11 => "VPkMinF16",
             0x12 => "VPkMaxF16",
+            0x20 => "VFmaMixF32",
             _ => $"Vop3pRaw{opcode:X2}",
         };
 
@@ -1712,6 +1713,11 @@ public static class Gen5ShaderTranslator
         name.StartsWith("ImageStore", StringComparison.Ordinal) ||
         name.StartsWith("ImageAtomic", StringComparison.Ordinal);
 
+    // GFX10 image descriptors use word 5 bits 22:20 for operation/cache policy.
+    // AGC emits 0x00700000 on writable views, so an IMAGE_LOAD and IMAGE_STORE
+    // targeting the same image can legitimately differ only in these bits.
+    private const uint ImageDescriptorOperationPolicyMask = 0x0070_0000u;
+
     public static bool RequiresStorageImage(
         Gen5ImageBinding binding,
         IReadOnlyList<Gen5ImageBinding> stageBindings)
@@ -1726,14 +1732,57 @@ public static class Gen5ShaderTranslator
             return false;
         }
 
-        // IMAGE_LOAD itself is read-only and maps naturally to OpImageFetch,
-        // including for block-compressed textures which Vulkan cannot expose
-        // as storage images. Keep it as storage only when the same resolved
-        // descriptor is also written in this shader stage, preserving coherent
-        // read/write access through one storage-image representation.
-        return stageBindings.Any(candidate =>
+        // Preserve the storage-image semantics used by RDNA IMAGE_LOAD for
+        // ordinary images. In particular, ASTRO's temporal resolve reads a
+        // 1x1 RGBA32F control image this way; lowering that read to a sampled
+        // OpImageFetch regresses the title pyramid on MoltenVK. Block-compressed
+        // images cannot be exposed as Vulkan storage images, so those remain
+        // sampled unless the stage also writes the same resolved resource.
+        return !IsBlockCompressedImageDescriptor(binding.ResourceDescriptor) ||
+            stageBindings.Any(candidate =>
             IsStorageImageOperation(candidate.Opcode) &&
-            binding.ResourceDescriptor.SequenceEqual(candidate.ResourceDescriptor));
+            RefersToSameImageResource(
+                binding.ResourceDescriptor,
+                candidate.ResourceDescriptor));
+    }
+
+    private static bool IsBlockCompressedImageDescriptor(
+        IReadOnlyList<uint> descriptor)
+    {
+        if (descriptor.Count < 2)
+        {
+            return false;
+        }
+
+        var unifiedFormat = (descriptor[1] >> 20) & 0x1FFu;
+        return Gfx10UnifiedFormat.TryDecode(
+                unifiedFormat,
+                out var dataFormat,
+                out _) &&
+            dataFormat is >= 169 and <= 182;
+    }
+
+    private static bool RefersToSameImageResource(
+        IReadOnlyList<uint> left,
+        IReadOnlyList<uint> right)
+    {
+        if (left.Count != right.Count)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < left.Count; index++)
+        {
+            var mask = index == 5
+                ? ~ImageDescriptorOperationPolicyMask
+                : uint.MaxValue;
+            if ((left[index] & mask) != (right[index] & mask))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     public static bool IsDataShareAtomic(string name) => name switch

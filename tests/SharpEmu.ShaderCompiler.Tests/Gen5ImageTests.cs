@@ -4,6 +4,7 @@
 using System.Buffers.Binary;
 using SharpEmu.HLE;
 using SharpEmu.ShaderCompiler;
+using SharpEmu.ShaderCompiler.Vulkan;
 using Xunit;
 
 namespace SharpEmu.ShaderCompiler.Tests;
@@ -66,6 +67,169 @@ public sealed class Gen5ImageTests
         Assert.Equal(0U, control.ScalarSampler);
         Assert.Equal(0xFU, control.Dmask);
         Assert.Equal(12, instruction.Sources.Count);
+    }
+
+    [Fact]
+    public void ImageStoreDmaskPreservesMaskedChannels()
+    {
+        var maskedOpcodes = CompileImageStoreAndReadSpirvOpcodes(0x7);
+        var fullOpcodes = CompileImageStoreAndReadSpirvOpcodes(0xF);
+
+        Assert.Equal(
+            fullOpcodes.Count(opcode => opcode == (ushort)SpirvOp.ImageRead) + 1,
+            maskedOpcodes.Count(opcode => opcode == (ushort)SpirvOp.ImageRead));
+        Assert.Equal(
+            fullOpcodes.Count(opcode => opcode == (ushort)SpirvOp.CompositeInsert) + 3,
+            maskedOpcodes.Count(opcode => opcode == (ushort)SpirvOp.CompositeInsert));
+        Assert.Equal(
+            fullOpcodes.Count(opcode => opcode == (ushort)SpirvOp.ImageWrite),
+            maskedOpcodes.Count(opcode => opcode == (ushort)SpirvOp.ImageWrite));
+    }
+
+    [Fact]
+    public void ImageLoadSharesStorageImageWhenOnlyWritePolicyBitsDiffer()
+    {
+        var control = new Gen5ImageControl(
+            Dmask: 0xF,
+            VectorAddress: 0,
+            AddressRegisters: [0, 1],
+            VectorData: 4,
+            ScalarResource: 8,
+            ScalarSampler: 0,
+            Dimension: 1,
+            IsArray: false,
+            Glc: false,
+            Slc: false,
+            A16: false,
+            D16: false);
+        uint[] loadDescriptor =
+        [
+            0x053C4200,
+            0xC4700000,
+            0x0155C25F,
+            0x91B00FAC,
+            0,
+            0,
+            0xC07B0000,
+            0x00057056,
+        ];
+        var storeDescriptor = (uint[])loadDescriptor.Clone();
+        storeDescriptor[5] = 0x0070_0000;
+        var load = new Gen5ImageBinding(
+            0x80,
+            "ImageLoad",
+            control,
+            loadDescriptor,
+            [],
+            null);
+        var store = new Gen5ImageBinding(
+            0x198,
+            "ImageStore",
+            control,
+            storeDescriptor,
+            [],
+            null);
+
+        Assert.True(Gen5ShaderTranslator.RequiresStorageImage(load, [load, store]));
+
+        var otherDescriptor = (uint[])storeDescriptor.Clone();
+        otherDescriptor[0]++;
+        var otherStore = store with { ResourceDescriptor = otherDescriptor };
+        Assert.True(
+            Gen5ShaderTranslator.RequiresStorageImage(load, [load, otherStore]));
+
+        var compressedDescriptor = (uint[])loadDescriptor.Clone();
+        compressedDescriptor[1] = 169u << 20; // BC1_UNORM
+        var compressedLoad = load with
+        {
+            ResourceDescriptor = compressedDescriptor,
+        };
+        Assert.False(
+            Gen5ShaderTranslator.RequiresStorageImage(
+                compressedLoad,
+                [compressedLoad, otherStore]));
+    }
+
+    private static IReadOnlyList<ushort> CompileImageStoreAndReadSpirvOpcodes(
+        uint dmask)
+    {
+        var control = new Gen5ImageControl(
+            dmask,
+            VectorAddress: 0,
+            AddressRegisters: [0, 1],
+            VectorData: 4,
+            ScalarResource: 8,
+            ScalarSampler: 0,
+            Dimension: 1,
+            IsArray: false,
+            Glc: false,
+            Slc: false,
+            A16: false,
+            D16: false);
+        var store = new Gen5ShaderInstruction(
+            0,
+            Gen5ShaderEncoding.Mimg,
+            "ImageStore",
+            [],
+            [],
+            [],
+            control);
+        var end = new Gen5ShaderInstruction(
+            8,
+            Gen5ShaderEncoding.Sopp,
+            "SEndpgm",
+            [SEndpgm],
+            [],
+            [],
+            null);
+        var state = new Gen5ShaderState(
+            new Gen5ShaderProgram(ShaderAddress, [store, end]),
+            [],
+            null);
+        var scalarRegisters = new uint[256];
+        var descriptor = new uint[8];
+        descriptor[1] = 71u << 20; // FORMAT_16_16_16_16_FLOAT
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            [
+                new Gen5ImageBinding(
+                    store.Pc,
+                    store.Opcode,
+                    control,
+                    descriptor,
+                    [],
+                    null),
+            ],
+            []);
+
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                1,
+                1,
+                1,
+                out var shader,
+                out var error),
+            error);
+        return ReadSpirvOpcodes(shader.Spirv);
+    }
+
+    private static IReadOnlyList<ushort> ReadSpirvOpcodes(byte[] spirv)
+    {
+        var opcodes = new List<ushort>();
+        for (var offset = 5 * sizeof(uint); offset < spirv.Length;)
+        {
+            var instruction = BinaryPrimitives.ReadUInt32LittleEndian(
+                spirv.AsSpan(offset));
+            var wordCount = checked((int)(instruction >> 16));
+            Assert.InRange(wordCount, 1, (spirv.Length - offset) / sizeof(uint));
+            opcodes.Add((ushort)instruction);
+            offset += wordCount * sizeof(uint);
+        }
+
+        return opcodes;
     }
 
     private sealed class TestCpuMemory(ulong baseAddress, int size) : ICpuMemory

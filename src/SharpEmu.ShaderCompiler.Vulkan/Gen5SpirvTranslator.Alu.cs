@@ -985,6 +985,13 @@ public static partial class Gen5SpirvTranslator
                     }
 
                     break;
+                case "VFmaMixF32":
+                    if (!TryEmitFmaMixF32(instruction, out result, out error))
+                    {
+                        return false;
+                    }
+
+                    break;
                 case "VPkFmaF16":
                     // Deliberately loud: a fused f16 FMA rounds the product+add once,
                     // whereas doing the multiply-add in f32 and rounding to f16 at the
@@ -1021,6 +1028,62 @@ public static partial class Gen5SpirvTranslator
 
             StoreV(destination, result);
             return true;
+        }
+
+        // V_FMA_MIX_F32 uses the VOP3P bit layout but produces one f32 result.
+        // Per source, op_sel_hi chooses f16 instead of f32 and op_sel chooses the
+        // low/high half when f16 is selected. The packed NEG_HI field is ABS for
+        // MIX instructions; NEG keeps its usual sign-flip meaning.
+        private bool TryEmitFmaMixF32(
+            Gen5ShaderInstruction instruction,
+            out uint result,
+            out string error)
+        {
+            result = 0;
+            error = string.Empty;
+            if (instruction.Control is not Gen5Vop3pControl control)
+            {
+                error = $"missing vop3p control for {instruction.Opcode}";
+                return false;
+            }
+
+            var source0 = EmitFmaMixF32Operand(instruction, control, 0);
+            var source1 = EmitFmaMixF32Operand(instruction, control, 1);
+            var source2 = EmitFmaMixF32Operand(instruction, control, 2);
+            result = EmitFloatResult(
+                instruction,
+                Ext(50, _floatType, source0, source1, source2));
+            return true;
+        }
+
+        private uint EmitFmaMixF32Operand(
+            Gen5ShaderInstruction instruction,
+            Gen5Vop3pControl control,
+            int index)
+        {
+            var raw = GetRawSource(instruction, index);
+            if (((control.OpSelHiMask >> index) & 1) != 0)
+            {
+                if (((control.OpSelMask >> index) & 1) != 0)
+                {
+                    raw = ShiftRightLogical(raw, UInt(16));
+                }
+
+                raw = EmitHalfToFloat(raw);
+            }
+
+            if (((control.NegHiMask >> index) & 1) != 0)
+            {
+                raw = BitwiseAnd(raw, UInt(0x7FFF_FFFF));
+            }
+
+            var value = Bitcast(_floatType, raw);
+            if (((control.NegLoMask >> index) & 1) != 0)
+            {
+                value = _module.AddInstruction(SpirvOp.FNegate, _floatType, value);
+            }
+
+            return value;
         }
 
         // Packed f16 (VOP3P) arithmetic. Each source register holds two f16 values,
@@ -3582,6 +3645,9 @@ public static partial class Gen5SpirvTranslator
                     break;
                 case Gen5SdwaControl control:
                     outputModifier = control.OutputModifier;
+                    clamp = control.Clamp;
+                    break;
+                case Gen5Vop3pControl control:
                     clamp = control.Clamp;
                     break;
             }

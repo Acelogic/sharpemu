@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using System.Buffers.Binary;
+using System.Text;
 using SharpEmu.HLE;
 using SharpEmu.ShaderCompiler;
 using SharpEmu.ShaderCompiler.Vulkan;
@@ -303,6 +304,70 @@ public sealed class Gen5InterpolationTests
     }
 
     [Fact]
+    public void VertexPrologInitializesMergedWaveInfo()
+    {
+        var end = new Gen5ShaderInstruction(
+            0,
+            Gen5ShaderEncoding.Sopp,
+            "SEndpgm",
+            [SEndpgm],
+            [],
+            [],
+            null);
+        var program = new Gen5ShaderProgram(ShaderAddress, [end]);
+        var state = new Gen5ShaderState(program, [], null);
+        var scalarRegisters = new uint[256];
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            [],
+            []);
+
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileVertexShader(
+                state,
+                evaluation,
+                out var shader,
+                out var error),
+            error);
+
+        var instructions = ReadInstructions(shader.Spirv);
+        var constants = instructions
+            .Where(instruction =>
+                instruction.Opcode == (ushort)SpirvOp.Constant &&
+                instruction.Operands.Length == 3)
+            .ToDictionary(
+                instruction => instruction.Operands[1],
+                instruction => instruction.Operands[2]);
+        var scalarRegistersId = Assert.Single(
+            instructions,
+            instruction =>
+                instruction.Opcode == (ushort)SpirvOp.Name &&
+                instruction.Operands.Length >= 2 &&
+                ReadSpirvString(instruction.Operands.AsSpan(1)) == "sgpr")
+            .Operands[0];
+        var mergedWavePointers = instructions
+            .Where(instruction =>
+                instruction.Opcode == (ushort)SpirvOp.AccessChain &&
+                instruction.Operands.Length >= 4 &&
+                instruction.Operands[2] == scalarRegistersId &&
+                constants.TryGetValue(instruction.Operands[^1], out var index) &&
+                index == 3)
+            .Select(instruction => instruction.Operands[1])
+            .ToHashSet();
+
+        Assert.NotEmpty(mergedWavePointers);
+        Assert.Contains(
+            instructions,
+            instruction =>
+                instruction.Opcode == (ushort)SpirvOp.Store &&
+                instruction.Operands.Length >= 2 &&
+                mergedWavePointers.Contains(instruction.Operands[0]) &&
+                constants.TryGetValue(instruction.Operands[1], out var value) &&
+                value == 32);
+    }
+
+    [Fact]
     public void VertexExportFansOutThroughPixelSemanticMapping()
     {
         var export = new Gen5ShaderInstruction(
@@ -475,6 +540,26 @@ public sealed class Gen5InterpolationTests
         }
 
         return instructions;
+    }
+
+    private static string ReadSpirvString(ReadOnlySpan<uint> words)
+    {
+        var bytes = new List<byte>(words.Length * sizeof(uint));
+        foreach (var word in words)
+        {
+            for (var shift = 0; shift < 32; shift += 8)
+            {
+                var value = (byte)(word >> shift);
+                if (value == 0)
+                {
+                    return Encoding.UTF8.GetString(bytes.ToArray());
+                }
+
+                bytes.Add(value);
+            }
+        }
+
+        return Encoding.UTF8.GetString(bytes.ToArray());
     }
 
     private sealed record SpirvInstruction(ushort Opcode, uint[] Operands);

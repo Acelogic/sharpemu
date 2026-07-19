@@ -45,6 +45,53 @@ public sealed class Gen5Vop3Tests
             signedOpcodes.Count(opcode => opcode == OpBitFieldUExtract) + 1);
     }
 
+    [Fact]
+    public void VFmaMixF32DecodesSelectorsAndModifiers()
+    {
+        var program = DecodeVop3pProgram(
+            opSelMask: 0b101,
+            opSelHiMask: 0b110,
+            negateMask: 0b011,
+            absoluteMask: 0b100,
+            clamp: true);
+
+        var instruction = Assert.Single(program.Instructions, item => item.Opcode == "VFmaMixF32");
+        Assert.Equal(Gen5ShaderEncoding.Vop3p, instruction.Encoding);
+        Assert.Equal(Gen5Operand.Vector(0), instruction.Sources[0]);
+        Assert.Equal(Gen5Operand.Vector(1), instruction.Sources[1]);
+        Assert.Equal(Gen5Operand.Vector(2), instruction.Sources[2]);
+        Assert.Equal(Gen5Operand.Vector(3), Assert.Single(instruction.Destinations));
+        Assert.Equal(
+            new Gen5Vop3pControl(0b101, 0b110, 0b011, 0b100, true),
+            Assert.IsType<Gen5Vop3pControl>(instruction.Control));
+    }
+
+    [Fact]
+    public void VFmaMixF32LowersMixedPrecisionFusedModifiersAndClamp()
+    {
+        var pureF32 = CompileVop3pAndReadSpirv(
+            opSelMask: 0,
+            opSelHiMask: 0,
+            negateMask: 0,
+            absoluteMask: 0,
+            clamp: false);
+        var mixed = CompileVop3pAndReadSpirv(
+            opSelMask: 0b001,
+            opSelHiMask: 0b001,
+            negateMask: 0b010,
+            absoluteMask: 0b100,
+            clamp: true);
+
+        var pureExtInsts = ReadGlslExtInstNumbers(pureF32);
+        var mixedExtInsts = ReadGlslExtInstNumbers(mixed);
+        Assert.Contains(50u, pureExtInsts); // Fma
+        Assert.DoesNotContain(75u, pureExtInsts); // FindUMsb, used by f16 widening
+        Assert.Contains(50u, mixedExtInsts);
+        Assert.Contains(75u, mixedExtInsts);
+        Assert.Contains(43u, mixedExtInsts); // FClamp
+        Assert.Contains((ushort)SpirvOp.FNegate, ReadSpirvOpcodes(mixed));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -121,6 +168,94 @@ public sealed class Gen5Vop3Tests
             Gen5ShaderTranslator.TryDecodeProgram(ctx, ShaderAddress, out var program, out var error),
             error);
         return program;
+    }
+
+    private static Gen5ShaderProgram DecodeVop3pProgram(
+        uint opSelMask,
+        uint opSelHiMask,
+        uint negateMask,
+        uint absoluteMask,
+        bool clamp)
+    {
+        var memory = new TestCpuMemory(ShaderAddress, 0x100);
+        Span<byte> shader = stackalloc byte[3 * sizeof(uint)];
+        var word =
+            0xCC000003u |
+            (0x20u << 16) |
+            ((absoluteMask & 0x7) << 8) |
+            ((opSelMask & 0x7) << 11) |
+            (((opSelHiMask >> 2) & 1) << 14) |
+            (clamp ? 1u << 15 : 0);
+        var extra =
+            0x100u |
+            (0x101u << 9) |
+            (0x102u << 18) |
+            ((opSelHiMask & 0x3) << 27) |
+            ((negateMask & 0x7) << 29);
+        BinaryPrimitives.WriteUInt32LittleEndian(shader, word);
+        BinaryPrimitives.WriteUInt32LittleEndian(shader[sizeof(uint)..], extra);
+        BinaryPrimitives.WriteUInt32LittleEndian(shader[(2 * sizeof(uint))..], SEndpgm);
+        Assert.True(memory.TryWrite(ShaderAddress, shader));
+
+        var ctx = new CpuContext(memory, Generation.Gen5);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(ctx, ShaderAddress, out var program, out var error),
+            error);
+        return program;
+    }
+
+    private static byte[] CompileVop3pAndReadSpirv(
+        uint opSelMask,
+        uint opSelHiMask,
+        uint negateMask,
+        uint absoluteMask,
+        bool clamp)
+    {
+        var program = DecodeVop3pProgram(
+            opSelMask,
+            opSelHiMask,
+            negateMask,
+            absoluteMask,
+            clamp);
+        var state = new Gen5ShaderState(program, [], null);
+        var scalarRegisters = new uint[256];
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            [],
+            []);
+
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                1,
+                1,
+                1,
+                out var shader,
+                out var error),
+            error);
+        return shader.Spirv;
+    }
+
+    private static IReadOnlyList<uint> ReadGlslExtInstNumbers(byte[] spirv)
+    {
+        var operations = new List<uint>();
+        for (var offset = 5 * sizeof(uint); offset < spirv.Length;)
+        {
+            var header = BinaryPrimitives.ReadUInt32LittleEndian(spirv.AsSpan(offset));
+            var wordCount = checked((int)(header >> 16));
+            Assert.InRange(wordCount, 1, (spirv.Length - offset) / sizeof(uint));
+            if ((ushort)header == (ushort)SpirvOp.ExtInst)
+            {
+                Assert.True(wordCount >= 5);
+                operations.Add(BinaryPrimitives.ReadUInt32LittleEndian(spirv.AsSpan(offset + (4 * sizeof(uint)))));
+            }
+
+            offset += wordCount * sizeof(uint);
+        }
+
+        return operations;
     }
 
     private static IReadOnlyList<ushort> CompileAndReadSpirvOpcodes(uint opcode)

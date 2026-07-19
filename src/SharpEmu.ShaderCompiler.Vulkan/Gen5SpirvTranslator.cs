@@ -1632,7 +1632,34 @@ public static partial class Gen5SpirvTranslator
             if (_stage == Gen5SpirvStage.Vertex)
             {
                 StoreV(5, Load(_uintType, _vertexIndexInput), guardWithExec: false);
-                StoreV(8, Load(_uintType, _instanceIndexInput), guardWithExec: false);
+                var instanceIndex = Load(_uintType, _instanceIndexInput);
+                if (TryParseEnvironmentUnsigned(
+                        "SHARPEMU_FORCE_VERTEX_INSTANCE_INDEX_ADDRESS",
+                        out var forcedInstanceIndexAddress) &&
+                    forcedInstanceIndexAddress == _state.Program.Address &&
+                    TryParseEnvironmentUnsigned(
+                        "SHARPEMU_FORCE_VERTEX_INSTANCE_INDEX",
+                        out var forcedInstanceIndex))
+                {
+                    instanceIndex = UInt(checked((uint)forcedInstanceIndex));
+                }
+
+                StoreV(8, instanceIndex, guardWithExec: false);
+
+                // PS5 vertex programs use the merged GS prolog ABI. The low
+                // byte of s3 carries the active vertex count. This backend
+                // translates a guest wave onto a host subgroup, so report the
+                // guest wave width; using one collapses EXEC to lane zero when
+                // the prolog restores its vertex mask.
+                uint mergedWaveInfo = _waveLaneCount;
+                if (TryParseEnvironmentUnsigned(
+                        "SHARPEMU_FORCE_VERTEX_MERGED_WAVE_INFO",
+                        out var forcedMergedWaveInfo))
+                {
+                    mergedWaveInfo = checked((uint)forcedMergedWaveInfo);
+                }
+
+                StoreS(3, UInt(mergedWaveInfo));
 
                 // An EXEC-masked position export selects the previous output.
                 // SPIR-V output variables have no implicit initial value, so
@@ -4098,7 +4125,10 @@ public static partial class Gen5SpirvTranslator
                     coordinates,
                     imageSize,
                     imageObject,
-                    texel);
+                    texel,
+                    resource.ComponentType,
+                    resource.VectorType,
+                    image.Dmask);
 
                 return true;
             }
@@ -4745,7 +4775,10 @@ public static partial class Gen5SpirvTranslator
             uint coordinates,
             uint imageSize,
             uint imageObject,
-            uint texel)
+            uint texel,
+            uint componentType,
+            uint vectorType,
+            uint dmask)
         {
             var x = _module.AddInstruction(
                 SpirvOp.CompositeExtract,
@@ -4817,6 +4850,36 @@ public static partial class Gen5SpirvTranslator
                 writeLabel,
                 mergeLabel);
             _module.AddLabel(writeLabel);
+            if ((dmask & 0xFu) != 0xFu)
+            {
+                var mergedTexel = _module.AddInstruction(
+                    SpirvOp.ImageRead,
+                    vectorType,
+                    imageObject,
+                    coordinates);
+                for (uint component = 0; component < 4; component++)
+                {
+                    if ((dmask & (1u << (int)component)) == 0)
+                    {
+                        continue;
+                    }
+
+                    var value = _module.AddInstruction(
+                        SpirvOp.CompositeExtract,
+                        componentType,
+                        texel,
+                        component);
+                    mergedTexel = _module.AddInstruction(
+                        SpirvOp.CompositeInsert,
+                        vectorType,
+                        value,
+                        mergedTexel,
+                        component);
+                }
+
+                texel = mergedTexel;
+            }
+
             _module.AddStatement(
                 SpirvOp.ImageWrite,
                 imageObject,
@@ -5179,6 +5242,87 @@ public static partial class Gen5SpirvTranslator
                         y,
                         Float(2f)),
                     Float(1f));
+                if (TryParseEnvironmentUnsigned(
+                        "SHARPEMU_FORCE_VERTEX_POSITION_EXPORT_GRID_COLUMNS",
+                        out var requestedGridColumns) &&
+                    TryParseEnvironmentUnsigned(
+                        "SHARPEMU_FORCE_VERTEX_POSITION_EXPORT_GRID_ROWS",
+                        out var requestedGridRows) &&
+                    requestedGridColumns is > 0 and <= 256 &&
+                    requestedGridRows is > 0 and <= 256)
+                {
+                    var gridColumns = checked((uint)requestedGridColumns);
+                    var gridRows = checked((uint)requestedGridRows);
+                    var instanceIndex = Load(_uintType, _instanceIndexInput);
+                    var column = _module.AddInstruction(
+                        SpirvOp.UMod,
+                        _uintType,
+                        instanceIndex,
+                        UInt(gridColumns));
+                    var row = _module.AddInstruction(
+                        SpirvOp.UDiv,
+                        _uintType,
+                        instanceIndex,
+                        UInt(gridColumns));
+                    var columnCenter = _module.AddInstruction(
+                        SpirvOp.FDiv,
+                        _floatType,
+                        _module.AddInstruction(
+                            SpirvOp.FAdd,
+                            _floatType,
+                            _module.AddInstruction(
+                                SpirvOp.FMul,
+                                _floatType,
+                                _module.AddInstruction(
+                                    SpirvOp.ConvertUToF,
+                                    _floatType,
+                                    column),
+                                Float(2f)),
+                            Float(1f)),
+                        Float(gridColumns));
+                    var rowCenter = _module.AddInstruction(
+                        SpirvOp.FDiv,
+                        _floatType,
+                        _module.AddInstruction(
+                            SpirvOp.FAdd,
+                            _floatType,
+                            _module.AddInstruction(
+                                SpirvOp.FMul,
+                                _floatType,
+                                _module.AddInstruction(
+                                    SpirvOp.ConvertUToF,
+                                    _floatType,
+                                    row),
+                                Float(2f)),
+                            Float(1f)),
+                        Float(gridRows));
+                    xPosition = _module.AddInstruction(
+                        SpirvOp.FAdd,
+                        _floatType,
+                        _module.AddInstruction(
+                            SpirvOp.FDiv,
+                            _floatType,
+                            xPosition,
+                            Float(gridColumns)),
+                        _module.AddInstruction(
+                            SpirvOp.FSub,
+                            _floatType,
+                            columnCenter,
+                            Float(1f)));
+                    yPosition = _module.AddInstruction(
+                        SpirvOp.FAdd,
+                        _floatType,
+                        _module.AddInstruction(
+                            SpirvOp.FDiv,
+                            _floatType,
+                            yPosition,
+                            Float(gridRows)),
+                        _module.AddInstruction(
+                            SpirvOp.FSub,
+                            _floatType,
+                            rowCenter,
+                            Float(1f)));
+                }
                 outputValue = _module.AddInstruction(
                     SpirvOp.CompositeConstruct,
                     _vec4Type,

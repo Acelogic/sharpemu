@@ -6148,9 +6148,13 @@ internal static unsafe class VulkanVideoPresenter
                 _forceAttributeFragmentLocation.GetValueOrDefault();
             var forceAttributeFragment =
                 _forceAttributeFragmentLocation.HasValue &&
-                AnyTargetAddressMatches(
-                    feedbackTargets,
-                    "SHARPEMU_FORCE_ATTRIBUTE_FRAGMENT_TARGETS");
+                (shaderAddress != 0 &&
+                    AddressListContains(
+                        "SHARPEMU_FORCE_ATTRIBUTE_FRAGMENT_SHADER_ADDRS",
+                        shaderAddress) ||
+                 AnyTargetAddressMatches(
+                     feedbackTargets,
+                     "SHARPEMU_FORCE_ATTRIBUTE_FRAGMENT_TARGETS"));
             var vertexSpirv = forceFullscreenVertex
                 ? SpirvFixedShaders.CreateFullscreenVertex(0)
                 : draw.VertexSpirv;
@@ -9433,7 +9437,8 @@ internal static unsafe class VulkanVideoPresenter
         private static BorderColor ToVkBorderColor(uint color) =>
             color switch
             {
-                1 => BorderColor.FloatTransparentBlack,
+                0 => BorderColor.FloatTransparentBlack,
+                1 => BorderColor.FloatOpaqueBlack,
                 2 => BorderColor.FloatOpaqueWhite,
                 _ => BorderColor.FloatOpaqueBlack,
             };
@@ -14639,6 +14644,12 @@ internal static unsafe class VulkanVideoPresenter
                     ? previous + 1
                     : 1;
                 _guestImageTraceCounts[image.Address] = count;
+                if (_traceGuestImageMaximumOccurrence > 0 &&
+                    count > _traceGuestImageMaximumOccurrence)
+                {
+                    return false;
+                }
+
                 return count % interval == 0;
             }
 
@@ -14748,6 +14759,14 @@ internal static unsafe class VulkanVideoPresenter
                 out var traceGuestImageOccurrence) &&
             traceGuestImageOccurrence > 0
                 ? traceGuestImageOccurrence
+                : 0;
+        private static readonly long _traceGuestImageMaximumOccurrence =
+            long.TryParse(
+                Environment.GetEnvironmentVariable(
+                    "SHARPEMU_TRACE_GUEST_IMAGE_MAX_OCCURRENCE"),
+                out var traceGuestImageMaximumOccurrence) &&
+            traceGuestImageMaximumOccurrence > 0
+                ? traceGuestImageMaximumOccurrence
                 : 0;
         private static readonly uint _traceGuestImageWidth =
             uint.TryParse(

@@ -292,7 +292,7 @@ public static partial class AgcExports
             StringComparison.Ordinal);
     private static readonly ulong? _traceComputeShaderAddress = ParseOptionalHexAddress(
         Environment.GetEnvironmentVariable("SHARPEMU_TRACE_COMPUTE_SHADER_ADDRESS"));
-    private static readonly ulong? _tracePixelShaderAddress = ParseOptionalHexAddress(
+    private static readonly ulong[] _tracePixelShaderAddresses = ParseHexAddresses(
         Environment.GetEnvironmentVariable("SHARPEMU_TRACE_PIXEL_SHADER_ADDRESS"));
     private static readonly ulong? _traceVertexShaderAddress = ParseOptionalHexAddress(
         Environment.GetEnvironmentVariable("SHARPEMU_TRACE_VERTEX_SHADER_ADDRESS"));
@@ -302,6 +302,8 @@ public static partial class AgcExports
         Environment.GetEnvironmentVariable("SHARPEMU_TRACE_GLOBAL_BUFFER_ADDRS"));
     private static readonly ulong[] _traceGuestImageAddresses = ParseHexAddresses(
         Environment.GetEnvironmentVariable("SHARPEMU_TRACE_GUEST_IMAGE_ADDRS"));
+    private static readonly ulong[] _traceTextureBindingAddresses = ParseHexAddresses(
+        Environment.GetEnvironmentVariable("SHARPEMU_TRACE_TEXTURE_BINDING_ADDRS"));
     private static readonly ulong[] _probeZeroIndirectDispatchShaderAddresses =
         ParseHexAddresses(
             Environment.GetEnvironmentVariable(
@@ -6214,7 +6216,7 @@ public static partial class AgcExports
             }
 
             if (_traceAgcShader ||
-                _tracePixelShaderAddress == pixelShaderAddress ||
+                Array.IndexOf(_tracePixelShaderAddresses, pixelShaderAddress) >= 0 ||
                 _traceRenderTargetAddress == target.Address)
             {
                 var pixelInputControls = string.Join(
@@ -6565,11 +6567,18 @@ public static partial class AgcExports
                     $"textures={translatedDraw.Textures.Count}");
             }
 
-            // Trace-only: gated on the flag so the dedup set and the dump —
-            // which reads pooled buffer data the presenter may already have
-            // recycled (harmless for diagnostics, garbage bytes at worst) —
-            // cost nothing in normal runs.
-            if (_traceAgcShader)
+            // Trace-only: broad shader tracing and the address-specific filters
+            // share the same detailed draw summary. The latter must stay useful
+            // without enabling the extremely noisy global shader trace.
+            var traceTargetedDraw =
+                Array.IndexOf(_tracePixelShaderAddresses, pixelShaderAddress) >= 0 ||
+                _traceVertexShaderAddress == exportShaderAddress ||
+                _traceRenderTargetAddress == firstTarget.Address ||
+                translatedDraw.Textures.Any(texture =>
+                    Array.IndexOf(
+                        _traceTextureBindingAddresses,
+                        texture.Descriptor.Address) >= 0);
+            if (_traceAgcShader || traceTargetedDraw)
             {
                 lock (_submitTraceGate)
                 {
@@ -6583,7 +6592,8 @@ public static partial class AgcExports
                             state,
                             translatedDraw,
                             psInputEna,
-                            psInputAddr);
+                            psInputAddr,
+                            force: traceTargetedDraw && !_traceAgcShader);
                     }
                 }
             }
@@ -7784,6 +7794,8 @@ public static partial class AgcExports
                 var first32Count = 0;
                 var upper32Count = 0;
                 var firstActive = new List<string>(8);
+                var dword7Count = 0;
+                var firstDword7 = new List<string>(8);
                 for (var recordIndex = 0; recordIndex < recordCount; recordIndex++)
                 {
                     var recordBytes = binding.Data.AsSpan(
@@ -7796,6 +7808,18 @@ public static partial class AgcExports
                     first16Count += first16 ? 1 : 0;
                     first32Count += first32 ? 1 : 0;
                     upper32Count += upper32 ? 1 : 0;
+                    var dword7 = recordBytes.Length >= 32
+                        ? BinaryPrimitives.ReadUInt32LittleEndian(
+                            recordBytes.Slice(28, sizeof(uint)))
+                        : 0;
+                    if (dword7 != 0)
+                    {
+                        dword7Count++;
+                        if (firstDword7.Count < 8)
+                        {
+                            firstDword7.Add($"{recordIndex}:0x{dword7:X8}");
+                        }
+                    }
                     if (first32 && firstActive.Count < 8)
                     {
                         firstActive.Add(
@@ -7806,6 +7830,8 @@ public static partial class AgcExports
                 recordSummary =
                     $"records={recordCount}:first16={first16Count}:" +
                     $"first32={first32Count}:upper32={upper32Count}:" +
+                    $"dword7={dword7Count}:" +
+                    $"dword7_active=[{string.Join(';', firstDword7)}]:" +
                     $"active=[{string.Join(';', firstActive)}]";
             }
 
@@ -8392,6 +8418,7 @@ public static partial class AgcExports
             var traceAddressedTextureBinding =
                 texture.Address != 0 &&
                 (Array.IndexOf(_traceGuestImageAddresses, texture.Address) >= 0 ||
+                 Array.IndexOf(_traceTextureBindingAddresses, texture.Address) >= 0 ||
                  AvPlayerExports.ShouldTraceVideoBufferAddress(texture.Address)) &&
                 _tracedAddressedTextureBindings.TryAdd(
                     (pixelShaderAddress,
@@ -8405,7 +8432,7 @@ public static partial class AgcExports
                      texture.DstSelect),
                     0);
             if (_traceAgcShader ||
-                _tracePixelShaderAddress == pixelShaderAddress ||
+                Array.IndexOf(_tracePixelShaderAddresses, pixelShaderAddress) >= 0 ||
                 traceAddressedTextureBinding)
             {
                 Console.Error.WriteLine(
@@ -9398,7 +9425,8 @@ public static partial class AgcExports
         SubmittedDcbState state,
         TranslatedGuestDraw draw,
         uint psInputEna,
-        uint psInputAddr)
+        uint psInputAddr,
+        bool force)
     {
         var targets = draw.RenderTargets.Count == 0
             ? "none"
@@ -9496,7 +9524,7 @@ public static partial class AgcExports
                     ? $"{entry.Name}=0x{value:X8}"
                     : $"{entry.Name}=missing"));
         var blend = draw.RenderState.Blend;
-        TraceAgcShader(
+        var message =
             $"agc.shader_draw es=0x{draw.ExportShaderAddress:X16} " +
             $"ps=0x{draw.PixelShaderAddress:X16} spirv={draw.PixelShader.Payload.Length} " +
             $"primitive=0x{draw.PrimitiveType:X} " +
@@ -9505,7 +9533,15 @@ public static partial class AgcExports
             $"raster=[{raster}] " +
             $"ps_ena=0x{psInputEna:X8} ps_addr=0x{psInputAddr:X8} " +
             $"targets=[{targets}] depth=[{depthTarget}] textures=[{textures}] " +
-            $"buffers=[{buffers}] vertex=[{vertexInputs}] indices=[{indices}]");
+            $"buffers=[{buffers}] vertex=[{vertexInputs}] indices=[{indices}]";
+        if (force)
+        {
+            Console.Error.WriteLine($"[LOADER][TRACE] {message}");
+        }
+        else
+        {
+            TraceAgcShader(message);
+        }
     }
 
     private static IReadOnlyList<GuestDrawTexture> CreateGuestDrawTextures(
