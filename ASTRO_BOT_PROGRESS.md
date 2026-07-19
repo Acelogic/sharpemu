@@ -161,6 +161,34 @@ diagnostic controls only.
   adaptive idempotence, or conditional `pthread_self` registration on top of
   PR 412's in-place execution model.
 
+## 2026-07-19 live title-draw checkpoint
+
+- The pre-merge target ES address `0x5002A9A00` is stale in the merged build.
+  A lightweight `SHARPEMU_TRACE_TITLE_DRAW=1` probe now reports only unique
+  title-candidate shader pairs and does not require LLDB or a diagnostic
+  terminal. The current title draw is ES `0x500780B00` / PS `0x500781D00`,
+  sequence 3281, primitive type 4, 24,192 indexed vertices, rendering to the
+  two 1920x1080 floating-point title targets. Evidence:
+  `artifacts/astro-bot/runs/20260719-162210-title-headless-filtered-shader-discovery/`.
+- The 180-second visual timeline confirms the current checkpoint directly:
+  readable **Sony Interactive Entertainment presents** text begins around 72
+  seconds, but it flickers, duplicates, and never advances to the Astro title.
+  This is a real rendered-frame result, not a log-only milestone or harness
+  inference.
+- Address-targeted tracing of ES `0x500780B00` identifies it as a merged NGG
+  primitive-generation/passthrough shader (`stages=0x02002000`, `primgen=1`,
+  `passthru=1`). Its supporting global buffers are populated, but the ordinary
+  vertex-input fallback exposes malformed location-0 position samples
+  (`~ -1.7e38` and NaN). The existing NGG compute/raster lowering is selected
+  only for primitive type 1, at most 64 vertices, one instance, and an
+  `SBarrier`; this title draw is primitive type 4 with 24,192 indexed vertices.
+  The next graphics boundary is therefore large indexed NGG workgroup/index
+  decomposition, not another equeue timing or harness change. Evidence:
+  `artifacts/astro-bot/runs/20260719-162838-title-es500780b00-record24736-headless/`.
+- Treat the NGG selection mismatch as the leading hypothesis, not yet a proven
+  fix. A change counts only when the captured graphics advance beyond the SIE
+  wordmark without regressing the title-level milestone.
+
 ## Corrected conclusions: do not repeat
 
 - A zero selector snapshot before the exact title-start marker is expected early
@@ -208,22 +236,23 @@ scene lists               repaired playable build: 28 active records
   -> paired 1.5 MiB data  ping-pongs input/output; verify record 10551 writeback
   -> large Emitter CS     exact-size decode, dispatch, and live input proven
   -> rotating 16 MiB geometry / record 24736 becomes nonzero at title
-  -> ES 0x5002A9A00      validate geometry reads and position export
+  -> merged-build title draw ES 0x500780B00 / PS 0x500781D00
+  -> large indexed NGG primitive path (type 4, 24,192 indices)
   -> final composition and blue/striped color handling
 ```
 
 ## Next experiment
 
-1. Keep the now-verified PR 412 synchronization semantics fixed. Use headless
-   live thread/register/memory snapshots to identify the exact guest
-   mutex/condition predicate behind the title's roughly 0.7-1.5 FPS presentation
-   rate; do not tune harness deadlines or make the 1-microsecond equeue poll
-   blocking without predicate evidence.
-2. Correlate that predicate with one complete title flip and the already-proven
-   ES/Emitter producer chain. A change counts only if the visible tail advances
-   beyond the animated wordmark while preserving the 57-second title milestone.
-3. Resume ES `0x5002A9A00` position-export and final-composition tracing once the
-   synchronization owner/wait relationship is known not to be starving it.
+1. Keep the verified PR 412 synchronization semantics and harness timing fixed.
+   Diagnostics remain headless artifacts; do not reopen an LLDB/register
+   terminal or retune the 1-microsecond equeue poll.
+2. Validate how the guest partitions ES `0x500780B00`'s primitive-type-4,
+   24,192-index draw into NGG workgroups, then extend the compute/raster output
+   layout and dispatch counts only from that evidence. Do not force the existing
+   one-group, 64-lane lowering across the entire draw.
+3. Capture the resulting position exports and a visual title tail. Accept the
+   change only if frames advance beyond the animated SIE wordmark while the
+   title-level milestone remains near the current 57-63 second range.
 
 ## Validation and artifact policy
 

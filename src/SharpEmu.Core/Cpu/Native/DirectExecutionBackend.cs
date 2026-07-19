@@ -5141,7 +5141,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				{
 					lastPeriodicSnapshot = Stopwatch.GetTimestamp();
 					Console.Error.WriteLine("[LOADER][ERROR] --- periodic snapshot ---");
-					LogStallWatchdogSnapshot();
+					LogStallWatchdogSnapshot(captureHostThreadContexts: false);
 					Console.Error.Flush();
 				}
 				long num2 = Stopwatch.GetTimestamp() - Volatile.Read(ref _lastProgressTimestamp);
@@ -5345,7 +5345,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		runner.Schedule(() => RunGuestThread(thread, reason));
 	}
 
-	private void LogStallWatchdogSnapshot()
+	private void LogStallWatchdogSnapshot(bool captureHostThreadContexts = true)
 	{
 		try
 		{
@@ -5411,14 +5411,15 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				{
 					var hostThreadId = Volatile.Read(ref thread.HostThreadId);
 					var hostContextText = string.Empty;
-					if (TryCaptureHostThreadContext(hostThreadId, out var hostContext))
+					if (captureHostThreadContexts &&
+						TryCaptureHostThreadContext(hostThreadId, out var hostContext))
 					{
 						hostContextText =
 							$" host_tid={hostThreadId} host_rip=0x{hostContext.Rip:X16} host_rsp=0x{hostContext.Rsp:X16} " +
 							$"host_rbp=0x{hostContext.Rbp:X16} host_rax=0x{hostContext.Rax:X16} host_rbx=0x{hostContext.Rbx:X16} " +
 							$"host_rcx=0x{hostContext.Rcx:X16} host_rdx=0x{hostContext.Rdx:X16}";
 					}
-					else if (hostThreadId != 0)
+					else if (captureHostThreadContexts && hostThreadId != 0)
 					{
 						hostContextText = $" host_tid={hostThreadId} host_ctx=unavailable";
 					}

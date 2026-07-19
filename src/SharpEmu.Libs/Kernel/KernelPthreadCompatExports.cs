@@ -1488,7 +1488,11 @@ public static class KernelPthreadCompatExports
             var deadline = timed
                 ? GuestThreadExecution.ComputeDeadlineTimestamp(GetCondWaitTimeout(timeoutUsec))
                 : long.MaxValue;
-            GuestThreadBlocking.NoteBlocked(currentThreadId, timed ? "pthread_cond_timedwait" : "pthread_cond_wait");
+            var condWaitOperation = timed ? "pthread_cond_timedwait" : "pthread_cond_wait";
+            GuestThreadBlocking.NoteBlocked(
+                currentThreadId,
+                $"{condWaitOperation} cond=0x{condAddress:X16} mutex=0x{mutexAddress:X16} " +
+                $"waiters={state.Waiters} epoch=0x{state.SignalEpoch:X}");
             try
             {
                 while (!waiter.Signaled && !GuestThreadBlocking.ShutdownRequested)

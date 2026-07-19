@@ -415,6 +415,13 @@ public static partial class AgcExports
         Environment.GetEnvironmentVariable("SHARPEMU_TRACE_DRAWS"),
         "1",
         StringComparison.Ordinal);
+    private static readonly bool _traceTitleDraws = string.Equals(
+        Environment.GetEnvironmentVariable("SHARPEMU_TRACE_TITLE_DRAW"),
+        "1",
+        StringComparison.Ordinal);
+    private static readonly ConcurrentDictionary<
+        (ulong ExportShaderAddress, ulong PixelShaderAddress), byte>
+        _tracedTitleShaderPairs = new();
     private static readonly bool _traceFramePackets = string.Equals(
         Environment.GetEnvironmentVariable("SHARPEMU_TRACE_FRAME_PACKETS"),
         "1",
@@ -11710,7 +11717,13 @@ public static partial class AgcExports
         IReadOnlyList<GuestDrawTexture> textures,
         IReadOnlyList<GuestVertexBuffer> vertexBuffers)
     {
-        if (!_traceDraws)
+        var isTitleDraw = vertexBuffers.Any(IsTitleVertexDrawBuffer);
+        if (!_traceDraws &&
+            (!_traceTitleDraws ||
+             !isTitleDraw ||
+             !_tracedTitleShaderPairs.TryAdd(
+                 (draw.ExportShaderAddress, draw.PixelShaderAddress),
+                 0)))
         {
             return;
         }
@@ -11750,7 +11763,8 @@ public static partial class AgcExports
         }
 
         Console.Error.WriteLine(
-            $"[DRAW] seq={sequence} es=0x{draw.ExportShaderAddress:X} ps=0x{draw.PixelShaderAddress:X} " +
+            $"[{(_traceDraws ? "DRAW" : "TITLE-DRAW")}] seq={sequence} " +
+            $"es=0x{draw.ExportShaderAddress:X} ps=0x{draw.PixelShaderAddress:X} " +
             $"target=0x{target.Address:X}:{target.Width}x{target.Height}:f{target.Format}/n{target.NumberType} " +
             $"prim=0x{draw.PrimitiveType:X} verts={draw.VertexCount} indexed={draw.IndexBuffer is not null} " +
             $"blend={(blend.Enable ? 1 : 0)}:{blend.ColorSrcFactor}/{blend.ColorDstFactor}/{blend.ColorFunc}" +
@@ -11759,6 +11773,15 @@ public static partial class AgcExports
             $"ps_s0..3={string.Join(',', draw.PixelUserData.Take(4).Select(value => BitConverter.UInt32BitsToSingle(value).ToString("0.###")))} " +
             $"rawblend=0x{draw.RawBlendControl:X8} info=0x{draw.RawColorInfo:X8}");
     }
+
+    private static bool IsTitleVertexDrawBuffer(GuestVertexBuffer buffer) =>
+        buffer.Location == 0 &&
+        buffer.ComponentCount == 4 &&
+        buffer.DataFormat == 10 &&
+        buffer.NumberFormat == 0 &&
+        buffer.Stride == 16 &&
+        buffer.OffsetBytes == 12 &&
+        buffer.Length == 67568;
 
     private static void TraceDrawCompactMiss(ulong sequence, uint vertexCount, string error)
     {

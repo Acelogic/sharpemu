@@ -452,7 +452,10 @@ public static class KernelEventQueueCompatExports
 
         TraceEventQueue(ctx, "wait-block", handle);
         var guestThreadHandle = GuestThreadExecution.CurrentGuestThreadHandle;
-        GuestThreadBlocking.NoteBlocked(guestThreadHandle, "sceKernelWaitEqueue");
+        GuestThreadBlocking.NoteBlocked(
+            guestThreadHandle,
+            $"sceKernelWaitEqueue handle=0x{handle:X16} capacity={eventCapacity} " +
+            $"timeout={(timeoutAddress == 0 ? "infinite" : $"{timeoutUsec}us")}");
         try
         {
             lock (_eventQueueGate)

@@ -127,7 +127,10 @@ public static class KernelSemaphoreCompatExports
                 }
 
                 var guestThreadHandle = GuestThreadExecution.CurrentGuestThreadHandle;
-                GuestThreadBlocking.NoteBlocked(guestThreadHandle, "sceKernelWaitSema");
+                GuestThreadBlocking.NoteBlocked(
+                    guestThreadHandle,
+                    $"sceKernelWaitSema handle=0x{handle:X8} name='{semaphore.Name}' " +
+                    $"need={needCount} count={semaphore.Count} waiters={semaphore.WaitingThreads}");
                 try
                 {
                     while (semaphore.Count < needCount)

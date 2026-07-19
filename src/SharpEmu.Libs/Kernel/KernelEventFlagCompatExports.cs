@@ -250,7 +250,10 @@ public static class KernelEventFlagCompatExports
             state.WaitingThreads++;
             var guestThreadHandle = GuestThreadExecution.CurrentGuestThreadHandle;
             if (_traceEventFlag) TraceEventFlag($"wait-block handle=0x{handle:X16} pattern=0x{pattern:X16} waiters={state.WaitingThreads} guest_thread=0x{guestThreadHandle:X16} ret=0x{returnRip:X16}");
-            GuestThreadBlocking.NoteBlocked(guestThreadHandle, "sceKernelWaitEventFlag");
+            GuestThreadBlocking.NoteBlocked(
+                guestThreadHandle,
+                $"sceKernelWaitEventFlag handle=0x{handle:X16} pattern=0x{pattern:X16} " +
+                $"mode=0x{waitMode:X2} bits=0x{state.Bits:X16} waiters={state.WaitingThreads}");
             try
             {
                 while (true)

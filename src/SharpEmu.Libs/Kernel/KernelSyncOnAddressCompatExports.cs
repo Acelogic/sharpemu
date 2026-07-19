@@ -60,7 +60,9 @@ public static class KernelSyncOnAddressCompatExports
         var gate = _addressGates.GetOrAdd(address, static _ => new object());
         var deadlineMs = Environment.TickCount64 + (long)WaitSelfHealTimeout.TotalMilliseconds;
         var guestThreadHandle = GuestThreadExecution.CurrentGuestThreadHandle;
-        GuestThreadBlocking.NoteBlocked(guestThreadHandle, "sceKernelSyncOnAddressWait");
+        GuestThreadBlocking.NoteBlocked(
+            guestThreadHandle,
+            $"sceKernelSyncOnAddressWait address=0x{address:X16} generation={observedGeneration}");
         try
         {
             lock (gate)
