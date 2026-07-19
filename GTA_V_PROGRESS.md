@@ -44,6 +44,25 @@ The final 67-NID wave consists of 34 provider-preferred libc functions, one fail
 
 The final x64 GTA run routed all 34 new libc registrations directly to their providers, produced zero callable-routing events for the five data NIDs, and rebound 11 imported data relocations with zero unresolved. The Hs-offchip call at import 39,003 still received `(0, 0x1FF)`, returned zero, and execution again reached import 41,427. The later stop remains the same unattributed RenderThread read from address zero at guest RIP `0x805C273B7`. Full final evidence is retained in [`docs/gta-v/final-parity-runtime-20260718.md`](docs/gta-v/final-parity-runtime-20260718.md); this is exact registration parity, not a claim of full semantic parity or playability.
 
+### 2026-07-19 post-logo checkpoint
+
+Later loader, directory-walk, provider-contract, and renderer fixes now let the
+Windows x64 build run stably on GTA's logo/loading presentation for several
+minutes. The branch has exact stateful fallbacks for the seven fail-closed
+service calls exposed by that run: SharePlay initialization, NP reachability
+callback registration, NP Game Intent termination, NP Universal Data System
+termination, Voice initialization, Content Search initialization, and Content
+Delete initialization. Their combined integration checkpoint is `2d2b850`.
+
+Ghidra plus a read-only live process-memory probe proved that the embedded
+`KB2j` movie is read completely, opens, advances through all 450 frames,
+clears its playing state, is destroyed, and sets GTA's frontend completion
+byte. Repeated swapchain dumps nevertheless remain the same GTA logo image.
+The exact evidence and bridge disposition are retained in
+[`docs/gta-v/bink-runtime-20260719.md`](docs/gta-v/bink-runtime-20260719.md).
+The active blocker is therefore downstream UI/render/presentation state, not
+Bink file I/O, decode lifecycle, or EOS.
+
 ## Active lanes
 
 | Lane | Branch/worktree | Ownership | Status |
