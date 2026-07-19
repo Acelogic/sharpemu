@@ -111,6 +111,11 @@ public static partial class KernelMemoryCompatExports
         {
             try
             {
+                _ = ctx.TryReadUInt64(ctx[CpuRegister.Rsp], out var returnRip);
+                // GTA V's observed VFS pread wrapper saves its caller return at
+                // rsp+0x50. Capture it only as best-effort Bink diagnostics; a
+                // failed guest read leaves the value zero and never affects I/O.
+                _ = ctx.TryReadUInt64(ctx[CpuRegister.Rsp] + 0x50, out var callerReturnRip);
                 // Detection is observational: pread still returns the exact host
                 // bytes/count. A validated result exposes Skip/Dummy/Native policy
                 // for a later caller-contract A/B without changing this syscall.
@@ -123,6 +128,8 @@ public static partial class KernelMemoryCompatExports
                     read,
                     bufferAddress,
                     ctx.Rip,
+                    returnRip,
+                    callerReturnRip,
                     buffer.AsSpan(0, read));
             }
             catch (Exception ex) when (ex is IOException or NotSupportedException or ObjectDisposedException)

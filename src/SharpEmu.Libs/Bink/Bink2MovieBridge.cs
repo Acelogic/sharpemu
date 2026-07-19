@@ -131,6 +131,8 @@ internal static class Bink2MovieBridge
         int readLength,
         ulong guestDestination,
         ulong guestRip,
+        ulong guestReturnRip,
+        ulong guestCallerReturnRip,
         ReadOnlySpan<byte> bytes)
     {
         if (string.IsNullOrWhiteSpace(hostPath) ||
@@ -180,6 +182,8 @@ internal static class Bink2MovieBridge
                 readLength,
                 guestDestination,
                 guestRip,
+                guestReturnRip,
+                guestCallerReturnRip,
                 Environment.CurrentManagedThreadId,
                 Thread.CurrentThread.Name,
                 header,
@@ -534,6 +538,8 @@ internal static class Bink2MovieBridge
             " read=" + result.ReadLength +
             " guest=0x" + result.GuestDestination.ToString("X16") +
             " rip=0x" + result.GuestRip.ToString("X16") +
+            " return_rip=0x" + result.GuestReturnRip.ToString("X16") +
+            " caller_return_rip=0x" + result.GuestCallerReturnRip.ToString("X16") +
             " thread=" + result.ManagedThreadId +
             " thread_name='" + (result.ManagedThreadName ?? string.Empty).Replace("'", "''") + "'" +
             " frames=" + result.Header.FrameCount +
@@ -822,6 +828,8 @@ internal readonly record struct BinkMovieRangeResult(
     int ReadLength,
     ulong GuestDestination,
     ulong GuestRip,
+    ulong GuestReturnRip,
+    ulong GuestCallerReturnRip,
     int ManagedThreadId,
     string? ManagedThreadName,
     BinkMovieHeaderInfo Header,

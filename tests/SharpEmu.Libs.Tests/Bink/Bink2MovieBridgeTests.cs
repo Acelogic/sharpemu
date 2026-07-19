@@ -114,6 +114,8 @@ public sealed class Bink2MovieBridgeTests : IDisposable
             readLength: header.Length,
             guestDestination: 0x11C9BFF88,
             guestRip: 0x80283A98C,
+            guestReturnRip: 0x802939E28,
+            guestCallerReturnRip: 0x8029325C4,
             header);
 
         Assert.True(result.HasValue);
@@ -121,6 +123,8 @@ public sealed class Bink2MovieBridgeTests : IDisposable
         Assert.Equal(BinkMovieRangeAttachment.None, result.Value.Attachment);
         Assert.Equal(128, result.Value.FileOffset);
         Assert.Equal(256, result.Value.Header.ByteLength);
+        Assert.Equal(0x802939E28UL, result.Value.GuestReturnRip);
+        Assert.Equal(0x8029325C4UL, result.Value.GuestCallerReturnRip);
         Assert.False(Bink2MovieBridge.TryDecodeNextFrame(out _, out _, out _));
         Assert.False(File.Exists(path));
     }

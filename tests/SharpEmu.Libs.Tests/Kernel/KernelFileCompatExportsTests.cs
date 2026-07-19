@@ -72,6 +72,11 @@ public sealed class KernelFileCompatExportsTests : IDisposable
             _ctx[CpuRegister.Rdx] = movieLength;
             _ctx[CpuRegister.Rcx] = movieOffset;
             _ctx.Rip = 0x80283A98C;
+            const ulong returnRip = 0x802939E28;
+            const ulong callerReturnRip = 0x8029325C4;
+            _ctx[CpuRegister.Rsp] = Base + 0x8000;
+            Assert.True(_ctx.TryWriteUInt64(_ctx[CpuRegister.Rsp], returnRip));
+            Assert.True(_ctx.TryWriteUInt64(_ctx[CpuRegister.Rsp] + 0x50, callerReturnRip));
             Assert.Equal(0, KernelMemoryCompatExports.KernelPread(_ctx));
             Assert.Equal((ulong)movieLength, _ctx[CpuRegister.Rax]);
 
@@ -88,6 +93,8 @@ public sealed class KernelFileCompatExportsTests : IDisposable
             Assert.Equal(movieLength, observed.Value.Header.ByteLength);
             Assert.Equal(bufferAddress, observed.Value.GuestDestination);
             Assert.Equal(0x80283A98CUL, observed.Value.GuestRip);
+            Assert.Equal(returnRip, observed.Value.GuestReturnRip);
+            Assert.Equal(callerReturnRip, observed.Value.GuestCallerReturnRip);
 
             Assert.Equal(archive, File.ReadAllBytes(archivePath));
             Assert.Equal([archivePath], Directory.GetFiles(_root));
