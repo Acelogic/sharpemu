@@ -34,13 +34,6 @@ public static class NetLleExports
         Target = Generation.Gen5,
         LibraryName = "libSceNet",
         PreferLle = true)]
-    // Ghidra entry 00004180; body addresses 18.
-    [SysAbiExport(
-        Nid = "hLuXdjHnhiI",
-        ExportName = "sceNetGetSockInfo",
-        Target = Generation.Gen5,
-        LibraryName = "libSceNet",
-        PreferLle = true)]
     public static int MissingGuestProvider(CpuContext ctx)
     {
         if (string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORTS"), "1", StringComparison.Ordinal))

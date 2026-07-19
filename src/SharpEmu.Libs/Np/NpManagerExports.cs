@@ -16,6 +16,7 @@ public static class NpManagerExports
     private const int NpErrorCallbackAlreadyRegistered = unchecked((int)0x80550008);
     private const int NpErrorCallbackNotRegistered = unchecked((int)0x80550009);
     private const int NpErrorInvalidAsyncParameterSize = unchecked((int)0x80550011);
+    private const uint NpStateSignedIn = 2;
     private const ulong NpAsyncParameterSize = 0x18;
 
     private static readonly object ManagerGate = new();
@@ -495,7 +496,10 @@ public static class NpManagerExports
         }
 
         Span<byte> stateBytes = stackalloc byte[sizeof(uint)];
-        BinaryPrimitives.WriteUInt32LittleEndian(stateBytes, 1);
+        // SceNpState assigns SIGNED_IN value 2. GTA V compares this output
+        // against 2 before querying sceNpGetOnlineId and sceNpGetAccountIdA;
+        // value 1 is SIGNED_OUT and leaves its user/controller setup empty.
+        BinaryPrimitives.WriteUInt32LittleEndian(stateBytes, NpStateSignedIn);
         return ctx.Memory.TryWrite(stateAddress, stateBytes)
             ? ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK)
             : ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);

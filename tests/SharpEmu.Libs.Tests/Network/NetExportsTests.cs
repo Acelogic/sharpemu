@@ -1,6 +1,7 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using System.Text;
 using SharpEmu.HLE;
@@ -165,6 +166,61 @@ public sealed class NetExportsTests
             candidate => candidate.Nid == "8Kcp5d-q1Uo");
 
         Assert.Equal("sceNetInetPton", export.Name);
+        Assert.Equal("libSceNet", export.LibraryName);
+        Assert.True(export.PreferLle);
+        Assert.Equal(typeof(NetExports), export.Function.Method.DeclaringType);
+    }
+
+    [Fact]
+    public void NetGetSockInfoWritesBoundLocalPortForGtaSocketBootstrap()
+    {
+        WriteCString("gta-sockinfo-test");
+        _ctx[CpuRegister.Rdi] = SourceAddress;
+        _ctx[CpuRegister.Rsi] = 2;
+        _ctx[CpuRegister.Rdx] = 2;
+        _ctx[CpuRegister.Rcx] = 17;
+        Assert.Equal(0, NetExports.NetSocket(_ctx));
+        var socketId = _ctx[CpuRegister.Rax];
+
+        try
+        {
+            Span<byte> socketAddress = stackalloc byte[16];
+            socketAddress[0] = 16;
+            socketAddress[1] = 2;
+            socketAddress[4] = 127;
+            socketAddress[7] = 1;
+            Assert.True(_ctx.Memory.TryWrite(SourceAddress, socketAddress));
+
+            _ctx[CpuRegister.Rdi] = socketId;
+            _ctx[CpuRegister.Rsi] = SourceAddress;
+            _ctx[CpuRegister.Rdx] = 16;
+            Assert.Equal(0, NetExports.NetBind(_ctx));
+
+            _ctx[CpuRegister.Rdi] = socketId;
+            _ctx[CpuRegister.Rsi] = DestinationAddress;
+            _ctx[CpuRegister.Rdx] = 1;
+            _ctx[CpuRegister.Rcx] = 0;
+            Assert.Equal(0, NetExports.NetGetSockInfo(_ctx));
+
+            Span<byte> port = stackalloc byte[sizeof(ushort)];
+            Assert.True(_ctx.Memory.TryRead(DestinationAddress + 0x3C, port));
+            Assert.NotEqual(0, BinaryPrimitives.ReadUInt16BigEndian(port));
+        }
+        finally
+        {
+            _ctx[CpuRegister.Rdi] = socketId;
+            NetExports.NetSocketClose(_ctx);
+        }
+    }
+
+    [Fact]
+    public void NetGetSockInfoRegistersAsSemanticLlePreferredGen5Fallback()
+    {
+        var export = Assert.Single(
+            SharpEmu.Generated.SysAbiExportRegistry.CreateExports(Generation.Gen5),
+            candidate => candidate.Nid == "hLuXdjHnhiI");
+
+        Assert.Equal("sceNetGetSockInfo", export.Name);
         Assert.Equal("libSceNet", export.LibraryName);
         Assert.True(export.PreferLle);
         Assert.Equal(typeof(NetExports), export.Function.Method.DeclaringType);

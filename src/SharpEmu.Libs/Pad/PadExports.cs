@@ -635,7 +635,10 @@ public static class PadExports
         data[0x07] = rightY;
         data[0x08] = l2;
         data[0x09] = r2;
-        BinaryPrimitives.WriteSingleLittleEndian(data[0x18..], 1.0f);
+        // GTA V's Gen5 caller reads acceleration at 0x0C..0x14, angular
+        // velocity at 0x18..0x20, and orientation x/y/z/w at 0x24..0x30.
+        // A neutral quaternion therefore stores its identity W at 0x30.
+        BinaryPrimitives.WriteSingleLittleEndian(data[0x30..], 1.0f);
         data[0x4C] = 1;
         var timestampTicks = Stopwatch.GetTimestamp();
         var timestampMicroseconds =

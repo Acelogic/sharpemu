@@ -1,6 +1,7 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using System.Buffers.Binary;
 using System.Text;
 using SharpEmu.HLE;
 using SharpEmu.Libs.Np;
@@ -24,6 +25,7 @@ public sealed class NpManagerExportsTests : IDisposable
 
     private const ulong BaseAddress = 0x5_1000_0000;
     private const ulong NameAddress = BaseAddress + 0x100;
+    private const ulong StateAddress = BaseAddress + 0x200;
     private const ulong Callback = 0x8_0012_3456;
     private const ulong OtherCallback = 0x8_0065_4321;
     private const ulong UserData = 0x6_0000_0800;
@@ -96,6 +98,19 @@ public sealed class NpManagerExportsTests : IDisposable
         Assert.True(export.PreferLle);
         Assert.Equal(typeof(NpManagerExports), export.Function.Method.DeclaringType);
         Assert.False(gen4Manager.TryGetExport("hw5KNqAAels", out _));
+    }
+
+    [Fact]
+    public void GetState_WritesFirmwareSignedInValue()
+    {
+        _ctx[CpuRegister.Rdi] = 0x1000_0000;
+        _ctx[CpuRegister.Rsi] = StateAddress;
+
+        AssertResult(0, NpManagerExports.NpGetState);
+
+        Span<byte> state = stackalloc byte[sizeof(uint)];
+        Assert.True(_memory.TryRead(StateAddress, state));
+        Assert.Equal(2u, BinaryPrimitives.ReadUInt32LittleEndian(state));
     }
 
     [Fact]

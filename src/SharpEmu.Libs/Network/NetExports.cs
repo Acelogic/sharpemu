@@ -27,6 +27,9 @@ public static class NetExports
     private const int NetErrnoAddressInUse = 48;
     private const int NetErrnoNotInitialized = 200;
     private const int MaxNameLength = 256;
+    private const int NetSockInfoSize = 0xA0;
+    private const int NetSockInfoLocalPortOffset = 0x3C;
+    private const int NetGetSockInfoInvalidFlagsMask = 0x31000;
 
     private static readonly ConcurrentDictionary<int, NetPool> _pools = new();
     private static readonly ConcurrentDictionary<int, ResolverContext> _resolvers = new();
@@ -282,6 +285,57 @@ public static class NetExports
         {
             return SetNetError(ctx, NetErrorInvalidArgument, NetErrnoInvalidArgument);
         }
+    }
+
+    // Ghidra 12.1.2_PUBLIC_20260605, libSceNet.sprx SHA-256
+    // c04e1735a3f80a502c120610a43d0d37741f7ef90040d6b9d3346cc43988c64d,
+    // entry RVA 0x4180. GTA V caller FUN_02AE1E70 passes one 0xA0-byte
+    // record and consumes the big-endian local port at record offset 0x3C.
+    [SysAbiExport(
+        Nid = "hLuXdjHnhiI",
+        ExportName = "sceNetGetSockInfo",
+        Target = Generation.Gen5,
+        LibraryName = "libSceNet",
+        PreferLle = true)]
+    public static int NetGetSockInfo(CpuContext ctx)
+    {
+        if (!_initialized)
+        {
+            return SetNetError(ctx, NetErrorNotInitialized, NetErrnoNotInitialized);
+        }
+
+        var id = unchecked((int)ctx[CpuRegister.Rdi]);
+        var infoAddress = ctx[CpuRegister.Rsi];
+        var recordCount = unchecked((int)ctx[CpuRegister.Rdx]);
+        var flags = unchecked((int)ctx[CpuRegister.Rcx]);
+        if (infoAddress == 0 || recordCount < 1 || (flags & NetGetSockInfoInvalidFlagsMask) != 0)
+        {
+            return SetNetError(ctx, NetErrorInvalidArgument, NetErrnoInvalidArgument);
+        }
+
+        if (!_sockets.TryGetValue(id, out var socket))
+        {
+            return SetNetError(ctx, NetErrorBadFileDescriptor, NetErrnoBadFileDescriptor);
+        }
+
+        if (socket.LocalEndPoint is not IPEndPoint localEndpoint ||
+            localEndpoint.Port is < 0 or > ushort.MaxValue)
+        {
+            return SetNetError(ctx, NetErrorInvalidArgument, NetErrnoInvalidArgument);
+        }
+
+        Span<byte> info = stackalloc byte[NetSockInfoSize];
+        info.Clear();
+        BinaryPrimitives.WriteUInt16BigEndian(
+            info.Slice(NetSockInfoLocalPortOffset, sizeof(ushort)),
+            unchecked((ushort)localEndpoint.Port));
+        if (!ctx.Memory.TryWrite(infoAddress, info))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        TraceNet("socket.info", id, unchecked((ulong)localEndpoint.Port), unchecked((ulong)recordCount), unchecked((ulong)flags));
+        return ctx.SetReturn(0);
     }
 
     [SysAbiExport(

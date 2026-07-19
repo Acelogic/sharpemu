@@ -648,9 +648,12 @@ public static class KernelPthreadCompatExports
 
     private static int PthreadMutexInitCore(CpuContext ctx, ulong mutexAddress, ulong attrAddress)
     {
+        var currentThreadId = KernelPthreadState.GetCurrentThreadHandle();
         if (mutexAddress == 0)
         {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+            var result = (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+            TracePthreadMutex(ctx, "init", mutexAddress, 0, null, currentThreadId, result);
+            return result;
         }
 
         var attr = ResolveMutexAttrState(ctx, attrAddress);
@@ -662,11 +665,15 @@ public static class KernelPthreadCompatExports
 
         if (!TryAllocateOpaqueObject(ctx, MutexObjectSize, out var handle))
         {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            var result = (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            TracePthreadMutex(ctx, "init", mutexAddress, 0, state, currentThreadId, result);
+            return result;
         }
         if (!InitializeMutexObject(ctx, handle, state))
         {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            var result = (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            TracePthreadMutex(ctx, "init", mutexAddress, handle, state, currentThreadId, result);
+            return result;
         }
 
         _mutexStates[mutexAddress] = state;
@@ -677,9 +684,19 @@ public static class KernelPthreadCompatExports
             _mutexStates.TryRemove(mutexAddress, out _);
             _mutexStates.TryRemove(handle, out _);
 
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            var result = (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            TracePthreadMutex(ctx, "init", mutexAddress, handle, state, currentThreadId, result);
+            return result;
         }
 
+        TracePthreadMutex(
+            ctx,
+            "init",
+            mutexAddress,
+            handle,
+            state,
+            currentThreadId,
+            (int)OrbisGen2Result.ORBIS_GEN2_OK);
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 

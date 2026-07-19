@@ -171,6 +171,8 @@ public sealed class PadExportsTests
             var data = new byte[0x78];
             Marshal.Copy(unchecked((nint)dataAddress), data, 0, data.Length);
             Assert.Equal(new byte[] { 128, 128, 128, 128 }, data[4..8]);
+            Assert.Equal(0.0f, BinaryPrimitives.ReadSingleLittleEndian(data.AsSpan(0x18)));
+            Assert.Equal(1.0f, BinaryPrimitives.ReadSingleLittleEndian(data.AsSpan(0x30)));
             Assert.Equal(1, data[0x4C]);
             Assert.Equal(1, data[0x68]);
         }
