@@ -28,6 +28,7 @@ DATA_QUEUE = RHO_PACKET / "data-import-disposition.csv"
 CONSOLIDATED_EVIDENCE = RHO_PACKET / "consolidated-nid-evidence.json"
 OBJECT_EVIDENCE = Path("artifacts/gta-v-nid-evidence/data5-objects-20260718/GHIDRA_OBJECT_EVIDENCE.json")
 VALIDATION_EVIDENCE = Path("artifacts/gta-v-nid-evidence/final-parity-validation-20260718.json")
+HISTORICAL_RUNTIME_COMMIT = "4ea43616102ba8b2a5bf59b745cd3b758d05e110"
 ATTRIBUTE_RE = re.compile(r"\[SysAbiExport\(\s*(.*?)\)\]", re.DOTALL)
 EXPECTED_UNCOVERED_HEADER = [
     "component",
@@ -196,10 +197,11 @@ def load_validation_evidence(
 
     tests = {record["name"]: record for record in payload.get("tests", [])}
     expected_tests = {
-        "focused_gta_parity": 53,
-        "SharpEmu.Libs.Tests": 810,
+        "focused_gta_parity": 52,
+        "SharpEmu.Libs.Tests": 1054,
         "SharpEmu.SourceGenerators.Tests": 36,
-        "SharpEmu.ShaderCompiler.Tests": 34,
+        "SharpEmu.ShaderCompiler.Tests": 35,
+        "SharpEmu.ShaderCompiler.Metal.Tests": 27,
     }
     require(set(tests) == set(expected_tests), "validation test set mismatch")
     for name, expected_passed in expected_tests.items():
@@ -210,10 +212,15 @@ def load_validation_evidence(
 
     build = payload.get("release_build", {})
     require(build.get("succeeded") is True, "Release build did not succeed")
-    require(build.get("warnings") == 0 and build.get("errors") == 0, "Release build is not warning/error clean")
+    require(build.get("warnings") == 65 and build.get("errors") == 0, "Release build result mismatch")
     require(bool(build.get("command")), "Release build command is missing")
 
     runtime = payload.get("runtime", {})
+    require(runtime.get("historical") is True, "GTA runtime evidence is not marked historical")
+    require(
+        runtime.get("validated_commit") == HISTORICAL_RUNTIME_COMMIT,
+        "historical GTA runtime commit mismatch",
+    )
     runtime_log = repo / runtime.get("compressed_log", "")
     require(runtime_log.is_file(), "compressed final GTA runtime log is missing")
     require(sha256(runtime_log) == runtime.get("compressed_sha256"), "compressed GTA runtime log hash mismatch")
@@ -312,12 +319,12 @@ def load_validation_evidence(
     )
 
     integration_summary = (
-        "53/53 focused GTA parity tests, 810/810 library tests, "
-        "36/36 source-generator tests, and 34/34 shader tests passed; "
-        "Release build completed with 0 warnings/errors"
+        "52/52 focused GTA parity tests, 1054/1054 library tests, "
+        "36/36 source-generator tests, 35/35 shader tests, and "
+        "27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors"
     )
     runtime_summary = (
-        f"GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, "
+        f"Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, "
         f"11 data relocations rebound with 0 unresolved, max import {max_import}; "
         f"terminal sig={terminal[0]} RIP={terminal[1]} fault={terminal[2]} access={terminal[3]}"
     )

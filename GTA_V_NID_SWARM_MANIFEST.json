@@ -19489,7 +19489,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9d8858fd77c6b85a6c087cec17dd335900fc13a3",
+        "commit": "531f1c7e2982cab3bf89fa752b8ba47821981da8",
         "files": [
           "src/SharpEmu.Libs/Kernel/GtaVKernelContractExports.cs",
           "src/SharpEmu.Libs/Kernel/KernelSocketCompatExports.cs",
@@ -19499,9 +19499,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -19573,7 +19573,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9d8858fd77c6b85a6c087cec17dd335900fc13a3",
+        "commit": "531f1c7e2982cab3bf89fa752b8ba47821981da8",
         "files": [
           "src/SharpEmu.Libs/Kernel/GtaVKernelContractExports.cs",
           "src/SharpEmu.Libs/Kernel/KernelSocketCompatExports.cs",
@@ -19583,9 +19583,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -19657,7 +19657,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9d8858fd77c6b85a6c087cec17dd335900fc13a3",
+        "commit": "531f1c7e2982cab3bf89fa752b8ba47821981da8",
         "files": [
           "src/SharpEmu.Libs/Kernel/GtaVKernelContractExports.cs",
           "src/SharpEmu.Libs/Kernel/KernelSocketCompatExports.cs",
@@ -19667,9 +19667,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -19741,7 +19741,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9d8858fd77c6b85a6c087cec17dd335900fc13a3",
+        "commit": "531f1c7e2982cab3bf89fa752b8ba47821981da8",
         "files": [
           "src/SharpEmu.Libs/Kernel/GtaVKernelContractExports.cs",
           "src/SharpEmu.Libs/Kernel/KernelSocketCompatExports.cs",
@@ -19751,9 +19751,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -19825,7 +19825,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9d8858fd77c6b85a6c087cec17dd335900fc13a3",
+        "commit": "531f1c7e2982cab3bf89fa752b8ba47821981da8",
         "files": [
           "src/SharpEmu.Libs/Kernel/GtaVKernelContractExports.cs",
           "src/SharpEmu.Libs/Kernel/KernelSocketCompatExports.cs",
@@ -19835,9 +19835,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -19907,7 +19907,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9d8858fd77c6b85a6c087cec17dd335900fc13a3",
+        "commit": "531f1c7e2982cab3bf89fa752b8ba47821981da8",
         "files": [
           "src/SharpEmu.Libs/Kernel/GtaVKernelContractExports.cs",
           "src/SharpEmu.Libs/Kernel/KernelSocketCompatExports.cs",
@@ -19917,9 +19917,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": []
@@ -19989,7 +19989,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9d8858fd77c6b85a6c087cec17dd335900fc13a3",
+        "commit": "531f1c7e2982cab3bf89fa752b8ba47821981da8",
         "files": [
           "src/SharpEmu.Libs/Kernel/GtaVKernelContractExports.cs",
           "src/SharpEmu.Libs/Kernel/KernelSocketCompatExports.cs",
@@ -19999,9 +19999,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -20073,7 +20073,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9d8858fd77c6b85a6c087cec17dd335900fc13a3",
+        "commit": "531f1c7e2982cab3bf89fa752b8ba47821981da8",
         "files": [
           "src/SharpEmu.Libs/Kernel/GtaVKernelContractExports.cs",
           "src/SharpEmu.Libs/Kernel/KernelSocketCompatExports.cs",
@@ -20083,9 +20083,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -20155,7 +20155,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9d8858fd77c6b85a6c087cec17dd335900fc13a3",
+        "commit": "531f1c7e2982cab3bf89fa752b8ba47821981da8",
         "files": [
           "src/SharpEmu.Libs/Kernel/GtaVKernelContractExports.cs",
           "src/SharpEmu.Libs/Kernel/KernelSocketCompatExports.cs",
@@ -20165,9 +20165,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": []
@@ -20237,7 +20237,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9d8858fd77c6b85a6c087cec17dd335900fc13a3",
+        "commit": "531f1c7e2982cab3bf89fa752b8ba47821981da8",
         "files": [
           "src/SharpEmu.Libs/Kernel/GtaVKernelContractExports.cs",
           "src/SharpEmu.Libs/Kernel/KernelSocketCompatExports.cs",
@@ -20247,9 +20247,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -20319,7 +20319,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9d8858fd77c6b85a6c087cec17dd335900fc13a3",
+        "commit": "531f1c7e2982cab3bf89fa752b8ba47821981da8",
         "files": [
           "src/SharpEmu.Libs/Kernel/GtaVKernelContractExports.cs",
           "src/SharpEmu.Libs/Kernel/KernelSocketCompatExports.cs",
@@ -20329,9 +20329,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": []
@@ -20399,7 +20399,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9d8858fd77c6b85a6c087cec17dd335900fc13a3",
+        "commit": "531f1c7e2982cab3bf89fa752b8ba47821981da8",
         "files": [
           "src/SharpEmu.Libs/Kernel/GtaVKernelContractExports.cs",
           "src/SharpEmu.Libs/Kernel/KernelSocketCompatExports.cs",
@@ -20409,9 +20409,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": []
@@ -20481,7 +20481,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9d8858fd77c6b85a6c087cec17dd335900fc13a3",
+        "commit": "531f1c7e2982cab3bf89fa752b8ba47821981da8",
         "files": [
           "src/SharpEmu.Libs/Kernel/GtaVKernelContractExports.cs",
           "src/SharpEmu.Libs/Kernel/KernelSocketCompatExports.cs",
@@ -20491,9 +20491,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -20566,8 +20566,8 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9508369edf01432d218706c2131da7a40555b95a",
-        "hardening_commit": "aed5201e9d95f0edba7ff022f33c1cfd115c7967",
+        "commit": "abf08283424f2b7fafbab5829c03f1e24a6412da",
+        "hardening_commit": "f1f75f4a6fc76e794b7f4956b8c1d6e3492e63ce",
         "files": [
           "src/SharpEmu.HLE/DataSymbolRegistry.cs",
           "src/SharpEmu.Core/Runtime/ImportedDataRebinder.cs",
@@ -20578,9 +20578,9 @@
       },
       "validation": {
         "branch": "5/5 exact data-only registrations and loader contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -20652,7 +20652,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9d8858fd77c6b85a6c087cec17dd335900fc13a3",
+        "commit": "531f1c7e2982cab3bf89fa752b8ba47821981da8",
         "files": [
           "src/SharpEmu.Libs/Kernel/GtaVKernelContractExports.cs",
           "src/SharpEmu.Libs/Kernel/KernelSocketCompatExports.cs",
@@ -20662,9 +20662,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -20736,7 +20736,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9d8858fd77c6b85a6c087cec17dd335900fc13a3",
+        "commit": "531f1c7e2982cab3bf89fa752b8ba47821981da8",
         "files": [
           "src/SharpEmu.Libs/Kernel/GtaVKernelContractExports.cs",
           "src/SharpEmu.Libs/Kernel/KernelSocketCompatExports.cs",
@@ -20746,9 +20746,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -20820,7 +20820,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9d8858fd77c6b85a6c087cec17dd335900fc13a3",
+        "commit": "531f1c7e2982cab3bf89fa752b8ba47821981da8",
         "files": [
           "src/SharpEmu.Libs/Kernel/GtaVKernelContractExports.cs",
           "src/SharpEmu.Libs/Kernel/KernelSocketCompatExports.cs",
@@ -20830,9 +20830,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -20904,7 +20904,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9d8858fd77c6b85a6c087cec17dd335900fc13a3",
+        "commit": "531f1c7e2982cab3bf89fa752b8ba47821981da8",
         "files": [
           "src/SharpEmu.Libs/Kernel/GtaVKernelContractExports.cs",
           "src/SharpEmu.Libs/Kernel/KernelSocketCompatExports.cs",
@@ -20914,9 +20914,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -20988,7 +20988,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9d8858fd77c6b85a6c087cec17dd335900fc13a3",
+        "commit": "531f1c7e2982cab3bf89fa752b8ba47821981da8",
         "files": [
           "src/SharpEmu.Libs/Kernel/GtaVKernelContractExports.cs",
           "src/SharpEmu.Libs/Kernel/KernelSocketCompatExports.cs",
@@ -20998,9 +20998,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -21074,7 +21074,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -21083,9 +21083,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -21307,7 +21307,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -21316,9 +21316,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -21392,7 +21392,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -21401,9 +21401,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -21477,7 +21477,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -21486,9 +21486,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -21637,8 +21637,8 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9508369edf01432d218706c2131da7a40555b95a",
-        "hardening_commit": "aed5201e9d95f0edba7ff022f33c1cfd115c7967",
+        "commit": "abf08283424f2b7fafbab5829c03f1e24a6412da",
+        "hardening_commit": "f1f75f4a6fc76e794b7f4956b8c1d6e3492e63ce",
         "files": [
           "src/SharpEmu.HLE/DataSymbolRegistry.cs",
           "src/SharpEmu.Core/Runtime/ImportedDataRebinder.cs",
@@ -21649,9 +21649,9 @@
       },
       "validation": {
         "branch": "5/5 exact data-only registrations and loader contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -21725,7 +21725,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -21734,9 +21734,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -21884,7 +21884,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -21893,9 +21893,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -22051,7 +22051,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -22060,9 +22060,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -22212,7 +22212,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -22221,9 +22221,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -22449,7 +22449,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -22458,9 +22458,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -22609,8 +22609,8 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9508369edf01432d218706c2131da7a40555b95a",
-        "hardening_commit": "aed5201e9d95f0edba7ff022f33c1cfd115c7967",
+        "commit": "abf08283424f2b7fafbab5829c03f1e24a6412da",
+        "hardening_commit": "f1f75f4a6fc76e794b7f4956b8c1d6e3492e63ce",
         "files": [
           "src/SharpEmu.HLE/DataSymbolRegistry.cs",
           "src/SharpEmu.Core/Runtime/ImportedDataRebinder.cs",
@@ -22621,9 +22621,9 @@
       },
       "validation": {
         "branch": "5/5 exact data-only registrations and loader contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -22773,7 +22773,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -22782,9 +22782,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -23010,7 +23010,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -23019,9 +23019,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -23250,7 +23250,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -23259,9 +23259,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -23408,8 +23408,8 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9508369edf01432d218706c2131da7a40555b95a",
-        "hardening_commit": "aed5201e9d95f0edba7ff022f33c1cfd115c7967",
+        "commit": "abf08283424f2b7fafbab5829c03f1e24a6412da",
+        "hardening_commit": "f1f75f4a6fc76e794b7f4956b8c1d6e3492e63ce",
         "files": [
           "src/SharpEmu.HLE/DataSymbolRegistry.cs",
           "src/SharpEmu.Core/Runtime/ImportedDataRebinder.cs",
@@ -23420,9 +23420,9 @@
       },
       "validation": {
         "branch": "5/5 exact data-only registrations and loader contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -23496,7 +23496,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -23505,9 +23505,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -23733,7 +23733,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -23742,9 +23742,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -23818,7 +23818,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -23827,9 +23827,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -24129,7 +24129,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -24138,9 +24138,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -24290,7 +24290,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -24299,9 +24299,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -24375,7 +24375,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -24384,9 +24384,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -24610,7 +24610,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -24619,9 +24619,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -24695,7 +24695,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -24704,9 +24704,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -24780,7 +24780,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -24789,9 +24789,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -24941,7 +24941,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -24950,9 +24950,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -25026,7 +25026,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -25035,9 +25035,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -25257,7 +25257,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -25266,9 +25266,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -25418,7 +25418,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -25427,9 +25427,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -25721,7 +25721,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -25730,9 +25730,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -25882,7 +25882,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -25891,9 +25891,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -26193,7 +26193,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcInternalProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -26202,9 +26202,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -26278,7 +26278,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcInternalProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -26287,9 +26287,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -26360,8 +26360,8 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9508369edf01432d218706c2131da7a40555b95a",
-        "hardening_commit": "aed5201e9d95f0edba7ff022f33c1cfd115c7967",
+        "commit": "abf08283424f2b7fafbab5829c03f1e24a6412da",
+        "hardening_commit": "f1f75f4a6fc76e794b7f4956b8c1d6e3492e63ce",
         "files": [
           "src/SharpEmu.HLE/DataSymbolRegistry.cs",
           "src/SharpEmu.Core/Runtime/ImportedDataRebinder.cs",
@@ -26372,9 +26372,9 @@
       },
       "validation": {
         "branch": "5/5 exact data-only registrations and loader contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -26448,7 +26448,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcInternalProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -26457,9 +26457,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -26533,7 +26533,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcInternalProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -26542,9 +26542,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -26618,7 +26618,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -26627,9 +26627,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -26703,7 +26703,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -26712,9 +26712,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -26788,7 +26788,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/Lle/LibcProviderLleExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -26797,9 +26797,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -26872,7 +26872,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "f46fc0cc163507214bfdbfa3b09f09528dbf3669",
+        "commit": "1ab51a89ed5b8684c3aefb94bd70ec0b7088ede5",
         "files": [
           "src/SharpEmu.Libs/LibcInternalBacktraceExports.cs",
           "tests/SharpEmu.Libs.Tests/Lle/Libc35ExportsTests.cs",
@@ -26881,9 +26881,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -68683,7 +68683,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9d8858fd77c6b85a6c087cec17dd335900fc13a3",
+        "commit": "531f1c7e2982cab3bf89fa752b8ba47821981da8",
         "files": [
           "src/SharpEmu.Libs/Kernel/GtaVKernelContractExports.cs",
           "src/SharpEmu.Libs/Kernel/KernelSocketCompatExports.cs",
@@ -68693,9 +68693,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": []
@@ -68765,7 +68765,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9d8858fd77c6b85a6c087cec17dd335900fc13a3",
+        "commit": "531f1c7e2982cab3bf89fa752b8ba47821981da8",
         "files": [
           "src/SharpEmu.Libs/Kernel/GtaVKernelContractExports.cs",
           "src/SharpEmu.Libs/Kernel/KernelSocketCompatExports.cs",
@@ -68775,9 +68775,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -68847,7 +68847,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9d8858fd77c6b85a6c087cec17dd335900fc13a3",
+        "commit": "531f1c7e2982cab3bf89fa752b8ba47821981da8",
         "files": [
           "src/SharpEmu.Libs/Kernel/GtaVKernelContractExports.cs",
           "src/SharpEmu.Libs/Kernel/KernelSocketCompatExports.cs",
@@ -68857,9 +68857,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -68929,7 +68929,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9d8858fd77c6b85a6c087cec17dd335900fc13a3",
+        "commit": "531f1c7e2982cab3bf89fa752b8ba47821981da8",
         "files": [
           "src/SharpEmu.Libs/Kernel/GtaVKernelContractExports.cs",
           "src/SharpEmu.Libs/Kernel/KernelSocketCompatExports.cs",
@@ -68939,9 +68939,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": []
@@ -69009,7 +69009,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9d8858fd77c6b85a6c087cec17dd335900fc13a3",
+        "commit": "531f1c7e2982cab3bf89fa752b8ba47821981da8",
         "files": [
           "src/SharpEmu.Libs/Kernel/GtaVKernelContractExports.cs",
           "src/SharpEmu.Libs/Kernel/KernelSocketCompatExports.cs",
@@ -69019,9 +69019,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": []
@@ -69091,7 +69091,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9d8858fd77c6b85a6c087cec17dd335900fc13a3",
+        "commit": "531f1c7e2982cab3bf89fa752b8ba47821981da8",
         "files": [
           "src/SharpEmu.Libs/Kernel/GtaVKernelContractExports.cs",
           "src/SharpEmu.Libs/Kernel/KernelSocketCompatExports.cs",
@@ -69101,9 +69101,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -69173,7 +69173,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9d8858fd77c6b85a6c087cec17dd335900fc13a3",
+        "commit": "531f1c7e2982cab3bf89fa752b8ba47821981da8",
         "files": [
           "src/SharpEmu.Libs/Kernel/GtaVKernelContractExports.cs",
           "src/SharpEmu.Libs/Kernel/KernelSocketCompatExports.cs",
@@ -69183,9 +69183,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -69257,7 +69257,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9d8858fd77c6b85a6c087cec17dd335900fc13a3",
+        "commit": "531f1c7e2982cab3bf89fa752b8ba47821981da8",
         "files": [
           "src/SharpEmu.Libs/Kernel/GtaVKernelContractExports.cs",
           "src/SharpEmu.Libs/Kernel/KernelSocketCompatExports.cs",
@@ -69267,9 +69267,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [
@@ -69341,7 +69341,7 @@
       "implementation": {
         "worktree": ".",
         "branch": "codex/gta-v-nids",
-        "commit": "9d8858fd77c6b85a6c087cec17dd335900fc13a3",
+        "commit": "531f1c7e2982cab3bf89fa752b8ba47821981da8",
         "files": [
           "src/SharpEmu.Libs/Kernel/GtaVKernelContractExports.cs",
           "src/SharpEmu.Libs/Kernel/KernelSocketCompatExports.cs",
@@ -69351,9 +69351,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "53/53 focused GTA parity tests, 810/810 library tests, 36/36 source-generator tests, and 34/34 shader tests passed; Release build completed with 0 warnings/errors",
+        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
         "games": [
-          "GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
         ]
       },
       "blockers": [

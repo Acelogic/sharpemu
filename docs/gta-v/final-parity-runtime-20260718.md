@@ -2,23 +2,24 @@
 
 ## Scope
 
-This validation covers exact static registration parity for the pinned GTA V Gen5 inventory: 1,432 unique registrations (1,426 function imports and 6 object imports). It does not claim complete semantic parity or GTA V playability.
+The current static validation covers exact registration parity for the pinned GTA V Gen5 inventory: 1,432 unique registrations (1,426 function imports and 6 object imports). It does not claim complete semantic parity or GTA V playability.
 
-The tested implementation commit is `4ea43616102ba8b2a5bf59b745cd3b758d05e110`. The pinned inventory SHA-256 is `efb0a69b0e5e32274db2ca86558041318e9ba65011c0d94f3362629bf826f73a`.
+The statically validated implementation commit is `0996daba06ca48f2471d9c86b4b402c4bb845deb`. The pinned inventory SHA-256 is `efb0a69b0e5e32274db2ca86558041318e9ba65011c0d94f3362629bf826f73a`. The retained runtime trace below is historical evidence from pre-rebase commit `4ea43616102ba8b2a5bf59b745cd3b758d05e110`; it does not validate the rebased GPU scheduler integration.
 
 ## Build and test gates
 
 | Gate | Result |
 |---|---:|
-| Focused GTA parity, libc35, kernel contract, and data-symbol tests | 53/53 passed |
-| `SharpEmu.Libs.Tests` | 810/810 passed |
+| Focused GTA parity, libc35, kernel contract, and data-symbol tests | 52/52 passed |
+| `SharpEmu.Libs.Tests` | 1054/1054 passed |
 | `SharpEmu.SourceGenerators.Tests` | 36/36 passed |
-| `SharpEmu.ShaderCompiler.Tests` | 34/34 passed |
-| Release solution build | succeeded, 0 warnings, 0 errors |
+| `SharpEmu.ShaderCompiler.Tests` | 35/35 passed |
+| `SharpEmu.ShaderCompiler.Metal.Tests` | 27/27 passed |
+| Release solution build | succeeded, 65 warnings, 0 errors |
 
 The exact commands and counts are recorded in `artifacts/gta-v-nid-evidence/final-parity-validation-20260718.json` and are checked by `scripts/update-gta-v-final-parity-tracker.py`.
 
-## Runtime command
+## Historical runtime command
 
 The x86-64 CLI was published with:
 
@@ -26,7 +27,7 @@ The x86-64 CLI was published with:
 dotnet publish src/SharpEmu.CLI/SharpEmu.CLI.csproj -c Release -r osx-x64 --nologo
 ```
 
-The GTA V trace was collected under Rosetta with full import tracing:
+The retained GTA V trace was collected under Rosetta with full import tracing at pre-rebase commit `4ea43616102ba8b2a5bf59b745cd3b758d05e110`:
 
 ```sh
 set +e
@@ -43,7 +44,7 @@ echo "exit=$rc"
 
 The process reached its terminal fault naturally before the timeout. The exit status was 139.
 
-## Trace results
+## Historical trace results
 
 | Check | Result |
 |---|---:|
@@ -60,7 +61,7 @@ The process reached its terminal fault naturally before the timeout. The exit st
 
 The terminal fault is the same later-state fault observed before the final parity wave; the registration work did not regress the prior 41,427-import checkpoint.
 
-## Durable evidence
+## Durable historical evidence
 
 The tracked compressed trace is `artifacts/gta-v-nid-evidence/final-parity-runtime-20260718/gta-v-final-parity-x64.log.gz`.
 
@@ -71,7 +72,7 @@ The tracked compressed trace is `artifacts/gta-v-nid-evidence/final-parity-runti
 
 The final tracker decompresses this evidence and recomputes the provider-route set, object-callable count, data relocation totals, maximum import ordinal, MM4 checkpoint, and terminal signal tuple before it can close the 67-NID queue.
 
-The recorded test/build counts and shell exit status are rerunnable validation records, not retained raw command transcripts. The runtime routing, relocation, checkpoint, thread, and terminal-signal claims are independently recomputed from the tracked compressed trace.
+The recorded test/build counts validate `0996daba06ca48f2471d9c86b4b402c4bb845deb` and are rerunnable validation records, not retained raw command transcripts. The historical runtime routing, relocation, checkpoint, thread, terminal-signal claims, and shell exit status belong to `4ea43616102ba8b2a5bf59b745cd3b758d05e110` and are independently recomputed from the tracked compressed trace.
 
 ## Remaining semantic limits
 

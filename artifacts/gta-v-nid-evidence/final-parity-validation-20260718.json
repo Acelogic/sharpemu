@@ -1,19 +1,19 @@
 {
   "format": "sharpemu-gta-v-final-parity-validation-v1",
-  "validated_commit": "4ea43616102ba8b2a5bf59b745cd3b758d05e110",
+  "validated_commit": "0996daba06ca48f2471d9c86b4b402c4bb845deb",
   "pinned_inventory_sha256": "efb0a69b0e5e32274db2ca86558041318e9ba65011c0d94f3362629bf826f73a",
   "tests": [
     {
       "name": "focused_gta_parity",
       "command": "dotnet test tests/SharpEmu.Libs.Tests/SharpEmu.Libs.Tests.csproj -c Release --no-restore --nologo --filter \"FullyQualifiedName~GtaVGen5RegistrationParityTests|FullyQualifiedName~Libc35ExportsTests|FullyQualifiedName~GtaVKernelContractExportsTests|FullyQualifiedName~DataSymbolRegistrationTests\"",
-      "passed": 53,
+      "passed": 52,
       "failed": 0,
       "skipped": 0
     },
     {
       "name": "SharpEmu.Libs.Tests",
       "command": "dotnet test tests/SharpEmu.Libs.Tests/SharpEmu.Libs.Tests.csproj -c Release --no-restore --nologo",
-      "passed": 810,
+      "passed": 1054,
       "failed": 0,
       "skipped": 0
     },
@@ -27,7 +27,14 @@
     {
       "name": "SharpEmu.ShaderCompiler.Tests",
       "command": "dotnet test tests/SharpEmu.ShaderCompiler.Tests/SharpEmu.ShaderCompiler.Tests.csproj -c Release --no-restore --nologo",
-      "passed": 34,
+      "passed": 35,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "name": "SharpEmu.ShaderCompiler.Metal.Tests",
+      "command": "dotnet test tests/SharpEmu.ShaderCompiler.Metal.Tests/SharpEmu.ShaderCompiler.Metal.Tests.csproj -c Release --no-restore --nologo",
+      "passed": 27,
       "failed": 0,
       "skipped": 0
     }
@@ -35,10 +42,13 @@
   "release_build": {
     "command": "dotnet build SharpEmu.slnx -c Release --no-restore --nologo",
     "succeeded": true,
-    "warnings": 0,
+    "warnings": 65,
     "errors": 0
   },
   "runtime": {
+    "historical": true,
+    "validated_commit": "4ea43616102ba8b2a5bf59b745cd3b758d05e110",
+    "description": "Historical pre-rebase 2026-07-18 Rosetta trace; this is not runtime validation of the gpu-bootstrap scheduler integration.",
     "command": "set +e; SHARPEMU_LOG_ALL_IMPORTS=1 SHARPEMU_LOG_IMPORTS=1 gtimeout -s TERM 45 arch -x86_64 artifacts/publish/SharpEmu.CLI/Release/net10.0/osx-x64/SharpEmu --cpu-engine=native --log-level=info \"/Volumes/Untitled/games/sharpemu/Games/GTA V/eboot.bin\" > artifacts/gta-v-final-parity-x64.log 2>&1; rc=$?; set -e; echo \"exit=$rc\"",
     "exit_capture": "rc=$?",
     "compressed_log": "artifacts/gta-v-nid-evidence/final-parity-runtime-20260718/gta-v-final-parity-x64.log.gz",
