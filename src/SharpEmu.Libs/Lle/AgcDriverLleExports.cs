@@ -132,13 +132,6 @@ public static class AgcDriverLleExports
         Target = Generation.Gen5,
         LibraryName = "libSceAgcDriver",
         PreferLle = true)]
-    // Ghidra entry 0x6d80; body bytes 15.
-    [SysAbiExport(
-        Nid = "Zw7uUVPulbw",
-        ExportName = "sceAgcDriverGetEqContextId",
-        Target = Generation.Gen5,
-        LibraryName = "libSceAgcDriver",
-        PreferLle = true)]
     // Ghidra entry 0x71e0; body bytes 6.
     [SysAbiExport(
         Nid = "emP3ckeS2uo",

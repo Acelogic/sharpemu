@@ -36,8 +36,11 @@ internal sealed class MetalGuestGpuBackend : IGuestGpuBackend
         int imageBindingBase = 0,
         int scalarRegisterBufferIndex = -1,
         int requiredVertexOutputCount = 0,
-        ulong storageBufferOffsetAlignment = 1)
+        ulong storageBufferOffsetAlignment = 1,
+        IReadOnlyList<uint>? pixelInputControls = null)
     {
+        // The Metal translator does not yet expose explicit PS-input routing.
+        _ = pixelInputControls;
         shader = null;
         if (!Gen5MslTranslator.TryCompileVertexShader(
                 state,
@@ -70,8 +73,14 @@ internal sealed class MetalGuestGpuBackend : IGuestGpuBackend
         int scalarRegisterBufferIndex = -1,
         uint pixelInputEnable = 0,
         uint pixelInputAddress = 0,
-        ulong storageBufferOffsetAlignment = 1)
+        ulong storageBufferOffsetAlignment = 1,
+        IReadOnlyList<uint>? pixelInputControls = null,
+        int gdsBufferIndex = -1)
     {
+        // Keep the cross-backend seam compatible while Metal's translator lacks
+        // explicit PS-input routing and guest GDS bindings.
+        _ = pixelInputControls;
+        _ = gdsBufferIndex;
         shader = null;
         if (!Gen5MslTranslator.TryCompilePixelShader(
                 state,

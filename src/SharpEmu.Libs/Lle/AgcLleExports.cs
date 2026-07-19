@@ -69,13 +69,6 @@ public static class AgcLleExports
         Target = Generation.Gen5,
         LibraryName = "libSceAgc",
         PreferLle = true)]
-    // Ghidra entry 0xd070; body bytes 85.
-    [SysAbiExport(
-        Nid = "43WJ08sSugE",
-        ExportName = "sceAgcDcbWaitOnAddressGetSize",
-        Target = Generation.Gen5,
-        LibraryName = "libSceAgc",
-        PreferLle = true)]
     // Ghidra entry 0xd050; body bytes 6.
     [SysAbiExport(
         Nid = "6DFuRKT4C9w",
@@ -619,13 +612,6 @@ public static class AgcLleExports
     [SysAbiExport(
         Nid = "p9tI+yTvx68",
         ExportName = "sceAgcDcbWriteDataGetSize",
-        Target = Generation.Gen5,
-        LibraryName = "libSceAgc",
-        PreferLle = true)]
-    // Ghidra entry 0x49a0; body bytes 147.
-    [SysAbiExport(
-        Nid = "pFLArOT53+w",
-        ExportName = "sceAgcDcbSetShRegisterDirect",
         Target = Generation.Gen5,
         LibraryName = "libSceAgc",
         PreferLle = true)]

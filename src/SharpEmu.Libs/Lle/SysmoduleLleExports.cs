@@ -13,13 +13,6 @@ namespace SharpEmu.Libs.Lle;
 
 public static class SysmoduleLleExports
 {
-    // Ghidra entry 00000c90; body addresses 122.
-    [SysAbiExport(
-        Nid = "4fU5yvOkVG4",
-        ExportName = "sceSysmoduleGetModuleInfoForUnwind",
-        Target = Generation.Gen5,
-        LibraryName = "libSceSysmodule",
-        PreferLle = true)]
     public static int MissingGuestProvider(CpuContext ctx)
     {
         if (string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORTS"), "1", StringComparison.Ordinal))

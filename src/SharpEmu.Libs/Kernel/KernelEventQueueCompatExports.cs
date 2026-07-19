@@ -114,8 +114,15 @@ public static class KernelEventQueueCompatExports
             _registeredEvents[handle] = new Dictionary<(ulong Ident, short Filter), KernelEventRegistration>();
         }
 
-        if (!ctx.TryWriteUInt64(outAddress, handle))
+        if (!KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, outAddress, handle))
         {
+            lock (_eventQueueGate)
+            {
+                _eventQueues.Remove(handle);
+                _pendingEvents.Remove(handle);
+                _registeredEvents.Remove(handle);
+            }
+
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 

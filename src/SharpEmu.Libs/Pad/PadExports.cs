@@ -214,7 +214,7 @@ public static class PadExports
         var userId = unchecked((int)ctx[CpuRegister.Rdi]);
         var type = unchecked((int)ctx[CpuRegister.Rsi]);
         var index = unchecked((int)ctx[CpuRegister.Rdx]);
-        if (!_initialized)
+        if (Volatile.Read(ref _initialized) == 0)
         {
             return ctx.SetReturn(OrbisPadErrorNotInitialized);
         }

@@ -3168,15 +3168,6 @@ public static partial class KernelMemoryCompatExports
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
-    // POSIX alias; same Orbis result convention as the other posix-named
-    // file exports in this module (mkdir/rmdir/open).
-    [SysAbiExport(
-        Nid = "VAzswvTOCzI",
-        ExportName = "unlink",
-        Target = Generation.Gen4 | Generation.Gen5,
-        LibraryName = "libKernel")]
-    public static int PosixUnlink(CpuContext ctx) => KernelUnlink(ctx);
-
     [SysAbiExport(
         Nid = "AUXVxWeJU-A",
         ExportName = "sceKernelUnlink",
@@ -7490,7 +7481,7 @@ public static partial class KernelMemoryCompatExports
         return TryReadHostMemoryUnchecked(address, destination);
     }
 
-    private static bool TryReadHostMemoryUnchecked(ulong address, Span<byte> destination)
+    private static unsafe bool TryReadHostMemoryUnchecked(ulong address, Span<byte> destination)
     {
         try
         {
@@ -8021,7 +8012,7 @@ public static partial class KernelMemoryCompatExports
         return TryWriteHostMemoryUnchecked(address, source);
     }
 
-    private static bool TryWriteHostMemoryUnchecked(ulong address, ReadOnlySpan<byte> source)
+    private static unsafe bool TryWriteHostMemoryUnchecked(ulong address, ReadOnlySpan<byte> source)
     {
         try
         {

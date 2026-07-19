@@ -3,7 +3,6 @@
 
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
-using System.Text;
 using SharpEmu.HLE;
 
 namespace SharpEmu.Libs.Kernel;
@@ -539,7 +538,7 @@ public static class KernelSemaphoreCompatExports
     private static bool TryReadUInt32(CpuContext ctx, ulong address, out uint value)
     {
         Span<byte> buffer = stackalloc byte[sizeof(uint)];
-        if (!ctx.Memory.TryRead(address, buffer))
+        if (!KernelMemoryCompatExports.TryReadCompat(ctx, address, buffer))
         {
             value = 0;
             return false;
@@ -553,7 +552,7 @@ public static class KernelSemaphoreCompatExports
     {
         Span<byte> buffer = stackalloc byte[sizeof(uint)];
         BinaryPrimitives.WriteUInt32LittleEndian(buffer, value);
-        return ctx.Memory.TryWrite(address, buffer);
+        return KernelMemoryCompatExports.TryWriteCompat(ctx, address, buffer);
     }
 
     private static bool TryReadNullTerminatedUtf8(CpuContext ctx, ulong address, int maxLength, out string value)
@@ -564,26 +563,7 @@ public static class KernelSemaphoreCompatExports
             return false;
         }
 
-        var bytes = new byte[Math.Min(maxLength, 4096)];
-        Span<byte> current = stackalloc byte[1];
-        for (var i = 0; i < bytes.Length; i++)
-        {
-            if (!ctx.Memory.TryRead(address + (ulong)i, current))
-            {
-                return false;
-            }
-
-            if (current[0] == 0)
-            {
-                value = Encoding.UTF8.GetString(bytes, 0, i);
-                return true;
-            }
-
-            bytes[i] = current[0];
-        }
-
-        value = Encoding.UTF8.GetString(bytes);
-        return true;
+        return KernelMemoryCompatExports.TryReadNullTerminatedUtf8(ctx, address, maxLength, out value);
     }
 
     // Call sites must check this before building the interpolated message; the trace

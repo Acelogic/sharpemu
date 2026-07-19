@@ -13,27 +13,6 @@ namespace SharpEmu.Libs.Lle;
 
 public static class SaveDataNativeLleExports
 {
-    // Ghidra entry 00027100; body addresses 382.
-    [SysAbiExport(
-        Nid = "S1GkePI17zQ",
-        ExportName = "sceSaveDataDelete",
-        Target = Generation.Gen5,
-        LibraryName = "libSceSaveData_native",
-        PreferLle = true)]
-    // Ghidra entry 00028240; body addresses 291.
-    [SysAbiExport(
-        Nid = "Z7z6HXWORJY",
-        ExportName = "sceSaveDataSaveIconByPath",
-        Target = Generation.Gen5,
-        LibraryName = "libSceSaveData_native",
-        PreferLle = true)]
-    // Ghidra entry 00026320; body addresses 434.
-    [SysAbiExport(
-        Nid = "yKDy8S5yLA0",
-        ExportName = "sceSaveDataTerminate",
-        Target = Generation.Gen5,
-        LibraryName = "libSceSaveData_native",
-        PreferLle = true)]
     public static int MissingGuestProvider(CpuContext ctx)
     {
         if (string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORTS"), "1", StringComparison.Ordinal))

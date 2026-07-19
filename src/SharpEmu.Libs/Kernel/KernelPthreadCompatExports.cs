@@ -88,6 +88,13 @@ public static class KernelPthreadCompatExports
     public static int PosixPthreadSelf(CpuContext ctx) => PthreadSelf(ctx);
 
     [SysAbiExport(
+        Nid = "2ozFS9GCs+A",
+        ExportName = "__sharpemu_gen5_thrd_current",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int Gen5ThrdCurrent(CpuContext ctx) => PthreadSelf(ctx);
+
+    [SysAbiExport(
         Nid = "3PtV6p3QNX4",
         ExportName = "scePthreadEqual",
         Target = Generation.Gen4 | Generation.Gen5,
@@ -234,6 +241,24 @@ public static class KernelPthreadCompatExports
         LibraryName = "libKernel")]
     public static int PosixPthreadMutexUnlock(CpuContext ctx) => PthreadMutexUnlockCore(ctx, ctx[CpuRegister.Rdi], requireOwner: true);
 
+    // Gen5 libc++ uses private mutex entry points for std::mutex. The object
+    // and return conventions match libKernel's public pthread symbols.
+    [SysAbiExport(
+        Nid = "5qXct3c1skg",
+        ExportName = "__libcpp_mutex_lock",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcppMutexLock(CpuContext ctx) =>
+        PthreadMutexLockCore(ctx, ctx[CpuRegister.Rdi], tryOnly: false);
+
+    [SysAbiExport(
+        Nid = "4bp9gcNLwMI",
+        ExportName = "__libcpp_mutex_unlock",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcppMutexUnlock(CpuContext ctx) =>
+        PthreadMutexUnlockCore(ctx, ctx[CpuRegister.Rdi], requireOwner: true);
+
     private static int PthreadGetthreadidCore(CpuContext ctx)
     {
         ctx[CpuRegister.Rax] = KernelPthreadState.GetCurrentThreadUniqueId();
@@ -360,6 +385,14 @@ public static class KernelPthreadCompatExports
     public static int PosixPthreadCondWait(CpuContext ctx) => PthreadCondWaitCore(ctx, ctx[CpuRegister.Rdi], ctx[CpuRegister.Rsi], timed: false);
 
     [SysAbiExport(
+        Nid = "fUs4X3mpTi4",
+        ExportName = "__sharpemu_gen5_cond_wait",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int Gen5CondWait(CpuContext ctx) =>
+        PthreadCondWaitCore(ctx, ctx[CpuRegister.Rdi], ctx[CpuRegister.Rsi], timed: false);
+
+    [SysAbiExport(
         Nid = "27bAgiJmOh0",
         ExportName = "pthread_cond_timedwait",
         Target = Generation.Gen4 | Generation.Gen5,
@@ -416,11 +449,33 @@ public static class KernelPthreadCompatExports
     }
 
     [SysAbiExport(
+        Nid = "K953PF5u6Pc",
+        ExportName = "pthread_cond_reltimedwait_np",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadCondRelativeTimedwait(CpuContext ctx) =>
+        PthreadCondWaitCore(
+            ctx,
+            ctx[CpuRegister.Rdi],
+            ctx[CpuRegister.Rsi],
+            timed: true,
+            timeoutUsec: unchecked((uint)ctx[CpuRegister.Rdx]),
+            posixErrors: true);
+
+    [SysAbiExport(
         Nid = "mkx2fVhNMsg",
         ExportName = "pthread_cond_broadcast",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
     public static int PosixPthreadCondBroadcast(CpuContext ctx) => PthreadCondSignalCore(ctx, ctx[CpuRegister.Rdi], broadcast: true);
+
+    [SysAbiExport(
+        Nid = "enG9-gUJp70",
+        ExportName = "__libcpp_condvar_broadcast",
+        Target = Generation.Gen5,
+        LibraryName = "libc")]
+    public static int LibcppCondvarBroadcast(CpuContext ctx) =>
+        PthreadCondSignalCore(ctx, ctx[CpuRegister.Rdi], broadcast: true);
 
     [SysAbiExport(
         Nid = "2MOy+rUfuhQ",
@@ -470,6 +525,36 @@ public static class KernelPthreadCompatExports
 
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
+
+    [SysAbiExport(
+        Nid = "mKoTx03HRWA",
+        ExportName = "pthread_condattr_init",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadCondattrInit(CpuContext ctx) => PthreadCondattrInit(ctx);
+
+    [SysAbiExport(
+        Nid = "EjllaAqAPZo",
+        ExportName = "pthread_condattr_setclock",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadCondattrSetClock(CpuContext ctx)
+    {
+        if (ctx[CpuRegister.Rdi] == 0)
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "dJcuQVn6-Iw",
+        ExportName = "pthread_condattr_destroy",
+        Target = Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadCondattrDestroy(CpuContext ctx) => PthreadCondattrDestroy(ctx);
 
     [SysAbiExport(
         Nid = "14bOACANTBo",

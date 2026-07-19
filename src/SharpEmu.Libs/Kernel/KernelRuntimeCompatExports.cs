@@ -112,7 +112,6 @@ public static class KernelRuntimeCompatExports
         LibraryName = "libKernel")]
     public static int PosixSchedYield(CpuContext ctx)
     {
-        GuestThreadExecution.Scheduler?.Pump(ctx, "sched_yield");
         _ = Thread.Yield();
         ctx[CpuRegister.Rax] = 0;
         return 0;
@@ -132,7 +131,6 @@ public static class KernelRuntimeCompatExports
         }
         else
         {
-            GuestThreadExecution.Scheduler?.Pump(ctx, "sceKernelSleep");
             var milliseconds = seconds > (ulong)int.MaxValue / 1000UL
                 ? (ulong)int.MaxValue
                 : seconds * 1000UL;
@@ -2018,22 +2016,9 @@ public static class KernelRuntimeCompatExports
         Nid = "4fU5yvOkVG4",
         ExportName = "sceSysmoduleGetModuleInfoForUnwind",
         Target = Generation.Gen4 | Generation.Gen5,
-        LibraryName = "libSceSysmodule")]
+        LibraryName = "libSceSysmodule",
+        PreferLle = true)]
     public static int SysmoduleGetModuleInfoForUnwind(CpuContext ctx) => KernelGetModuleInfoForUnwind(ctx);
-
-    // libc unwinder predicate: is this PC the kernel signal-return trampoline?
-    // Guest signal returns do not run through a guest-visible trampoline here,
-    // so no PC is ever one — report false and let the frame unwind normally.
-    [SysAbiExport(
-        Nid = "crb5j7mkk1c",
-        ExportName = "_is_signal_return",
-        Target = Generation.Gen4 | Generation.Gen5,
-        LibraryName = "libc")]
-    public static int IsSignalReturn(CpuContext ctx)
-    {
-        ctx[CpuRegister.Rax] = 0;
-        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
-    }
 
     [SysAbiExport(
         Nid = "39iV5E1HoCk",

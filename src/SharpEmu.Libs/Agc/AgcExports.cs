@@ -2758,7 +2758,8 @@ public static partial class AgcExports
         Nid = "pFLArOT53+w",
         ExportName = "sceAgcDcbSetShRegisterDirect",
         Target = Generation.Gen5,
-        LibraryName = "libSceAgc")]
+        LibraryName = "libSceAgc",
+        PreferLle = true)]
     public static int DcbSetShRegisterDirect(CpuContext ctx)
     {
         var commandBufferAddress = ctx[CpuRegister.Rdi];
@@ -2790,7 +2791,8 @@ public static partial class AgcExports
         Nid = "43WJ08sSugE",
         ExportName = "sceAgcDcbWaitOnAddressGetSize",
         Target = Generation.Gen5,
-        LibraryName = "libSceAgc")]
+        LibraryName = "libSceAgc",
+        PreferLle = true)]
     public static int DcbWaitOnAddressGetSize(CpuContext ctx)
     {
         var size = (uint)(ctx[CpuRegister.Rdi] & 0xFF);
@@ -3657,7 +3659,8 @@ public static partial class AgcExports
         Nid = "Zw7uUVPulbw",
         ExportName = "sceAgcDriverGetEqContextId",
         Target = Generation.Gen5,
-        LibraryName = "libSceAgcDriver")]
+        LibraryName = "libSceAgcDriver",
+        PreferLle = true)]
     public static int DriverGetEqContextId(CpuContext ctx)
     {
         var contextIdAddress = ctx[CpuRegister.Rdi];
@@ -14626,34 +14629,4 @@ public static partial class AgcExports
         return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
     }
 
-    // Tessellation-factor ring and hull-shader off-chip buffers are guest-driver
-    // configuration for on-hardware tessellation memory. Our translator handles
-    // shader execution directly, so there is no guest-side ring to program: the
-    // guest driver only needs these to report success so init proceeds. Games
-    // (e.g. Unity titles) call them during GPU setup and stall if unresolved.
-    [SysAbiExport(
-        Nid = "XlNp7jzGiPo",
-        ExportName = "sceAgcDriverSetTFRing",
-        Target = Generation.Gen5,
-        LibraryName = "libSceAgcDriver")]
-    public static int DriverSetTFRing(CpuContext ctx)
-    {
-        TraceAgc(
-            $"agc.driver_set_tf_ring ring=0x{ctx[CpuRegister.Rdi]:X16} " +
-            $"size=0x{(uint)ctx[CpuRegister.Rsi]:X8}");
-        return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
-    }
-
-    [SysAbiExport(
-        Nid = "MM4IZSEYytQ",
-        ExportName = "sceAgcDriverSetHsOffchipParam",
-        Target = Generation.Gen5,
-        LibraryName = "libSceAgcDriver")]
-    public static int DriverSetHsOffchipParam(CpuContext ctx)
-    {
-        TraceAgc(
-            $"agc.driver_set_hs_offchip_param buffer=0x{ctx[CpuRegister.Rdi]:X16} " +
-            $"param=0x{(uint)ctx[CpuRegister.Rsi]:X8}");
-        return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
-    }
 }

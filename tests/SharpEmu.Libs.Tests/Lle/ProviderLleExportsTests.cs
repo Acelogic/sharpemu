@@ -17,6 +17,14 @@ public sealed class ProviderLleExportsTests
             "Ikfdt-rIqCE",
             "w4-d0n60hdo",
         };
+    private static readonly HashSet<string> CrossGenerationSemanticProviderNids =
+        new(StringComparer.Ordinal)
+        {
+            "4fU5yvOkVG4",
+            "S1GkePI17zQ",
+            "Z7z6HXWORJY",
+            "yKDy8S5yLA0",
+        };
 
     private static readonly IReadOnlyDictionary<string, (string ExportName, string LibraryName)> Provider23Expected =
         new Dictionary<string, (string ExportName, string LibraryName)>(StringComparer.Ordinal)
@@ -109,7 +117,7 @@ public sealed class ProviderLleExportsTests
         Assert.Equal(401, exports.Select(export => export.Nid).Distinct(StringComparer.Ordinal).Count());
         Assert.All(exports, export =>
         {
-            Assert.Equal(Generation.Gen5, export.Target);
+            Assert.NotEqual(Generation.None, export.Target & Generation.Gen5);
             Assert.Equal(!ForcedHleProviderNids.Contains(export.Nid), export.PreferLle);
         });
 
@@ -143,7 +151,7 @@ public sealed class ProviderLleExportsTests
             var expected = Provider23Expected[export.Nid];
             Assert.Equal(expected.ExportName, export.Name);
             Assert.Equal(expected.LibraryName, export.LibraryName);
-            Assert.Equal(Generation.Gen5, export.Target);
+            Assert.NotEqual(Generation.None, export.Target & Generation.Gen5);
             Assert.True(export.PreferLle);
         }
     }
@@ -153,13 +161,16 @@ public sealed class ProviderLleExportsTests
     {
         var exports = SharpEmu.Generated.SysAbiExportRegistry.CreateExports(Generation.Gen4)
             .Where(IsProviderCatalogExport)
+            .Where(export => !CrossGenerationSemanticProviderNids.Contains(export.Nid))
             .ToArray();
 
         Assert.Empty(exports);
 
         Assert.DoesNotContain(
             SharpEmu.Generated.SysAbiExportRegistry.CreateExports(Generation.Gen4),
-            export => Provider23Expected.ContainsKey(export.Nid));
+            export => Provider23Expected.ContainsKey(export.Nid) &&
+                export.PreferLle &&
+                !CrossGenerationSemanticProviderNids.Contains(export.Nid));
     }
 
     [Fact]

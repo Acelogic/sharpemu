@@ -8861,14 +8861,14 @@ internal static unsafe class VulkanVideoPresenter
                         candidate.BaseAddress <= guestBuffer.BaseAddress &&
                         candidate.BaseAddress + candidate.Size >= endAddress)
                     .Select(candidate =>
-                        $"{candidate.QueueName}:0x{candidate.Buffer.Handle:X}:" +
+                        $"shared:0x{candidate.Buffer.Handle:X}:" +
                         $"0x{candidate.BaseAddress:X16}+0x{candidate.Size:X}")
                     .ToArray();
                 var diagnosticKey =
                     $"{shaderStage}|{shaderAddress:X16}|" +
                     $"{guestBuffer.BaseAddress:X16}|{size:X}|" +
                     $"{guestBuffer.Writable}|{guestBuffer.WriteBackToGuest}|" +
-                    $"{allocation.QueueName}|{allocation.Buffer.Handle:X}|" +
+                    $"{_activeGuestQueue.Name}|{allocation.Buffer.Handle:X}|" +
                     string.Join(',', candidates);
                 if (_tracedAddressFilteredGlobalBindings.Count < 2048 &&
                     _tracedAddressFilteredGlobalBindings.Add(diagnosticKey))
@@ -8881,7 +8881,8 @@ internal static unsafe class VulkanVideoPresenter
                         $"writable={(guestBuffer.Writable ? 1 : 0)} " +
                         $"writeback={(guestBuffer.WriteBackToGuest ? 1 : 0)} " +
                         $"active_queue={_activeGuestQueue.Name} " +
-                        $"selected_queue={allocation.QueueName} " +
+                        $"selected_use_queue={_activeGuestQueue.Name} " +
+                        "allocation_scope=shared " +
                         $"selected_buffer=0x{allocation.Buffer.Handle:X} " +
                         $"allocation=0x{allocation.BaseAddress:X16}+0x{allocation.Size:X} " +
                         $"guest_offset=0x{guestOffset:X} descriptor_offset=0x{descriptorOffset:X} " +
@@ -10182,11 +10183,9 @@ internal static unsafe class VulkanVideoPresenter
                     shaderAddress: work.ShaderAddress);
                 if (work.WritesGlobalMemory)
                 {
-                    // The CPU submit thread may immediately consume an indirect
-                    // argument written by this dispatch. Wait for the specific
-                    // guest fences and publish only dirty ranges; a queue-wide
-                    // idle unnecessarily serialized presentation work too.
-                    WaitForActiveGuestQueueSubmissionsForCpuVisibility();
+                    // Address-filtered diagnostics perform a targeted allocation
+                    // wait before reading mapped bytes. Routine compute dispatches
+                    // remain nonblocking, matching the GPU-stall fix.
                     TraceAddressFilteredGlobalBufferWritebacks(
                         resources,
                         work.ShaderAddress);
@@ -10492,7 +10491,6 @@ internal static unsafe class VulkanVideoPresenter
 
                 _tracedAddressFilteredGlobalWritebacks[key] = occurrence;
                 var byteCount = checked((int)buffer.GuestSize);
-                var mappedBytes = new ReadOnlySpan<byte>((void*)buffer.Mapped, byteCount);
                 var shadowOffset = checked((int)buffer.GuestOffset);
                 if (shadowOffset > allocation.Shadow.Length - byteCount)
                 {
@@ -10504,6 +10502,8 @@ internal static unsafe class VulkanVideoPresenter
                     continue;
                 }
 
+                WaitForGuestBufferAllocationForCpuVisibility(allocation);
+                var mappedBytes = new ReadOnlySpan<byte>((void*)buffer.Mapped, byteCount);
                 var previousBytes = allocation.Shadow.AsSpan(shadowOffset, byteCount);
                 var summary = GlobalBufferWritebackDiagnostics.Summarize(
                     mappedBytes,
@@ -11424,7 +11424,6 @@ internal static unsafe class VulkanVideoPresenter
                     // storage-buffer writers. Compute writers already take
                     // this path; without the graphics equivalent a VS, ES,
                     // GS, or PS producer can evade the target readback.
-                    WaitForActiveGuestQueueSubmissionsForCpuVisibility();
                     TraceAddressFilteredGlobalBufferWritebacks(
                         resources,
                         work.ShaderAddress);
