@@ -29,6 +29,7 @@ CONSOLIDATED_EVIDENCE = RHO_PACKET / "consolidated-nid-evidence.json"
 OBJECT_EVIDENCE = Path("artifacts/gta-v-nid-evidence/data5-objects-20260718/GHIDRA_OBJECT_EVIDENCE.json")
 VALIDATION_EVIDENCE = Path("artifacts/gta-v-nid-evidence/final-parity-validation-20260718.json")
 HISTORICAL_RUNTIME_COMMIT = "4ea43616102ba8b2a5bf59b745cd3b758d05e110"
+CURRENT_RUNTIME_COMMIT = "b591baa1aab949e63c48d790b067d5beeb47b091"
 ATTRIBUTE_RE = re.compile(r"\[SysAbiExport\(\s*(.*?)\)\]", re.DOTALL)
 EXPECTED_UNCOVERED_HEADER = [
     "component",
@@ -198,7 +199,7 @@ def load_validation_evidence(
     tests = {record["name"]: record for record in payload.get("tests", [])}
     expected_tests = {
         "focused_gta_parity": 52,
-        "SharpEmu.Libs.Tests": 1054,
+        "SharpEmu.Libs.Tests": 1068,
         "SharpEmu.SourceGenerators.Tests": 36,
         "SharpEmu.ShaderCompiler.Tests": 35,
         "SharpEmu.ShaderCompiler.Metal.Tests": 27,
@@ -213,7 +214,80 @@ def load_validation_evidence(
     build = payload.get("release_build", {})
     require(build.get("succeeded") is True, "Release build did not succeed")
     require(build.get("warnings") == 65 and build.get("errors") == 0, "Release build result mismatch")
-    require(bool(build.get("command")), "Release build command is missing")
+    require(
+        build.get("command")
+        == "dotnet publish src/SharpEmu.CLI/SharpEmu.CLI.csproj -c Release -r win-x64 "
+        "--self-contained true --no-restore --nologo -o /tmp/sharpemu-gta-d3c90e3.DJZwsn",
+        "Release publish command mismatch",
+    )
+    require(build.get("runtime_identifier") == "win-x64", "Release publish RID mismatch")
+    require(build.get("self_contained") is True, "Release publish is not self-contained")
+    require(build.get("executable") == "SharpEmu.exe", "Release executable name mismatch")
+    require(
+        build.get("executable_sha256")
+        == "61db9b23ffb61c8889cf84b30385f8f038e7e4a6ecd8530c04b0daacab87cb03",
+        "Release executable hash mismatch",
+    )
+
+    current_runtime = payload.get("current_runtime_smoke", {})
+    current_runtime_commit = verify_commit(
+        repo,
+        current_runtime.get("validated_commit", ""),
+        set(),
+    )
+    require(current_runtime_commit == CURRENT_RUNTIME_COMMIT, "current GTA runtime smoke commit mismatch")
+    require_ancestor(
+        repo,
+        current_runtime_commit,
+        validated_commit,
+        "validated build does not contain current GTA runtime smoke commit",
+    )
+    require(
+        current_runtime.get("trace_scope")
+        == "ten-minute unfiltered Windows smoke plus short targeted mutex trace",
+        "current GTA runtime smoke scope mismatch",
+    )
+    require(
+        current_runtime.get("target_mutex") == "0x00000008045755C8",
+        "current GTA runtime smoke mutex mismatch",
+    )
+    require(
+        current_runtime.get("handoff_threads") == ["[RAGE] RenderThread", "[RAGE] Main Thread"],
+        "current GTA runtime smoke handoff mismatch",
+    )
+    require(
+        current_runtime.get("target_mutex_permanent_starvation") is False,
+        "current GTA runtime smoke still reports permanent target-mutex starvation",
+    )
+    require(
+        current_runtime.get("snapshot_count") == 61
+        and current_runtime.get("main_import_delta") == 45923560
+        and current_runtime.get("render_import_delta") == 4588828,
+        "current GTA runtime progress counters mismatch",
+    )
+    require(
+        current_runtime.get("traced_flips_enqueued") == 64
+        and current_runtime.get("traced_flips_presented") == 64,
+        "current GTA flip trace mismatch",
+    )
+    require(
+        current_runtime.get("stable_frame_sha256")
+        == "83e9d1f12db5a8aec7088b6b5b469cf2a6bf6ca9ac80ff61d4e89e06e3b82267",
+        "current GTA stable frame hash mismatch",
+    )
+    require(
+        current_runtime.get("screen_checkpoint") == "GTA V logo with green spinner",
+        "current GTA runtime smoke screen checkpoint mismatch",
+    )
+    require(
+        current_runtime.get("status") == "alive_at_ten_minute_checkpoint",
+        "current GTA unfiltered run status mismatch",
+    )
+    require(
+        current_runtime.get("delta_from_0996")
+        == "no visual or normalized main/render throughput improvement",
+        "current GTA runtime delta mismatch",
+    )
 
     runtime = payload.get("runtime", {})
     require(runtime.get("historical") is True, "GTA runtime evidence is not marked historical")
@@ -319,14 +393,19 @@ def load_validation_evidence(
     )
 
     integration_summary = (
-        "52/52 focused GTA parity tests, 1054/1054 library tests, "
-        "36/36 source-generator tests, 35/35 shader tests, and "
-        "27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors"
+        f"Validated at {validated_commit}: 1068/1068 library tests, 36/36 source-generator tests, "
+        "35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); "
+        "the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish "
+        "completed with 65 warnings/0 errors"
     )
     runtime_summary = (
         f"Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, "
         f"11 data relocations rebound with 0 unresolved, max import {max_import}; "
-        f"terminal sig={terminal[0]} RIP={terminal[1]} fault={terminal[2]} access={terminal[3]}"
+        f"terminal sig={terminal[0]} RIP={terminal[1]} fault={terminal[2]} access={terminal[3]}. "
+        f"Current ten-minute Windows smoke at {current_runtime_commit}: Render/Main both repeatedly acquired "
+        "mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but "
+        "the stable frame remains the GTA V logo with green spinner and normalized throughput did not "
+        "improve over 0996dab"
     )
     return integration_summary, runtime_summary
 

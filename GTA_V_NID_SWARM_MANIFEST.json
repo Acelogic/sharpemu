@@ -19499,9 +19499,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -19583,9 +19583,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -19667,9 +19667,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -19751,9 +19751,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -19835,9 +19835,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -19917,9 +19917,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": []
@@ -19999,9 +19999,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -20083,9 +20083,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -20165,9 +20165,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": []
@@ -20247,9 +20247,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -20329,9 +20329,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": []
@@ -20409,9 +20409,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": []
@@ -20491,9 +20491,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -20578,9 +20578,9 @@
       },
       "validation": {
         "branch": "5/5 exact data-only registrations and loader contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -20662,9 +20662,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -20746,9 +20746,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -20830,9 +20830,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -20914,9 +20914,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -20998,9 +20998,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -21083,9 +21083,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -21316,9 +21316,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -21401,9 +21401,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -21486,9 +21486,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -21649,9 +21649,9 @@
       },
       "validation": {
         "branch": "5/5 exact data-only registrations and loader contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -21734,9 +21734,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -21893,9 +21893,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -22060,9 +22060,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -22221,9 +22221,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -22458,9 +22458,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -22621,9 +22621,9 @@
       },
       "validation": {
         "branch": "5/5 exact data-only registrations and loader contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -22782,9 +22782,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -23019,9 +23019,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -23259,9 +23259,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -23420,9 +23420,9 @@
       },
       "validation": {
         "branch": "5/5 exact data-only registrations and loader contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -23505,9 +23505,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -23742,9 +23742,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -23827,9 +23827,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -24138,9 +24138,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -24299,9 +24299,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -24384,9 +24384,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -24619,9 +24619,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -24704,9 +24704,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -24789,9 +24789,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -24950,9 +24950,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -25035,9 +25035,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -25266,9 +25266,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -25427,9 +25427,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -25730,9 +25730,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -25891,9 +25891,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -26202,9 +26202,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -26287,9 +26287,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -26372,9 +26372,9 @@
       },
       "validation": {
         "branch": "5/5 exact data-only registrations and loader contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -26457,9 +26457,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -26542,9 +26542,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -26627,9 +26627,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -26712,9 +26712,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -26797,9 +26797,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -26881,9 +26881,9 @@
       },
       "validation": {
         "branch": "35/35 exact libc-family registrations validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -68693,9 +68693,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": []
@@ -68775,9 +68775,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -68857,9 +68857,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -68939,9 +68939,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": []
@@ -69019,9 +69019,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": []
@@ -69101,9 +69101,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -69183,9 +69183,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -69267,9 +69267,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
@@ -69351,9 +69351,9 @@
       },
       "validation": {
         "branch": "27/27 exact kernel/POSIX registrations and focused contracts validated",
-        "integration": "52/52 focused GTA parity tests, 1054/1054 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed; Release build completed with 65 warnings/0 errors",
+        "integration": "Validated at d3c90e3686a61817f3f67193664a8dcad50308ff: 1068/1068 library tests, 36/36 source-generator tests, 35/35 shader tests, and 27/27 Metal shader tests passed (1166/1166 full-suite total); the separate focused GTA parity gate passed 52/52; win-x64 self-contained Release publish completed with 65 warnings/0 errors",
         "games": [
-          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0"
+          "Historical 2026-07-18 GTA V x64 trace: 34/34 libc provider routes, 0 object callable events, 11 data relocations rebound with 0 unresolved, max import 41427; terminal sig=11 RIP=0x0000000805C273B7 fault=0x0000000000000000 access=0. Current ten-minute Windows smoke at b591baa1aab949e63c48d790b067d5beeb47b091: Render/Main both repeatedly acquired mutex 0x00000008045755C8, disproving permanent starvation; 64/64 traced flips presented, but the stable frame remains the GTA V logo with green spinner and normalized throughput did not improve over 0996dab"
         ]
       },
       "blockers": [
