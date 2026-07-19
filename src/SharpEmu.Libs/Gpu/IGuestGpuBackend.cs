@@ -70,7 +70,27 @@ internal interface IGuestGpuBackend
         int totalGlobalBufferCount = -1,
         int initialScalarBufferIndex = -1,
         uint waveLaneCount = 32,
+        ulong storageBufferOffsetAlignment = 1,
+        int gdsBufferIndex = -1);
+
+    bool TryCompileNggComputeShader(
+        Gen5ShaderState state,
+        Gen5ShaderEvaluation evaluation,
+        Gen5NggOutputLayout outputLayout,
+        out IGuestCompiledShader? shader,
+        out string error,
+        int globalBufferBase,
+        int totalGlobalBufferCount,
+        int imageBindingBase,
+        int initialScalarBufferIndex = -1,
         ulong storageBufferOffsetAlignment = 1);
+
+    bool TryCreateNggRasterVertexShader(
+        Gen5NggOutputLayout outputLayout,
+        int totalGlobalBufferCount,
+        IReadOnlyList<uint> pixelInputControls,
+        out IGuestCompiledShader? shader,
+        out string error);
 
     /// <summary>Returns the backend's no-color-output fragment shader.</summary>
     IGuestCompiledShader GetDepthOnlyFragmentShader();

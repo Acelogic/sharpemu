@@ -141,6 +141,11 @@ public static class Gen5ShaderScalarEvaluator
         evaluation = default!;
         error = string.Empty;
         var scalarRegisters = new uint[ScalarRegisterCount];
+        if (state.GraphicsSystemRegisters is { } graphicsSystemRegisters)
+        {
+            graphicsSystemRegisters.Apply(scalarRegisters);
+        }
+
         for (var index = 0;
              index < state.UserData.Count &&
              state.UserDataScalarRegisterBase + (uint)index < scalarRegisters.Length;
@@ -283,6 +288,13 @@ public static class Gen5ShaderScalarEvaluator
 
                 continue;
             }
+
+                if (instruction.Opcode == "SWaitcntVscnt")
+                {
+                    // Scalar discovery executes against a coherent CPU snapshot; there
+                    // are no outstanding guest vector stores to wait for here.
+                    continue;
+                }
 
                 if (instruction.Encoding == Gen5ShaderEncoding.Sopk &&
                 instruction.Opcode.StartsWith("SCmpk", StringComparison.Ordinal))
@@ -1145,7 +1157,7 @@ public static class Gen5ShaderScalarEvaluator
             return true;
         }
 
-        if (instruction.Opcode == "SFF1I32B64")
+        if (instruction.Opcode is "SBcnt1I32B64" or "SFF1I32B64")
         {
             if (!TryEvaluateScalarOperand64(
                     instruction.Sources[0],
@@ -1157,9 +1169,11 @@ public static class Gen5ShaderScalarEvaluator
                 return false;
             }
 
-            registers[destination.Value] = value == 0
-                ? uint.MaxValue
-                : (uint)BitOperations.TrailingZeroCount(value);
+            registers[destination.Value] = instruction.Opcode == "SBcnt1I32B64"
+                ? (uint)BitOperations.PopCount(value)
+                : value == 0
+                    ? uint.MaxValue
+                    : (uint)BitOperations.TrailingZeroCount(value);
             scalarConditionCode = registers[destination.Value] != 0;
             return true;
         }

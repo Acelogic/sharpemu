@@ -17,33 +17,7 @@ public sealed class Gen5ImageTests
     [Fact]
     public void BvhIntersectRayUsesSplitMimgOpcodeHighBit()
     {
-        uint[] words =
-        [
-            0xF1989F07,
-            0x00040303,
-            0x43440D3F,
-            0x46424140,
-            0x00004847,
-            SEndpgm,
-        ];
-        var memory = new TestCpuMemory(ShaderAddress, 0x100);
-        Span<byte> shader = stackalloc byte[words.Length * sizeof(uint)];
-        for (var index = 0; index < words.Length; index++)
-        {
-            BinaryPrimitives.WriteUInt32LittleEndian(
-                shader[(index * sizeof(uint))..],
-                words[index]);
-        }
-
-        Assert.True(memory.TryWrite(ShaderAddress, shader));
-        var ctx = new CpuContext(memory, Generation.Gen5);
-        Assert.True(
-            Gen5ShaderTranslator.TryDecodeProgram(
-                ctx,
-                ShaderAddress,
-                out var program,
-                out var error),
-            error);
+        var program = DecodeBvhProgram();
 
         var instruction = Assert.Single(
             program.Instructions,
@@ -67,6 +41,82 @@ public sealed class Gen5ImageTests
         Assert.Equal(0U, control.ScalarSampler);
         Assert.Equal(0xFU, control.Dmask);
         Assert.Equal(12, instruction.Sources.Count);
+    }
+
+    [Fact]
+    public void NullBvhDescriptorCompilesAsNoHitSentinel()
+    {
+        var program = DecodeBvhProgram();
+        var instruction = Assert.Single(
+            program.Instructions,
+            item => item.Opcode == "ImageBvhIntersectRay");
+        var control = Assert.IsType<Gen5ImageControl>(instruction.Control);
+        var state = new Gen5ShaderState(program, [], null);
+        var scalarRegisters = new uint[256];
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            [
+                new Gen5ImageBinding(
+                    instruction.Pc,
+                    instruction.Opcode,
+                    control,
+                    new uint[8],
+                    [],
+                    null),
+            ],
+            []);
+
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                1,
+                1,
+                1,
+                out var shader,
+                out var error),
+            error);
+        Assert.True(ContainsSpirvConstant(shader.Spirv, uint.MaxValue));
+    }
+
+    [Fact]
+    public void NonNullBvhDescriptorAlsoCompilesAsNoHitSentinel()
+    {
+        var program = DecodeBvhProgram();
+        var instruction = Assert.Single(
+            program.Instructions,
+            item => item.Opcode == "ImageBvhIntersectRay");
+        var control = Assert.IsType<Gen5ImageControl>(instruction.Control);
+        var state = new Gen5ShaderState(program, [], null);
+        var scalarRegisters = new uint[256];
+        var descriptor = new uint[8];
+        descriptor[0] = 1;
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            [
+                new Gen5ImageBinding(
+                    instruction.Pc,
+                    instruction.Opcode,
+                    control,
+                    descriptor,
+                    [],
+                    null),
+            ],
+            []);
+
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                1,
+                1,
+                1,
+                out var shader,
+                out var error),
+            error);
+        Assert.True(ContainsSpirvConstant(shader.Spirv, uint.MaxValue));
     }
 
     [Fact]
@@ -150,6 +200,20 @@ public sealed class Gen5ImageTests
                 [compressedLoad, otherStore]));
     }
 
+    [Theory]
+    [InlineData(3u, SpirvOp.ConvertSToF)]
+    [InlineData(2u, SpirvOp.ConvertUToF)]
+    public void ScaledImageLoadUsesIntegerStorageAndReturnsFloatBits(
+        uint numberType,
+        SpirvOp expectedConversion)
+    {
+        var unifiedFormat = numberType == 3 ? 4u : 3u;
+        var opcodes = CompileImageLoadAndReadSpirvOpcodes(unifiedFormat);
+
+        Assert.Contains((ushort)SpirvOp.ImageRead, opcodes);
+        Assert.Contains((ushort)expectedConversion, opcodes);
+    }
+
     private static IReadOnlyList<ushort> CompileImageStoreAndReadSpirvOpcodes(
         uint dmask)
     {
@@ -216,6 +280,72 @@ public sealed class Gen5ImageTests
         return ReadSpirvOpcodes(shader.Spirv);
     }
 
+    private static IReadOnlyList<ushort> CompileImageLoadAndReadSpirvOpcodes(
+        uint unifiedFormat)
+    {
+        var control = new Gen5ImageControl(
+            Dmask: 0x1,
+            VectorAddress: 0,
+            AddressRegisters: [0, 1],
+            VectorData: 4,
+            ScalarResource: 8,
+            ScalarSampler: 0,
+            Dimension: 1,
+            IsArray: false,
+            Glc: false,
+            Slc: false,
+            A16: false,
+            D16: false);
+        var load = new Gen5ShaderInstruction(
+            0,
+            Gen5ShaderEncoding.Mimg,
+            "ImageLoad",
+            [],
+            [],
+            [],
+            control);
+        var end = new Gen5ShaderInstruction(
+            8,
+            Gen5ShaderEncoding.Sopp,
+            "SEndpgm",
+            [SEndpgm],
+            [],
+            [],
+            null);
+        var state = new Gen5ShaderState(
+            new Gen5ShaderProgram(ShaderAddress, [load, end]),
+            [],
+            null);
+        var scalarRegisters = new uint[256];
+        var descriptor = new uint[8];
+        descriptor[1] = unifiedFormat << 20;
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            [
+                new Gen5ImageBinding(
+                    load.Pc,
+                    load.Opcode,
+                    control,
+                    descriptor,
+                    [],
+                    null),
+            ],
+            []);
+
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                1,
+                1,
+                1,
+                out var shader,
+                out var error),
+            error);
+        return ReadSpirvOpcodes(shader.Spirv);
+    }
+
     private static IReadOnlyList<ushort> ReadSpirvOpcodes(byte[] spirv)
     {
         var opcodes = new List<ushort>();
@@ -230,6 +360,59 @@ public sealed class Gen5ImageTests
         }
 
         return opcodes;
+    }
+
+    private static bool ContainsSpirvConstant(byte[] spirv, uint value)
+    {
+        for (var offset = 5 * sizeof(uint); offset < spirv.Length;)
+        {
+            var instruction = BinaryPrimitives.ReadUInt32LittleEndian(
+                spirv.AsSpan(offset));
+            var wordCount = checked((int)(instruction >> 16));
+            if ((ushort)instruction == (ushort)SpirvOp.Constant &&
+                wordCount >= 4 &&
+                BinaryPrimitives.ReadUInt32LittleEndian(
+                    spirv.AsSpan(offset + 3 * sizeof(uint))) == value)
+            {
+                return true;
+            }
+
+            offset += wordCount * sizeof(uint);
+        }
+
+        return false;
+    }
+
+    private static Gen5ShaderProgram DecodeBvhProgram()
+    {
+        uint[] words =
+        [
+            0xF1989F07,
+            0x00040303,
+            0x43440D3F,
+            0x46424140,
+            0x00004847,
+            SEndpgm,
+        ];
+        var memory = new TestCpuMemory(ShaderAddress, 0x100);
+        Span<byte> shader = stackalloc byte[words.Length * sizeof(uint)];
+        for (var index = 0; index < words.Length; index++)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(
+                shader[(index * sizeof(uint))..],
+                words[index]);
+        }
+
+        Assert.True(memory.TryWrite(ShaderAddress, shader));
+        var ctx = new CpuContext(memory, Generation.Gen5);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                ShaderAddress,
+                out var program,
+                out var error),
+            error);
+        return program;
     }
 
     private sealed class TestCpuMemory(ulong baseAddress, int size) : ICpuMemory

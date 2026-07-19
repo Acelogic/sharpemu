@@ -120,13 +120,90 @@ public readonly record struct Gen5ComputeSystemRegisters(
     }
 }
 
+/// <summary>
+/// Static system SGPR values injected by the graphics front end for merged
+/// GFX9+ shaders. User SGPRs begin at s8 for these stages, while s0:s1 carry
+/// the indirect graphics user-data table selected by the GS register bank.
+/// </summary>
+public readonly record struct Gen5GraphicsSystemRegisters(
+    ulong IndirectUserDataAddress,
+    uint? MergedWaveInfo = null)
+{
+    public void Apply(Span<uint> scalarRegisters)
+    {
+        if (scalarRegisters.Length < 2)
+        {
+            return;
+        }
+
+        scalarRegisters[0] = unchecked((uint)IndirectUserDataAddress);
+        scalarRegisters[1] = unchecked((uint)(IndirectUserDataAddress >> 32));
+        if (MergedWaveInfo is { } mergedWaveInfo && scalarRegisters.Length > 3)
+        {
+            scalarRegisters[3] = mergedWaveInfo;
+        }
+    }
+}
+
+/// <summary>
+/// Shared storage layout used to lower a merged NGG export/geometry shader to
+/// compute, then rasterize the generated primitives with a fixed host vertex
+/// shader. Every offset is expressed in dwords within <see cref="BufferIndex"/>.
+/// </summary>
+public sealed record Gen5NggOutputLayout(
+    int BufferIndex,
+    uint MaximumPrimitiveCount,
+    uint MaximumVertexCount,
+    uint ParameterCount)
+{
+    public const uint DebugRegisterCount = 4;
+
+    public uint PrimitiveDataDwordOffset => 0;
+
+    public uint PrimitiveValidDwordOffset => MaximumPrimitiveCount;
+
+    public uint VertexValidDwordOffset => checked(MaximumPrimitiveCount * 2);
+
+    public uint PositionDwordOffset =>
+        checked(VertexValidDwordOffset + MaximumVertexCount);
+
+    public uint GetParameterDwordOffset(uint parameter)
+    {
+        if (parameter >= ParameterCount)
+        {
+            throw new ArgumentOutOfRangeException(nameof(parameter));
+        }
+
+        return checked(
+            PositionDwordOffset +
+            MaximumVertexCount * 4 * (parameter + 1));
+    }
+
+    public uint DebugRegisterDwordOffset => checked(
+        PositionDwordOffset +
+        MaximumVertexCount * 4 * (ParameterCount + 1));
+
+    // Keep a per-lane register snapshot at the end of the synthetic NGG
+    // buffer. It is ignored by the fixed raster shader and populated only
+    // when the compute-register capture environment variables select a PC.
+    // Reserving it unconditionally keeps the shader/buffer ABI stable while
+    // allowing a live Astro run to expose guest VGPRs without recompiling the
+    // host or mistaking LLDB's host CPU registers for guest GPU state.
+    public uint DwordCount => checked(
+        DebugRegisterDwordOffset +
+        MaximumVertexCount * DebugRegisterCount);
+
+    public int ByteLength => checked((int)DwordCount * sizeof(uint));
+}
+
 public sealed record Gen5ShaderState(
     Gen5ShaderProgram Program,
     IReadOnlyList<uint> UserData,
     Gen5ShaderMetadata? Metadata,
     Gen5ComputeSystemRegisters? ComputeSystemRegisters = null,
     uint UserDataScalarRegisterBase = 0,
-    uint ProgramResource1 = 0);
+    uint ProgramResource1 = 0,
+    Gen5GraphicsSystemRegisters? GraphicsSystemRegisters = null);
 
 /// <summary>
 /// Shared ABI for the per-draw scalar block consumed by translated shaders.

@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using SharpEmu.HLE;
 using SharpEmu.Libs.Agc;
 using SharpEmu.Libs.Kernel;
+using SharpEmu.ShaderCompiler;
 using Xunit;
 
 namespace SharpEmu.Libs.Tests.Agc;
@@ -15,6 +16,48 @@ public sealed class AgcRecoveredExportsTests
     private const ulong BaseAddress = 0x1_0000_0000;
     private const int IncompatiblePair = unchecked((int)0x8A6C0008);
     private const int DescriptorSize = 0x60;
+
+    [Fact]
+    public void DecodeNggGraphicsSystemRegisters_UsesIndirectGsAddressPair()
+    {
+        var registers = new Dictionary<uint, uint>
+        {
+            [0x82] = 0x89AB_CDEF,
+            [0x83] = 0x0000_0005,
+        };
+
+        var decoded = AgcExports.DecodeNggGraphicsSystemRegisters(registers);
+
+        Assert.True(decoded.HasValue);
+        Assert.Equal(0x0000_0005_89AB_CDEFUL, decoded.Value.IndirectUserDataAddress);
+        Assert.Null(
+            AgcExports.DecodeNggGraphicsSystemRegisters(
+                new Dictionary<uint, uint> { [0x82] = 0x89AB_CDEF }));
+        Assert.Null(
+            AgcExports.DecodeNggGraphicsSystemRegisters(
+                new Dictionary<uint, uint> { [0x82] = 0, [0x83] = 0 }));
+
+        var merged = AgcExports.DecodeNggGraphicsSystemRegisters(
+            new Dictionary<uint, uint>(),
+            mergedWaveInfo: 0x1000_0101);
+        Assert.True(merged.HasValue);
+        var scalarRegisters = new uint[8];
+        merged.Value.Apply(scalarRegisters);
+        Assert.Equal(0x1000_0101u, scalarRegisters[3]);
+    }
+
+    [Theory]
+    [InlineData(1u, 1u, 0x1000_0101u)]
+    [InlineData(4u, 3u, 0x1000_0103u)]
+    public void EncodeNggMergedWaveInfo_PacksThreadCounts(
+        uint primitiveType,
+        uint vertexCount,
+        uint expected)
+    {
+        Assert.Equal(
+            expected,
+            AgcExports.EncodeNggMergedWaveInfo(primitiveType, vertexCount));
+    }
 
     [Fact]
     public void GetIsTrinityMode_WritesOneZeroByteAndPreservesRax()
@@ -97,6 +140,73 @@ public sealed class AgcRecoveredExportsTests
         {
             FreeTracked(ctx, output);
         }
+    }
+
+    [Fact]
+    public void CreateShader_RegistersAdjacentGeometryPairForSetpcHandoff()
+    {
+        var memory = new FakeCpuMemory(BaseAddress, 0x4000);
+        var ctx = new CpuContext(memory, Generation.Gen5);
+        var entryHeader = BaseAddress + 0x100;
+        var continuationHeader = BaseAddress + 0x300;
+        var entryRegisters = BaseAddress + 0x600;
+        var continuationRegisters = BaseAddress + 0x700;
+        var entrySpecials = BaseAddress + 0x800;
+        var continuationSpecials = BaseAddress + 0x900;
+        var entryCode = BaseAddress + 0x1000;
+        var continuationCode = BaseAddress + 0x1700;
+        WriteCreateShaderDescriptor(
+            memory,
+            entryHeader,
+            type: 4,
+            entryRegisters,
+            entrySpecials,
+            shaderSize: 0x20);
+        WriteCreateShaderDescriptor(
+            memory,
+            continuationHeader,
+            type: 6,
+            continuationRegisters,
+            continuationSpecials,
+            shaderSize: 0x20);
+        WriteRegisters(memory, entryRegisters, (0x8A, 0), (0x8B, 0));
+        WriteRegisters(memory, continuationRegisters, (0xC8, 0), (0xC9, 0));
+        WriteUInt64(memory, entrySpecials + 8, 0);
+        WriteUInt64(memory, continuationSpecials + 8, 0);
+        WriteProgram(
+            memory,
+            entryCode,
+            0xBF800000u,
+            0xBE802006u,
+            0x30306C73u,
+            0x00000048u);
+        WriteProgram(
+            memory,
+            continuationCode,
+            0xBF800000u,
+            0xBF810000u);
+
+        ctx[CpuRegister.Rdi] = 0;
+        ctx[CpuRegister.Rsi] = entryHeader;
+        ctx[CpuRegister.Rdx] = entryCode;
+        Assert.Equal(0, AgcExports.CreateShader(ctx));
+        ctx[CpuRegister.Rsi] = continuationHeader;
+        ctx[CpuRegister.Rdx] = continuationCode;
+        Assert.Equal(0, AgcExports.CreateShader(ctx));
+
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                entryCode,
+                out var program,
+                out var error),
+            error);
+        Assert.Equal(
+            new[] { "SNop", "SNop", "SNop", "SEndpgm" },
+            program.Instructions.Select(instruction => instruction.Opcode));
+        Assert.Equal(
+            new uint[] { 0, 4, 0x700, 0x704 },
+            program.Instructions.Select(instruction => instruction.Pc));
     }
 
     [Theory]
@@ -344,6 +454,44 @@ public sealed class AgcRecoveredExportsTests
         descriptor[0x5A] = type;
         descriptor[0x5C] = registerCount;
         Assert.True(memory.TryWrite(address, descriptor));
+    }
+
+    private static void WriteCreateShaderDescriptor(
+        FakeCpuMemory memory,
+        ulong headerAddress,
+        byte type,
+        ulong registersAddress,
+        ulong specialsAddress,
+        uint shaderSize)
+    {
+        Span<byte> descriptor = stackalloc byte[DescriptorSize];
+        descriptor.Clear();
+        BinaryPrimitives.WriteUInt32LittleEndian(descriptor, 0x3433_3231);
+        BinaryPrimitives.WriteUInt32LittleEndian(descriptor[4..], 0x18);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            descriptor[0x20..],
+            registersAddress - (headerAddress + 0x20));
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            descriptor[0x28..],
+            specialsAddress - (headerAddress + 0x28));
+        BinaryPrimitives.WriteUInt32LittleEndian(descriptor[0x44..], shaderSize);
+        descriptor[0x5A] = type;
+        descriptor[0x5C] = 2;
+        Assert.True(memory.TryWrite(headerAddress, descriptor));
+    }
+
+    private static void WriteProgram(
+        FakeCpuMemory memory,
+        ulong address,
+        params uint[] words)
+    {
+        Span<byte> bytes = stackalloc byte[sizeof(uint)];
+        foreach (var word in words)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(bytes, word);
+            Assert.True(memory.TryWrite(address, bytes));
+            address += sizeof(uint);
+        }
     }
 
     private static void WriteRegisters(

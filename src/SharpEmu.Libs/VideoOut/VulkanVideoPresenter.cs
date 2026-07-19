@@ -2051,6 +2051,9 @@ internal static unsafe class VulkanVideoPresenter
             ? 0x8000_0000u | ((format & 0x1FFu) << 8) | (numberType & 0xFFu)
             : 0;
 
+    internal static Format GetTextureFormatForTests(uint format, uint numberType) =>
+        Presenter.GetTextureFormat(format, numberType);
+
     internal static SamplerCreateInfo DecodeSamplerCreateInfo(GuestSampler sampler) =>
         Presenter.DecodeSamplerCreateInfo(sampler);
 
@@ -9857,30 +9860,36 @@ internal static unsafe class VulkanVideoPresenter
         internal static Format GetTextureFormat(uint format, uint numberType) =>
             (format, numberType) switch
             {
-                (9, _) => Format.A2B10G10R10UnormPack32,
                 (1, 0) => Format.R8Unorm,
                 (1, 1) => Format.R8SNorm,
-                (1, 2) => Format.R8Uscaled,
-                (1, 3) => Format.R8Sscaled,
+                // MoltenVK cannot create the Vulkan USCALED/SSCALED image
+                // formats. Bind the bit-compatible integer format instead;
+                // the shader translator performs the required integer-to-float
+                // conversion after sampling.
+                (1, 2) => Format.R8Uint,
+                (1, 3) => Format.R8Sint,
                 (1, 4) => Format.R8Uint,
                 (1, 5) => Format.R8Sint,
                 (2, 7) => Format.R16Sfloat,
                 (2, 0) => Format.R16Unorm,
                 (2, 1) => Format.R16SNorm,
-                (2, 2) => Format.R16Uscaled,
-                (2, 3) => Format.R16Sscaled,
+                (2, 2) => Format.R16Uint,
+                (2, 3) => Format.R16Sint,
                 (2, 4) => Format.R16Uint,
                 (2, 5) => Format.R16Sint,
                 (3, 0) => Format.R8G8Unorm,
                 (3, 1) => Format.R8G8SNorm,
-                (3, 2) => Format.R8G8Uscaled,
-                (3, 3) => Format.R8G8Sscaled,
+                (3, 2) => Format.R8G8Uint,
+                (3, 3) => Format.R8G8Sint,
                 (3, 4) => Format.R8G8Uint,
                 (3, 5) => Format.R8G8Sint,
                 (4, 4) => Format.R32Uint,
                 (4, 5) => Format.R32Sint,
                 (4, 7) => Format.R32Sfloat,
                 (5, 0) => Format.R16G16Unorm,
+                (5, 1) => Format.R16G16SNorm,
+                (5, 2) => Format.R16G16Uint,
+                (5, 3) => Format.R16G16Sint,
                 (5, 4) => Format.R16G16Uint,
                 (5, 5) => Format.R16G16Sint,
                 (5, 7) => Format.R16G16Sfloat,
@@ -9892,7 +9901,16 @@ internal static unsafe class VulkanVideoPresenter
                 (8, 3) => Format.A2B10G10R10SscaledPack32,
                 (8, 4) => Format.A2B10G10R10UintPack32,
                 (8, 5) => Format.A2B10G10R10SintPack32,
+                (9, 0) => Format.A2B10G10R10UnormPack32,
+                (9, 1) => Format.A2B10G10R10SNormPack32,
+                (9, 2) => Format.A2B10G10R10UintPack32,
+                (9, 3) => Format.A2B10G10R10SintPack32,
+                (9, 4) => Format.A2B10G10R10UintPack32,
+                (9, 5) => Format.A2B10G10R10SintPack32,
                 (10, 0) => Format.R8G8B8A8Unorm,
+                (10, 1) => Format.R8G8B8A8SNorm,
+                (10, 2) => Format.R8G8B8A8Uint,
+                (10, 3) => Format.R8G8B8A8Sint,
                 (10, 4) => Format.R8G8B8A8Uint,
                 (10, 5) => Format.R8G8B8A8Sint,
                 (10, 9) => Format.R8G8B8A8Srgb,
@@ -9902,6 +9920,9 @@ internal static unsafe class VulkanVideoPresenter
                 (11, 5) => Format.R32G32Sint,
                 (11, 7) => Format.R32G32Sfloat,
                 (12, 0) => Format.R16G16B16A16Unorm,
+                (12, 1) => Format.R16G16B16A16SNorm,
+                (12, 2) => Format.R16G16B16A16Uint,
+                (12, 3) => Format.R16G16B16A16Sint,
                 (12, 4) => Format.R16G16B16A16Uint,
                 (12, 5) => Format.R16G16B16A16Sint,
                 (12, 7) => Format.R16G16B16A16Sfloat,
@@ -10586,6 +10607,37 @@ internal static unsafe class VulkanVideoPresenter
                         summary.FirstChangedOffset,
                         Math.Min(byteCount - summary.FirstChangedOffset, 32))
                     : ReadOnlySpan<byte>.Empty;
+                var changedDwords = new List<string>(96);
+                for (var offset = 0;
+                     offset + sizeof(uint) <= byteCount && changedDwords.Count < 96;
+                     offset += sizeof(uint))
+                {
+                    var mappedDword = BinaryPrimitives.ReadUInt32LittleEndian(
+                        mappedBytes.Slice(offset, sizeof(uint)));
+                    var previousDword = BinaryPrimitives.ReadUInt32LittleEndian(
+                        previousBytes.Slice(offset, sizeof(uint)));
+                    if (mappedDword != previousDword)
+                    {
+                        changedDwords.Add($"{offset / sizeof(uint)}:{mappedDword:X8}");
+                    }
+                }
+                var debugRegisterHead = new List<string>(32);
+                var debugDwordCount = checked(
+                    (int)(64 * Gen5NggOutputLayout.DebugRegisterCount));
+                var debugStartDword = Math.Max(
+                    0,
+                    byteCount / sizeof(uint) - debugDwordCount);
+                for (var dword = debugStartDword;
+                     dword < byteCount / sizeof(uint) &&
+                     debugRegisterHead.Count < 32;
+                     dword++)
+                {
+                    var value = BinaryPrimitives.ReadUInt32LittleEndian(
+                        mappedBytes.Slice(
+                            dword * sizeof(uint),
+                            sizeof(uint)));
+                    debugRegisterHead.Add($"{dword}:{value:X8}");
+                }
                 Console.Error.WriteLine(
                     "[LOADER][TRACE] " +
                     $"vk.global_writeback_full stage=post_fence_pre_publish " +
@@ -10597,7 +10649,9 @@ internal static unsafe class VulkanVideoPresenter
                     $"nonzero_bytes={summary.NonzeroBytes}/{byteCount} " +
                     $"first_changed={summary.FirstChangedOffset} " +
                     $"hash=0x{summary.Hash:X16} " +
-                    $"changed_head={Convert.ToHexString(changedHead)}");
+                    $"changed_head={Convert.ToHexString(changedHead)} " +
+                    $"changed_dwords=[{string.Join(',', changedDwords)}] " +
+                    $"debug_register_head=[{string.Join(',', debugRegisterHead)}]");
             }
         }
 

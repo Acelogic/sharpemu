@@ -15,7 +15,7 @@ public sealed class Gen5ScalarControlTests
     private const uint SEndpgm = 0xBF810000;
 
     [Fact]
-    public void STrapDecodesOpcode12AndPreservesTrapId()
+    public void STrapDecodesAndCompilesAsNoOpWithoutGuestGpuDebugger()
     {
         const uint trapId = 0x34;
         var memory = new TestCpuMemory(ShaderAddress, 0x100);
@@ -42,6 +42,24 @@ public sealed class Gen5ScalarControlTests
             item => item.Opcode == "STrap");
         Assert.Equal(Gen5ShaderEncoding.Sopp, instruction.Encoding);
         Assert.Equal(trapId, instruction.Words[0] & 0xFFFFu);
+
+        var state = new Gen5ShaderState(program, [], null);
+        var scalarRegisters = new uint[256];
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            [],
+            []);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                1,
+                1,
+                1,
+                out _,
+                out error),
+            error);
     }
 
     [Fact]

@@ -16,7 +16,9 @@ public sealed class Gen5Vop3Tests
     private const ushort OpBitFieldSExtract = 202;
     private const ushort OpBitFieldUExtract = 203;
     private const ushort OpArrayLength = 68;
+    private const ushort OpISub = 130;
     private const ushort OpULessThan = 176;
+    private const ushort OpUGreaterThan = 172;
 
     [Fact]
     public void VBfeI32DecodesFromVop3Opcode149()
@@ -43,6 +45,45 @@ public sealed class Gen5Vop3Tests
         Assert.Equal(
             unsignedOpcodes.Count(opcode => opcode == OpBitFieldUExtract),
             signedOpcodes.Count(opcode => opcode == OpBitFieldUExtract) + 1);
+    }
+
+    [Theory]
+    [InlineData(0x129u, "VSubbU32")]
+    [InlineData(0x12Au, "VSubbrevU32")]
+    public void Vop3SubtractWithBorrowDecodesAndLowers(uint opcode, string expectedName)
+    {
+        var program = DecodeProgram(opcode);
+        var instruction = Assert.Single(program.Instructions, item => item.Opcode == expectedName);
+
+        Assert.Equal(Gen5ShaderEncoding.Vop3, instruction.Encoding);
+        Assert.Equal(Gen5Operand.Vector(0), instruction.Sources[0]);
+        Assert.Equal(Gen5Operand.Scalar(0), instruction.Sources[1]);
+        Assert.Equal(Gen5Operand.Scalar(1), instruction.Sources[2]);
+        Assert.Equal(Gen5Operand.Vector(3), Assert.Single(instruction.Destinations));
+        Assert.Equal(
+            0u,
+            Assert.IsType<Gen5Vop3Control>(instruction.Control).ScalarDestination);
+
+        var spirvOpcodes = CompileAndReadSpirvOpcodes(opcode);
+        Assert.Contains(OpISub, spirvOpcodes);
+        Assert.Contains(OpULessThan, spirvOpcodes);
+    }
+
+    [Fact]
+    public void VCmpGtU64DecodesVop3ScalarDestinationAndLowersWideCompare()
+    {
+        var program = DecodeProgram(0x0E4);
+        var instruction = Assert.Single(program.Instructions, item => item.Opcode == "VCmpGtU64");
+
+        Assert.Equal(Gen5ShaderEncoding.Vop3, instruction.Encoding);
+        Assert.Equal(Gen5Operand.Vector(0), instruction.Sources[0]);
+        Assert.Equal(Gen5Operand.Scalar(0), instruction.Sources[1]);
+        Assert.Equal(Gen5Operand.Scalar(3), Assert.Single(instruction.Destinations));
+        Assert.Equal(
+            3u,
+            Assert.IsType<Gen5Vop3Control>(instruction.Control).ScalarDestination);
+
+        Assert.Contains(OpUGreaterThan, CompileAndReadSpirvOpcodes(0x0E4));
     }
 
     [Fact]

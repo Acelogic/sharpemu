@@ -15,6 +15,7 @@ public sealed class Gen5DataShareTests
     private const uint SEndpgm = 0xBF810000;
     private const ushort OpStore = 62;
     private const ushort OpAtomicIAdd = 234;
+    private const ushort OpAtomicISub = 235;
     private const ushort OpSelectionMerge = 247;
     private const ushort OpGroupNonUniformBroadcast = 337;
     private const ushort OpGroupNonUniformBallot = 339;
@@ -65,6 +66,21 @@ public sealed class Gen5DataShareTests
     }
 
     [Fact]
+    public void DsConsumeDecodesOpcode3DWithGdsDestination()
+    {
+        var program = DecodeProgram(0x3D, offset: 4, gds: true);
+
+        var instruction = Assert.Single(
+            program.Instructions,
+            item => item.Opcode == "DsConsume");
+        Assert.Empty(instruction.Sources);
+        Assert.Equal(Gen5Operand.Vector(7), Assert.Single(instruction.Destinations));
+        var control = Assert.IsType<Gen5DataShareControl>(instruction.Control);
+        Assert.Equal(4U, control.Offset0);
+        Assert.True(control.Gds);
+    }
+
+    [Fact]
     public void DsPermuteB32DecodesOpcodeB2()
     {
         var program = DecodeProgram(0xB2);
@@ -103,6 +119,37 @@ public sealed class Gen5DataShareTests
 
         var opcodes = ReadSpirvOpcodes(shader.Spirv);
         Assert.Equal(1, opcodes.Count(opcode => opcode == OpAtomicIAdd));
+        Assert.Contains(OpGroupNonUniformBallot, opcodes);
+        Assert.Contains(OpGroupNonUniformBroadcast, opcodes);
+    }
+
+    [Fact]
+    public void GdsConsumeLowersToOneDeviceAtomicSubtractAndWaveBroadcast()
+    {
+        var program = DecodeProgram(0x3D, offset: 4, gds: true);
+        var state = new Gen5ShaderState(program, [], null);
+        var scalarRegisters = new uint[256];
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            [],
+            []);
+
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                1,
+                1,
+                1,
+                out var shader,
+                out var error,
+                totalGlobalBufferCount: 1,
+                gdsBufferIndex: 0),
+            error);
+
+        var opcodes = ReadSpirvOpcodes(shader.Spirv);
+        Assert.Equal(1, opcodes.Count(opcode => opcode == OpAtomicISub));
         Assert.Contains(OpGroupNonUniformBallot, opcodes);
         Assert.Contains(OpGroupNonUniformBroadcast, opcodes);
     }

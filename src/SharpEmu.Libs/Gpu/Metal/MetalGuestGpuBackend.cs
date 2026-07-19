@@ -108,7 +108,8 @@ internal sealed class MetalGuestGpuBackend : IGuestGpuBackend
         int totalGlobalBufferCount = -1,
         int initialScalarBufferIndex = -1,
         uint waveLaneCount = 32,
-        ulong storageBufferOffsetAlignment = 1)
+        ulong storageBufferOffsetAlignment = 1,
+        int gdsBufferIndex = -1)
     {
         shader = null;
         // Wave64 compute is emulated by the translator: cross-lane ops bridge
@@ -132,6 +133,35 @@ internal sealed class MetalGuestGpuBackend : IGuestGpuBackend
 
         shader = new MetalCompiledGuestShader(compiled);
         return true;
+    }
+
+    public bool TryCompileNggComputeShader(
+        Gen5ShaderState state,
+        Gen5ShaderEvaluation evaluation,
+        Gen5NggOutputLayout outputLayout,
+        out IGuestCompiledShader? shader,
+        out string error,
+        int globalBufferBase,
+        int totalGlobalBufferCount,
+        int imageBindingBase,
+        int initialScalarBufferIndex = -1,
+        ulong storageBufferOffsetAlignment = 1)
+    {
+        shader = null;
+        error = "NGG compute/raster lowering is not implemented by the Metal backend";
+        return false;
+    }
+
+    public bool TryCreateNggRasterVertexShader(
+        Gen5NggOutputLayout outputLayout,
+        int totalGlobalBufferCount,
+        IReadOnlyList<uint> pixelInputControls,
+        out IGuestCompiledShader? shader,
+        out string error)
+    {
+        shader = null;
+        error = "NGG compute/raster lowering is not implemented by the Metal backend";
+        return false;
     }
 
     public IGuestCompiledShader GetDepthOnlyFragmentShader() =>

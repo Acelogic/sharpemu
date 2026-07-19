@@ -156,6 +156,8 @@ public static partial class AgcExports
     private const int ColorTargetCount = 8;
     private const uint PsTextureUserDataRegister = 0xC;
     private const uint VsUserDataRegister = 0x4C;
+    private const uint GsIndirectUserDataLowRegister = 0x82;
+    private const uint GsIndirectUserDataHighRegister = 0x83;
     private const uint GsUserDataRegister = 0x8C;
     private const uint EsUserDataRegister = 0xCC;
     private const uint ComputeUserDataRegister = 0x240;
@@ -186,6 +188,7 @@ public static partial class AgcExports
     // a stable synthetic identity so the Vulkan guest-buffer cache preserves
     // its contents across translated draws without exposing it as guest RAM.
     private const ulong SyntheticGdsBaseAddress = 0xFFFF_FFFE_0000_0000;
+    private const ulong SyntheticNggOutputBaseAddress = 0xFFFF_FFFD_0000_0000;
     private static readonly byte[] _persistentGds =
         new byte[Gen5SpirvTranslator.GdsByteSize];
 
@@ -272,13 +275,27 @@ public static partial class AgcExports
          ulong AliasAlignment),
         (IGuestCompiledShader Vertex, IGuestCompiledShader Pixel)> _graphicsShaderCache = new();
     private static readonly ConcurrentDictionary<
+        (ulong Es, ulong EsState, uint EsRsrc1, ulong Ps, ulong PsState,
+         uint PsRsrc1, ulong OutputLayout, uint OutputMasks, uint OutputCount, uint Attributes,
+         uint PsInputEna, uint PsInputAddr, ulong InputControls, bool UsesGds,
+         uint NggParameters, ulong AliasAlignment),
+        (IGuestCompiledShader Compute, IGuestCompiledShader Vertex,
+         IGuestCompiledShader Pixel)> _nggGraphicsShaderCache = new();
+    private static readonly ConcurrentDictionary<(ulong Shader, int Bytes), byte[]>
+        _nggOutputBuffers = new();
+    private static readonly ConcurrentDictionary<
         (ulong Cs, ulong State, uint Rsrc1, uint LocalX, uint LocalY, uint LocalZ,
-         uint WaveLanes, ulong AliasAlignment),
+         uint WaveLanes, bool UsesGds, ulong AliasAlignment),
         IGuestCompiledShader> _computeShaderCache = new();
     private static readonly ConcurrentDictionary<
         (ulong Es, ulong State, uint Rsrc1, ulong AliasAlignment),
         IGuestCompiledShader> _depthOnlyVertexShaderCache = new();
     private static readonly Dictionary<ulong, ulong> _shaderHeadersByCode = new();
+    private static readonly Dictionary<ulong, ulong> _createdShaderHeadersByCode = new();
+    private static readonly ConditionalWeakTable<
+        object,
+        ConcurrentDictionary<(ulong Code, ulong Header), byte>>
+        _embeddedCombinedShaderScanAttempts = new();
     private static readonly bool _traceAgc = string.Equals(
         Environment.GetEnvironmentVariable("SHARPEMU_LOG_AGC"),
         "1",
@@ -302,6 +319,8 @@ public static partial class AgcExports
         Environment.GetEnvironmentVariable("SHARPEMU_TRACE_PIXEL_SHADER_ADDRESS"));
     private static readonly ulong? _traceVertexShaderAddress = ParseOptionalHexAddress(
         Environment.GetEnvironmentVariable("SHARPEMU_TRACE_VERTEX_SHADER_ADDRESS"));
+    private static readonly ulong? _traceCombinedShaderAddress = ParseOptionalHexAddress(
+        Environment.GetEnvironmentVariable("SHARPEMU_TRACE_COMBINED_SHADER_ADDRESS"));
     private static readonly int? _traceGlobalBufferLength = ParseOptionalPositiveInt(
         Environment.GetEnvironmentVariable("SHARPEMU_TRACE_GLOBAL_BUFFER_LENGTH"));
     private static readonly ulong[] _traceGlobalBufferAddresses = ParseHexAddresses(
@@ -558,7 +577,13 @@ public static partial class AgcExports
         uint RawColorInfo,
         IReadOnlyList<uint> PixelInitialScalars,
         IReadOnlyList<uint> VertexInitialScalars,
-        bool UsesGds = false);
+        bool UsesGds = false,
+        TranslatedNggDraw? Ngg = null);
+
+    private sealed record TranslatedNggDraw(
+        IGuestCompiledShader ComputeShader,
+        Gen5NggOutputLayout OutputLayout,
+        GuestMemoryBuffer OutputBuffer);
 
     private sealed record TranslatedImageBinding(
         TextureDescriptor Descriptor,
@@ -834,11 +859,333 @@ public static partial class AgcExports
         lock (_submitTraceGate)
         {
             _shaderHeadersByCode[codeAddress] = headerAddress;
+            _createdShaderHeadersByCode[codeAddress] = headerAddress;
         }
+
+        TryRegisterCreatedCombinedShader(ctx, codeAddress, headerAddress);
 
         TraceCreateShader(destinationAddress, headerAddress, codeAddress, "ok");
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    private static void TryRegisterCreatedCombinedShader(
+        CpuContext ctx,
+        ulong codeAddress,
+        ulong headerAddress)
+    {
+        if (!TryReadByte(ctx, headerAddress + ShaderTypeOffset, out var shaderType))
+        {
+            return;
+        }
+
+        var currentIsEntry = shaderType is 4 or 5;
+        var requiredOtherType = shaderType switch
+        {
+            4 => (byte)6,
+            5 => (byte)7,
+            6 => (byte)4,
+            7 => (byte)5,
+            _ => byte.MaxValue,
+        };
+        if (requiredOtherType == byte.MaxValue)
+        {
+            return;
+        }
+
+        KeyValuePair<ulong, ulong>[] createdShaders;
+        lock (_submitTraceGate)
+        {
+            createdShaders = _createdShaderHeadersByCode.ToArray();
+        }
+
+        var candidates = createdShaders
+            .Where(candidate => currentIsEntry
+                ? candidate.Key > codeAddress
+                : candidate.Key < codeAddress)
+            .OrderBy(candidate => currentIsEntry
+                ? candidate.Key - codeAddress
+                : codeAddress - candidate.Key);
+        Span<byte> otherDescriptor = stackalloc byte[ShaderDescriptorSize];
+        foreach (var candidate in candidates)
+        {
+            if (!TryReadByte(
+                    ctx,
+                    candidate.Value + ShaderTypeOffset,
+                    out var candidateType) ||
+                candidateType != requiredOtherType)
+            {
+                continue;
+            }
+
+            var entryCodeAddress = currentIsEntry ? codeAddress : candidate.Key;
+            var entryHeaderAddress = currentIsEntry ? headerAddress : candidate.Value;
+            var continuationCodeAddress = currentIsEntry ? candidate.Key : codeAddress;
+            var continuationHeaderAddress = currentIsEntry ? candidate.Value : headerAddress;
+            if (continuationCodeAddress <= entryCodeAddress ||
+                continuationCodeAddress - entryCodeAddress > uint.MaxValue ||
+                !ctx.Memory.TryRead(continuationHeaderAddress, otherDescriptor) ||
+                !TryShaderPairCompatibility(
+                    ctx,
+                    entryHeaderAddress,
+                    otherDescriptor,
+                    shaderType is 5 || candidateType is 5,
+                    out var compatible) ||
+                !compatible)
+            {
+                continue;
+            }
+
+            Gen5ShaderTranslator.RegisterCombinedShader(
+                ctx,
+                entryCodeAddress,
+                entryHeaderAddress,
+                continuationCodeAddress,
+                continuationHeaderAddress);
+            lock (_submitTraceGate)
+            {
+                // The firmware-created combined object is descriptor-compatible
+                // with the continuation half. Until its separate output pointer
+                // is observed, this original header provides the same declared
+                // code size and resource metadata for translated draws.
+                _shaderHeadersByCode[entryCodeAddress] = continuationHeaderAddress;
+            }
+
+            TraceCreateShader(
+                0,
+                entryHeaderAddress,
+                entryCodeAddress,
+                $"paired continuation=0x{continuationCodeAddress:X} " +
+                $"entry_type={(currentIsEntry ? shaderType : candidateType)} " +
+                $"continuation_type={(currentIsEntry ? candidateType : shaderType)}");
+            return;
+        }
+    }
+
+    private static bool TryRegisterEmbeddedCombinedShader(
+        CpuContext ctx,
+        ulong entryCodeAddress,
+        ulong entryHeaderAddress,
+        out ulong continuationHeaderAddress)
+    {
+        continuationHeaderAddress = 0;
+        var trace = _traceCombinedShaderAddress == entryCodeAddress;
+        if (!TryReadByte(
+                ctx,
+                entryHeaderAddress + ShaderTypeOffset,
+                out var entryType))
+        {
+            if (trace)
+            {
+                Console.Error.WriteLine(
+                    $"[AGC][COMBINED-SCAN] entry=0x{entryCodeAddress:X16} " +
+                    $"header=0x{entryHeaderAddress:X16} " +
+                    $"result=unreadable-entry");
+            }
+            return false;
+        }
+
+        var attempts = _embeddedCombinedShaderScanAttempts.GetValue(
+            ctx.Memory,
+            static _ => new ConcurrentDictionary<(ulong Code, ulong Header), byte>());
+        var attemptKey = (entryCodeAddress, entryHeaderAddress);
+        if (attempts.ContainsKey(attemptKey))
+        {
+            if (trace)
+            {
+                Console.Error.WriteLine(
+                    $"[AGC][COMBINED-SCAN] entry=0x{entryCodeAddress:X16} " +
+                    $"header=0x{entryHeaderAddress:X16} result=already-attempted");
+            }
+            return false;
+        }
+
+        if (entryType is 2 or 3)
+        {
+            ulong originalEntryHeader;
+            lock (_submitTraceGate)
+            {
+                _createdShaderHeadersByCode.TryGetValue(
+                    entryCodeAddress,
+                    out originalEntryHeader);
+            }
+
+            var expectedOriginalType = entryType == 2 ? (byte)4 : (byte)5;
+            if (originalEntryHeader == 0 ||
+                !TryReadByte(
+                    ctx,
+                    originalEntryHeader + ShaderTypeOffset,
+                    out var originalEntryType) ||
+                originalEntryType != expectedOriginalType ||
+                !TryReadUInt64(
+                    ctx,
+                    entryHeaderAddress + ShaderCodeOffset,
+                    out var combinedContinuationCode) ||
+                combinedContinuationCode <= entryCodeAddress ||
+                combinedContinuationCode - entryCodeAddress > uint.MaxValue)
+            {
+                if (trace)
+                {
+                    Console.Error.WriteLine(
+                        $"[AGC][COMBINED-SCAN] entry=0x{entryCodeAddress:X16} " +
+                        $"header=0x{entryHeaderAddress:X16} type={entryType} " +
+                        $"original=0x{originalEntryHeader:X16} " +
+                        $"result=invalid-combined-descriptor");
+                }
+                return false;
+            }
+
+            Gen5ShaderTranslator.RegisterCombinedShader(
+                ctx,
+                entryCodeAddress,
+                originalEntryHeader,
+                combinedContinuationCode,
+                entryHeaderAddress);
+            attempts.TryAdd(attemptKey, 0);
+            continuationHeaderAddress = entryHeaderAddress;
+            Console.Error.WriteLine(
+                $"[LOADER][TRACE] agc.combined_shader_discovered " +
+                $"entry=0x{entryCodeAddress:X16} type={originalEntryType} " +
+                $"continuation=0x{combinedContinuationCode:X16} " +
+                $"header=0x{entryHeaderAddress:X16} type={entryType} " +
+                $"source=combined-descriptor");
+            return true;
+        }
+
+        if (entryType is not (4 or 5))
+        {
+            if (trace)
+            {
+                Console.Error.WriteLine(
+                    $"[AGC][COMBINED-SCAN] entry=0x{entryCodeAddress:X16} " +
+                    $"header=0x{entryHeaderAddress:X16} " +
+                    $"result=invalid-entry type={entryType}");
+            }
+            return false;
+        }
+
+        // AGC upload blobs place the paired continuation and its descriptor in
+        // the same mapped allocation as the entry program. The continuation's
+        // descriptor is not necessarily passed through sceAgcCreateShader on
+        // LLE-backed paths, so recover it from the ordinary 1234/v24 header.
+        const int maximumScanBytes = 64 * 1024;
+        const int readChunkBytes = 4 * 1024;
+        var uploadBytes = new byte[maximumScanBytes];
+        var bytesRead = 0;
+        while (bytesRead < uploadBytes.Length)
+        {
+            var chunkLength = Math.Min(readChunkBytes, uploadBytes.Length - bytesRead);
+            if (!ctx.Memory.TryRead(
+                    entryCodeAddress + (ulong)bytesRead,
+                    uploadBytes.AsSpan(bytesRead, chunkLength)))
+            {
+                break;
+            }
+
+            bytesRead += chunkLength;
+        }
+
+        if (bytesRead < ShaderDescriptorSize)
+        {
+            if (trace)
+            {
+                Console.Error.WriteLine(
+                    $"[AGC][COMBINED-SCAN] entry=0x{entryCodeAddress:X16} " +
+                    $"header=0x{entryHeaderAddress:X16} type={entryType} " +
+                    $"result=short-read bytes={bytesRead}");
+            }
+            return false;
+        }
+
+        if (bytesRead != uploadBytes.Length)
+        {
+            Array.Resize(ref uploadBytes, bytesRead);
+        }
+
+        attempts.TryAdd(attemptKey, 0);
+        var requiredContinuationType = entryType == 4 ? (byte)6 : (byte)7;
+        ulong bestCodeAddress = 0;
+        ulong bestHeaderAddress = 0;
+        var bestDistance = ulong.MaxValue;
+        var matchingHeaders = 0;
+        var compatibleHeaders = 0;
+        for (var offset = 0;
+             offset <= uploadBytes.Length - ShaderDescriptorSize;
+             offset += sizeof(uint))
+        {
+            var descriptor = uploadBytes.AsSpan(offset, ShaderDescriptorSize);
+            if (BinaryPrimitives.ReadUInt32LittleEndian(descriptor) != ShaderFileHeader ||
+                BinaryPrimitives.ReadUInt32LittleEndian(descriptor[sizeof(uint)..]) != ShaderVersion ||
+                descriptor[(int)ShaderTypeOffset] != requiredContinuationType)
+            {
+                continue;
+            }
+
+            matchingHeaders++;
+
+            var candidateCodeAddress = BinaryPrimitives.ReadUInt64LittleEndian(
+                descriptor[(int)ShaderCodeOffset..]);
+            var candidateSize = BinaryPrimitives.ReadUInt32LittleEndian(
+                descriptor[(int)ShaderSizeOffset..]);
+            if (candidateCodeAddress <= entryCodeAddress ||
+                candidateCodeAddress - entryCodeAddress > uint.MaxValue ||
+                candidateSize == 0 ||
+                (candidateSize & (sizeof(uint) - 1)) != 0 ||
+                !TryShaderPairCompatibility(
+                    ctx,
+                    entryHeaderAddress,
+                    descriptor,
+                    entryType == 5,
+                    out var compatible) ||
+                !compatible)
+            {
+                continue;
+            }
+
+            compatibleHeaders++;
+
+            var distance = candidateCodeAddress - entryCodeAddress;
+            if (distance >= bestDistance)
+            {
+                continue;
+            }
+
+            bestDistance = distance;
+            bestCodeAddress = candidateCodeAddress;
+            bestHeaderAddress = entryCodeAddress + (ulong)offset;
+        }
+
+        if (bestHeaderAddress == 0)
+        {
+            if (trace)
+            {
+                Console.Error.WriteLine(
+                    $"[AGC][COMBINED-SCAN] entry=0x{entryCodeAddress:X16} " +
+                    $"header=0x{entryHeaderAddress:X16} type={entryType} " +
+                    $"bytes={bytesRead} matching={matchingHeaders} " +
+                    $"compatible={compatibleHeaders} result=not-found");
+            }
+            return false;
+        }
+
+        Gen5ShaderTranslator.RegisterCombinedShader(
+            ctx,
+            entryCodeAddress,
+            entryHeaderAddress,
+            bestCodeAddress,
+            bestHeaderAddress);
+        lock (_submitTraceGate)
+        {
+            _shaderHeadersByCode[entryCodeAddress] = bestHeaderAddress;
+        }
+
+        continuationHeaderAddress = bestHeaderAddress;
+        Console.Error.WriteLine(
+            $"[LOADER][TRACE] agc.combined_shader_discovered " +
+            $"entry=0x{entryCodeAddress:X16} type={entryType} " +
+            $"continuation=0x{bestCodeAddress:X16} " +
+            $"header=0x{bestHeaderAddress:X16} type={requiredContinuationType}");
+        return true;
     }
 
     [SysAbiExport(
@@ -948,6 +1295,18 @@ public static partial class AgcExports
             return ctx.SetReturn(AgcErrorIncompatibleShaderPair);
         }
 
+        if (!TryReadUInt64(
+                ctx,
+                firstShaderAddress + ShaderCodeOffset,
+                out var firstCodeAddress) ||
+            !TryReadUInt64(
+                ctx,
+                secondShaderAddress + ShaderCodeOffset,
+                out var secondCodeAddress))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
         Span<byte> descriptor = stackalloc byte[ShaderDescriptorSize];
         if (!ctx.Memory.TryRead(secondShaderAddress, descriptor) ||
             !ctx.Memory.TryWrite(outputAddress, descriptor))
@@ -993,6 +1352,24 @@ public static partial class AgcExports
             !ctx.TryWriteUInt64(outputAddress + sizeof(ulong), 0))
         {
             return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        if (firstCodeAddress != 0 && secondCodeAddress != 0)
+        {
+            Gen5ShaderTranslator.RegisterCombinedShader(
+                ctx,
+                firstCodeAddress,
+                firstShaderAddress,
+                secondCodeAddress,
+                secondShaderAddress);
+            lock (_submitTraceGate)
+            {
+                // Draw packets execute the first code object after the combined
+                // register list is reconciled. Associate that entry with the
+                // combined descriptor so metadata/user-data comes from the
+                // second (continuation) half, matching the firmware object.
+                _shaderHeadersByCode[firstCodeAddress] = outputAddress;
+            }
         }
 
         return ctx.SetReturn(0);
@@ -4235,6 +4612,10 @@ public static partial class AgcExports
                     var vertexBuffers =
                         CreateGuestVertexBuffers(pendingComposite.VertexInputs);
                     ProvideRenderTargetInitialData(ctx, pendingDisplayTarget);
+                    SubmitNggComputePrepass(
+                        pendingComposite,
+                        textures,
+                        globalMemoryBuffers);
                     GuestGpu.Current.SubmitOffscreenTranslatedDraw(
                         pendingComposite.PixelShader,
                         textures,
@@ -4248,11 +4629,21 @@ public static partial class AgcExports
                             pendingDisplayTarget.NumberType,
                             ComponentSwap: pendingDisplayTarget.ComponentSwap)],
                         pendingComposite.VertexShader,
-                        pendingComposite.VertexCount,
-                        pendingComposite.InstanceCount,
-                        pendingComposite.PrimitiveType,
-                        pendingComposite.IndexBuffer,
-                        vertexBuffers,
+                        pendingComposite.Ngg is { } submittedNgg
+                            ? checked(submittedNgg.OutputLayout.MaximumPrimitiveCount * 3)
+                            : pendingComposite.VertexCount,
+                        pendingComposite.Ngg is null
+                            ? pendingComposite.InstanceCount
+                            : 1,
+                        pendingComposite.Ngg is null
+                            ? pendingComposite.PrimitiveType
+                            : 4,
+                        pendingComposite.Ngg is null
+                            ? pendingComposite.IndexBuffer
+                            : null,
+                        pendingComposite.Ngg is null
+                            ? vertexBuffers
+                            : null,
                         pendingComposite.RenderState,
                         pendingComposite.DepthTarget,
                         pendingComposite.PixelShaderAddress);
@@ -4298,13 +4689,25 @@ public static partial class AgcExports
                     var textures = CreateGuestDrawTextures(ctx, translatedDraw.Textures, out var fallbackTextureCount);
                     var globalMemoryBuffers =
                         CreateTranslatedDrawGlobalBuffersForPresent(ctx, translatedDraw);
+                    SubmitNggComputePrepass(
+                        translatedDraw,
+                        textures,
+                        globalMemoryBuffers);
                     GuestGpu.Current.SubmitTranslatedDraw(
                         translatedDraw.PixelShader,
                         textures,
                         globalMemoryBuffers,
                         translatedDisplayBuffer.Width,
                         translatedDisplayBuffer.Height,
-                        translatedDraw.AttributeCount);
+                        translatedDraw.AttributeCount,
+                        translatedDraw.Ngg is null
+                            ? null
+                            : translatedDraw.VertexShader,
+                        translatedDraw.Ngg is { } submittedNgg
+                            ? checked(submittedNgg.OutputLayout.MaximumPrimitiveCount * 3)
+                            : 3,
+                        instanceCount: 1,
+                        primitiveType: 4);
                     TraceAgcShader(
                         $"agc.shader_present ps=0x{translatedDraw.PixelShaderAddress:X16} " +
                         $"spirv={translatedDraw.PixelShader.Payload.Length} textures={textures.Count} " +
@@ -4451,12 +4854,27 @@ public static partial class AgcExports
         var byteCountOffset = compactLayout ? 20UL : 12UL;
         var destinationOffset = compactLayout ? 4UL : 16UL;
         var sourceOffset = compactLayout ? 12UL : 24UL;
+        var controlOffset = compactLayout ? 24UL : 4UL;
         if (!TryReadUInt32(ctx, packetAddress + byteCountOffset, out var byteCount) ||
             !TryReadUInt64(ctx, packetAddress + destinationOffset, out var destinationAddress) ||
-            !TryReadUInt64(ctx, packetAddress + sourceOffset, out var sourceAddress))
+            !TryReadUInt64(ctx, packetAddress + sourceOffset, out var sourceAddress) ||
+            !TryReadUInt32(ctx, packetAddress + controlOffset, out var control))
         {
             return;
         }
+
+        // DCB packets store destination/source selectors in control bytes 0/2;
+        // the compact ACB form stores source/destination in bytes 0/1. Selector
+        // 2 is immediate data, matching PM4 DMA_DATA's DmaDataSrc::Data value.
+        // Previously only compact packets were guessed to be immediate fills,
+        // so Astro's DCB packet (control=0x01020300, src=4) tried to copy from
+        // guest address 4 and silently left its GPU list header at zero.
+        var destinationSelector = compactLayout
+            ? (control >> 8) & 0xFFu
+            : control & 0xFFu;
+        var sourceSelector = compactLayout
+            ? control & 0xFFu
+            : (control >> 16) & 0xFFu;
 
         if (ShouldTraceGuestMemoryRange(destinationAddress, byteCount) &&
             Interlocked.Increment(ref _guestMemoryPacketProbeTraceCount) <= 256)
@@ -4476,16 +4894,21 @@ public static partial class AgcExports
             {
                 InvalidateDcbWindowIfOverlaps(destinationAddress, byteCount);
                 var immediateFill =
-                    compactLayout &&
+                    sourceSelector == 2 &&
+                    destinationSelector is 0 or 3 &&
                     destinationAddress >= 0x10000 &&
                     sourceAddress <= uint.MaxValue;
+                var memoryCopy =
+                    sourceSelector is 0 or 3 &&
+                    destinationSelector is 0 or 3;
                 var copied =
                     byteCount != 0 &&
                     byteCount <= 256u * 1024u * 1024u &&
                     destinationAddress != 0 &&
                     (immediateFill
                         ? TryFillGuestMemory(ctx, (uint)sourceAddress, destinationAddress, byteCount)
-                        : sourceAddress != 0 &&
+                        : memoryCopy &&
+                          sourceAddress != 0 &&
                           TryCopyGuestMemory(ctx, sourceAddress, destinationAddress, byteCount));
                 if (copied)
                 {
@@ -4502,6 +4925,7 @@ public static partial class AgcExports
                     TraceAgc(
                         $"agc.dcb.dma_data dst=0x{destinationAddress:X16} " +
                         $"src=0x{sourceAddress:X16} bytes={byteCount} " +
+                        $"src_sel={sourceSelector} dst_sel={destinationSelector} " +
                         $"fill={immediateFill} copied={copied}");
                 }
             },
@@ -6625,6 +7049,10 @@ public static partial class AgcExports
                     }
                 }
 
+                SubmitNggComputePrepass(
+                    translatedDraw,
+                    sharedTextures,
+                    sharedGlobalMemoryBuffers);
                 GuestGpu.Current.SubmitOffscreenTranslatedDraw(
                     translatedDraw.PixelShader,
                     sharedTextures,
@@ -6632,11 +7060,21 @@ public static partial class AgcExports
                     translatedDraw.AttributeCount,
                     translatedDraw.GuestTargets,
                     translatedDraw.VertexShader,
-                    translatedDraw.VertexCount,
-                    translatedDraw.InstanceCount,
-                    translatedDraw.PrimitiveType,
-                    translatedDraw.IndexBuffer,
-                    sharedVertexBuffers,
+                    translatedDraw.Ngg is { } submittedNgg
+                        ? checked(submittedNgg.OutputLayout.MaximumPrimitiveCount * 3)
+                        : translatedDraw.VertexCount,
+                    translatedDraw.Ngg is null
+                        ? translatedDraw.InstanceCount
+                        : 1,
+                    translatedDraw.Ngg is null
+                        ? translatedDraw.PrimitiveType
+                        : 4,
+                    translatedDraw.Ngg is null
+                        ? translatedDraw.IndexBuffer
+                        : null,
+                    translatedDraw.Ngg is null
+                        ? sharedVertexBuffers
+                        : null,
                     translatedDraw.RenderState,
                     translatedDraw.DepthTarget,
                     translatedDraw.PixelShaderAddress);
@@ -6823,6 +7261,22 @@ public static partial class AgcExports
             _shaderHeadersByCode.TryGetValue(exportShaderAddress, out exportShaderHeader);
         }
 
+        if (TryRegisterEmbeddedCombinedShader(
+                ctx,
+                exportShaderAddress,
+                exportShaderHeader,
+                out var embeddedContinuationHeader))
+        {
+            exportShaderHeader = embeddedContinuationHeader;
+        }
+
+        var isCombinedExportShader =
+            Gen5ShaderTranslator.IsCombinedShader(ctx, exportShaderAddress);
+        state.UcRegisters.TryGetValue(VgtPrimitiveType, out var primitiveType);
+        var mergedWaveInfo = isCombinedExportShader
+            ? EncodeNggMergedWaveInfo(primitiveType, vertexCount)
+            : (uint?)null;
+
         if (!Gen5ShaderTranslator.TryCreateState(
                 ctx,
                 exportShaderAddress,
@@ -6831,13 +7285,21 @@ public static partial class AgcExports
                 SelectExportUserDataRegister(state.ShRegisters),
                 out var exportState,
                 out error,
-                userDataScalarRegisterBase: NggUserDataScalarRegisterBase) ||
+                userDataScalarRegisterBase: isCombinedExportShader
+                    ? NggUserDataScalarRegisterBase
+                    : 0,
+                graphicsSystemRegisters: isCombinedExportShader
+                    ? DecodeNggGraphicsSystemRegisters(
+                        state.ShRegisters,
+                        mergedWaveInfo)
+                    : null) ||
             !Gen5ShaderScalarEvaluator.TryEvaluate(
                 ctx,
                 exportState,
                 out var exportEvaluation,
                 out error,
                 resolveVertexInputs:
+                    !isCombinedExportShader &&
                     _forceExplicitVertexFetchShaderAddress != exportShaderAddress,
                 requiredVertexRecordCount: TryGetRequiredVertexRecordCount(
                     ctx,
@@ -6938,7 +7400,6 @@ public static partial class AgcExports
 
         IReadOnlyList<Gen5VertexInputBinding> vertexInputs =
             exportEvaluation.VertexInputs ?? [];
-        state.UcRegisters.TryGetValue(VgtPrimitiveType, out var primitiveType);
         var syntheticTarget = new RenderTargetDescriptor(
             Slot: 0,
             Address: 0,
@@ -7032,6 +7493,23 @@ public static partial class AgcExports
             _shaderHeadersByCode.TryGetValue(pixelShaderAddress, out pixelShaderHeader);
         }
 
+
+        if (TryRegisterEmbeddedCombinedShader(
+                ctx,
+                exportShaderAddress,
+                exportShaderHeader,
+                out var embeddedContinuationHeader))
+        {
+            exportShaderHeader = embeddedContinuationHeader;
+        }
+
+        var isCombinedExportShader =
+            Gen5ShaderTranslator.IsCombinedShader(ctx, exportShaderAddress);
+        state.UcRegisters.TryGetValue(VgtPrimitiveType, out var primitiveType);
+        var mergedWaveInfo = isCombinedExportShader
+            ? EncodeNggMergedWaveInfo(primitiveType, vertexCount)
+            : (uint?)null;
+
         DumpShaderProgramIfRequested(
             ctx,
             "es",
@@ -7056,7 +7534,14 @@ public static partial class AgcExports
                 SelectExportUserDataRegister(state.ShRegisters),
                 out var exportState,
                 out error,
-                userDataScalarRegisterBase: NggUserDataScalarRegisterBase))
+                userDataScalarRegisterBase: isCombinedExportShader
+                    ? NggUserDataScalarRegisterBase
+                    : 0,
+                graphicsSystemRegisters: isCombinedExportShader
+                    ? DecodeNggGraphicsSystemRegisters(
+                        state.ShRegisters,
+                        mergedWaveInfo)
+                    : null))
         {
             return false;
         }
@@ -7067,6 +7552,7 @@ public static partial class AgcExports
                 out var exportEvaluation,
                 out error,
                 resolveVertexInputs:
+                    !isCombinedExportShader &&
                     _forceExplicitVertexFetchShaderAddress != exportShaderAddress,
                 requiredVertexRecordCount: TryGetRequiredVertexRecordCount(
                     ctx,
@@ -7252,25 +7738,8 @@ public static partial class AgcExports
             ? ComputeShaderStateFingerprint(pixelEvaluation)
             : ComputeShaderStructuralFingerprint(pixelEvaluation);
         var usesGds = pixelState.Program.Instructions.Any(static instruction =>
-            instruction.Opcode == "DsAppend" &&
+            (instruction.Opcode is "DsConsume" or "DsAppend") &&
             instruction.Control is Gen5DataShareControl { Gds: true });
-        var shaderKey = (
-            exportShaderAddress,
-            exportStateFingerprint,
-            exportState.ProgramResource1,
-            pixelShaderAddress,
-            pixelStateFingerprint,
-            pixelState.ProgramResource1,
-            outputLayout,
-            outputMasks,
-            (uint)renderTargets.Length,
-            attributeCount,
-            psInputEna,
-            psInputAddr,
-            inputControlsFingerprint,
-            usesGds,
-            _storageBufferOffsetAlignment);
-
         var guestGlobalBuffers =
             pixelEvaluation.GlobalMemoryBindings.Count +
             exportEvaluation.GlobalMemoryBindings.Count;
@@ -7280,24 +7749,167 @@ public static partial class AgcExports
         var gdsBufferIndex = usesGds
             ? guestGlobalBuffers + scalarBufferCount
             : -1;
-        var totalGlobalBuffers = (_bakeScalars
+        var baseGlobalBufferCount = (_bakeScalars
             ? guestGlobalBuffers
             : guestGlobalBuffers + 2) + (usesGds ? 1 : 0);
-        _graphicsShaderCache.TryGetValue(shaderKey, out var compiled);
-
-        if (compiled.Vertex is null || compiled.Pixel is null)
+        var pixelOutputs = new Gen5PixelOutputBinding[renderTargets.Length];
+        for (var location = 0; location < renderTargets.Length; location++)
         {
-            var pixelOutputs = new Gen5PixelOutputBinding[renderTargets.Length];
-            for (var location = 0; location < renderTargets.Length; location++)
+            pixelOutputs[location] = new Gen5PixelOutputBinding(
+                renderTargets[location].Slot,
+                hostOutputLocations[location],
+                renderTargetOutputKinds[location],
+                guestRenderState.Blends[location].WriteMask);
+        }
+
+        (IGuestCompiledShader Vertex, IGuestCompiledShader Pixel) compiled = default;
+        TranslatedNggDraw? translatedNgg = null;
+        var totalGlobalBuffers = baseGlobalBufferCount;
+        if (isCombinedExportShader &&
+            TryGetNggParameterCount(
+                exportState.Program,
+                primitiveType,
+                vertexCount,
+                state.InstanceCount,
+                out var nggParameterCount))
+        {
+            totalGlobalBuffers = checked(baseGlobalBufferCount + 1);
+            var nggOutputLayout = new Gen5NggOutputLayout(
+                baseGlobalBufferCount,
+                MaximumPrimitiveCount: 64,
+                MaximumVertexCount: 64,
+                nggParameterCount);
+            var nggShaderKey = (
+                exportShaderAddress,
+                exportStateFingerprint,
+                exportState.ProgramResource1,
+                pixelShaderAddress,
+                pixelStateFingerprint,
+                pixelState.ProgramResource1,
+                outputLayout,
+                outputMasks,
+                (uint)renderTargets.Length,
+                attributeCount,
+                psInputEna,
+                psInputAddr,
+                inputControlsFingerprint,
+                usesGds,
+                nggParameterCount,
+                _storageBufferOffsetAlignment);
+            _nggGraphicsShaderCache.TryGetValue(nggShaderKey, out var nggCompiled);
+            if (nggCompiled.Compute is null ||
+                nggCompiled.Vertex is null ||
+                nggCompiled.Pixel is null)
             {
-                pixelOutputs[location] = new Gen5PixelOutputBinding(
-                    renderTargets[location].Slot,
-                    hostOutputLocations[location],
-                    renderTargetOutputKinds[location],
-                    guestRenderState.Blends[location].WriteMask);
+                if (GuestGpu.Current.TryCompileNggComputeShader(
+                        exportState,
+                        exportEvaluation,
+                        nggOutputLayout,
+                        out var computeShader,
+                        out var nggError,
+                        globalBufferBase:
+                            pixelEvaluation.GlobalMemoryBindings.Count,
+                        totalGlobalBufferCount: totalGlobalBuffers,
+                        imageBindingBase: pixelEvaluation.ImageBindings.Count,
+                        initialScalarBufferIndex: _bakeScalars
+                            ? -1
+                            : guestGlobalBuffers + 1,
+                        storageBufferOffsetAlignment:
+                            _storageBufferOffsetAlignment) &&
+                    GuestGpu.Current.TryCreateNggRasterVertexShader(
+                        nggOutputLayout,
+                        totalGlobalBuffers,
+                        pixelInputControls,
+                        out var rasterShader,
+                        out nggError) &&
+                    GuestGpu.Current.TryCompilePixelShader(
+                        pixelState,
+                        pixelEvaluation,
+                        pixelOutputs,
+                        out var pixelShader,
+                        out nggError,
+                        globalBufferBase: 0,
+                        totalGlobalBufferCount: totalGlobalBuffers,
+                        imageBindingBase: 0,
+                        scalarRegisterBufferIndex: _bakeScalars
+                            ? -1
+                            : guestGlobalBuffers,
+                        pixelInputEnable: psInputEna,
+                        pixelInputAddress: psInputAddr,
+                        storageBufferOffsetAlignment:
+                            _storageBufferOffsetAlignment,
+                        pixelInputControls: pixelInputControls,
+                        gdsBufferIndex: gdsBufferIndex))
+                {
+                    nggCompiled = (computeShader!, rasterShader!, pixelShader!);
+                    DumpCompiledShader(
+                        "ngg-cs",
+                        exportShaderAddress,
+                        exportStateFingerprint,
+                        nggCompiled.Compute,
+                        exportState.Program);
+                    DumpCompiledShader(
+                        "ngg-raster-vs",
+                        exportShaderAddress,
+                        exportStateFingerprint,
+                        nggCompiled.Vertex,
+                        exportState.Program);
+                    DumpCompiledShader(
+                        "ps",
+                        pixelShaderAddress,
+                        pixelStateFingerprint,
+                        nggCompiled.Pixel,
+                        pixelState.Program);
+                    GuestGpu.Current.CountShaderCompilation();
+                    _nggGraphicsShaderCache.TryAdd(nggShaderKey, nggCompiled);
+                }
+                else
+                {
+                    TraceAgcShader(
+                        $"agc.ngg_lowering_unavailable es=0x{exportShaderAddress:X16} " +
+                        $"reason={nggError}");
+                }
             }
 
-            if (!GuestGpu.Current.TryCompilePixelShader(
+            if (nggCompiled.Compute is not null &&
+                nggCompiled.Vertex is not null &&
+                nggCompiled.Pixel is not null)
+            {
+                compiled = (nggCompiled.Vertex, nggCompiled.Pixel);
+                translatedNgg = new TranslatedNggDraw(
+                    nggCompiled.Compute,
+                    nggOutputLayout,
+                    CreateNggOutputBuffer(exportShaderAddress, nggOutputLayout));
+            }
+            else
+            {
+                totalGlobalBuffers = baseGlobalBufferCount;
+            }
+        }
+
+        if (translatedNgg is null)
+        {
+            var shaderKey = (
+                exportShaderAddress,
+                exportStateFingerprint,
+                exportState.ProgramResource1,
+                pixelShaderAddress,
+                pixelStateFingerprint,
+                pixelState.ProgramResource1,
+                outputLayout,
+                outputMasks,
+                (uint)renderTargets.Length,
+                attributeCount,
+                psInputEna,
+                psInputAddr,
+                inputControlsFingerprint,
+                usesGds,
+                _storageBufferOffsetAlignment);
+            _graphicsShaderCache.TryGetValue(shaderKey, out compiled);
+            if (compiled.Vertex is null || compiled.Pixel is null)
+            {
+
+                if (!GuestGpu.Current.TryCompilePixelShader(
                     pixelState,
                     pixelEvaluation,
                     pixelOutputs,
@@ -7326,27 +7938,28 @@ public static partial class AgcExports
                     storageBufferOffsetAlignment:
                         _storageBufferOffsetAlignment,
                     pixelInputControls: pixelInputControls))
-            {
-                ReturnPooledEvaluationArrays(exportEvaluation);
-                ReturnPooledEvaluationArrays(pixelEvaluation);
-                return false;
-            }
+                {
+                    ReturnPooledEvaluationArrays(exportEvaluation);
+                    ReturnPooledEvaluationArrays(pixelEvaluation);
+                    return false;
+                }
 
-            compiled = (vertexShader!, pixelShader!);
-            DumpCompiledShader(
-                "vs",
-                exportShaderAddress,
-                exportStateFingerprint,
-                compiled.Vertex,
-                exportState.Program);
-            DumpCompiledShader(
-                "ps",
-                pixelShaderAddress,
-                pixelStateFingerprint,
-                compiled.Pixel,
-                pixelState.Program);
-            GuestGpu.Current.CountShaderCompilation();
-            _graphicsShaderCache.TryAdd(shaderKey, compiled);
+                compiled = (vertexShader!, pixelShader!);
+                DumpCompiledShader(
+                    "vs",
+                    exportShaderAddress,
+                    exportStateFingerprint,
+                    compiled.Vertex,
+                    exportState.Program);
+                DumpCompiledShader(
+                    "ps",
+                    pixelShaderAddress,
+                    pixelStateFingerprint,
+                    compiled.Pixel,
+                    pixelState.Program);
+                GuestGpu.Current.CountShaderCompilation();
+                _graphicsShaderCache.TryAdd(shaderKey, compiled);
+            }
         }
 
         var imageBindings = pixelEvaluation.ImageBindings
@@ -7419,7 +8032,6 @@ public static partial class AgcExports
         }
         IReadOnlyList<Gen5VertexInputBinding> vertexInputs =
             exportEvaluation.VertexInputs ?? [];
-        state.UcRegisters.TryGetValue(VgtPrimitiveType, out var primitiveType);
         var guestTargets = new GuestRenderTarget[hostRenderTargets.Length];
         for (var index = 0; index < hostRenderTargets.Length; index++)
         {
@@ -7452,15 +8064,17 @@ public static partial class AgcExports
             exportShaderAddress,
             pixelShaderAddress,
             primitiveType,
-            compiled.Vertex,
-            compiled.Pixel,
+            compiled.Vertex!,
+            compiled.Pixel!,
             GetInterpolatedAttributeCount(pixelState),
             vertexCount,
             state.InstanceCount,
-            indexed ? CreateGuestIndexBuffer(ctx, state, vertexCount) : null,
+            translatedNgg is null && indexed
+                ? CreateGuestIndexBuffer(ctx, state, vertexCount)
+                : null,
             textures,
             globalMemoryBindings,
-            vertexInputs,
+            translatedNgg is null ? vertexInputs : [],
             renderTargets,
             DecodeDepthTarget(state.CxRegisters),
             guestTargets,
@@ -7474,8 +8088,67 @@ public static partial class AgcExports
                 : 0,
             pixelEvaluation.InitialScalarRegisters,
             exportEvaluation.InitialScalarRegisters,
-            UsesGds: usesGds);
+            UsesGds: usesGds,
+            Ngg: translatedNgg);
         return true;
+    }
+
+    private static bool TryGetNggParameterCount(
+        Gen5ShaderProgram program,
+        uint primitiveType,
+        uint vertexCount,
+        uint instanceCount,
+        out uint parameterCount)
+    {
+        parameterCount = 0;
+        if (primitiveType != 1 ||
+            vertexCount is 0 or > 64 ||
+            instanceCount != 1 ||
+            !program.Instructions.Any(static instruction =>
+                instruction.Opcode == "SBarrier"))
+        {
+            return false;
+        }
+
+        var hasPrimitiveExport = false;
+        var hasPositionExport = false;
+        foreach (var instruction in program.Instructions)
+        {
+            if (instruction.Control is not Gen5ExportControl export)
+            {
+                continue;
+            }
+
+            hasPrimitiveExport |= export.Target == 20;
+            hasPositionExport |= export.Target == 12;
+            if (export.Target is >= 32 and < 64)
+            {
+                parameterCount = Math.Max(
+                    parameterCount,
+                    export.Target - 31);
+            }
+        }
+
+        return hasPrimitiveExport && hasPositionExport;
+    }
+
+    private static GuestMemoryBuffer CreateNggOutputBuffer(
+        ulong exportShaderAddress,
+        Gen5NggOutputLayout layout)
+    {
+        var data = _nggOutputBuffers.GetOrAdd(
+            (exportShaderAddress, layout.ByteLength),
+            static key => new byte[key.Bytes]);
+        var address = checked(
+            SyntheticNggOutputBaseAddress +
+            (exportShaderAddress & 0x0000_0000_0FFF_F000ul));
+        return new GuestMemoryBuffer(
+            address,
+            data,
+            layout.ByteLength,
+            Pooled: false,
+            Writable: true,
+            WriteBackToGuest: false);
     }
 
     private static void TraceVertexBufferState(
@@ -7498,6 +8171,11 @@ public static partial class AgcExports
                 .Skip(16)
                 .Take(20)
                 .Select((value, index) => $"s{index + 16}={value:X8}"));
+        var initialSystemScalars = string.Join(
+            ',',
+            evaluation.InitialScalarRegisters
+                .Take(16)
+                .Select((value, index) => $"s{index}={value:X8}"));
         var evaluatedScalars = string.Join(
             ',',
             evaluation.ScalarRegisters
@@ -7562,6 +8240,7 @@ public static partial class AgcExports
             $"es=0x{exportShaderAddress:X16} ps=0x{pixelShaderAddress:X16} " +
             $"draw_count={drawCount} instances={state.InstanceCount} " +
             $"indexed={(indexed ? 1 : 0)} " +
+            $"system=[{initialSystemScalars}] " +
             $"initial=[{initialScalars}] evaluated=[{evaluatedScalars}] " +
             $"vertex_inputs=[{evaluatedVertexInputs}] " +
             $"bindings=[{bindings}]");
@@ -7569,6 +8248,12 @@ public static partial class AgcExports
         state.CxRegisters.TryGetValue(VgtShaderStagesEn, out var shaderStages);
         state.ShRegisters.TryGetValue(SpiShaderPgmRsrc1Gs, out var gsRsrc1);
         state.ShRegisters.TryGetValue(SpiShaderPgmRsrc2Gs, out var gsRsrc2);
+        state.ShRegisters.TryGetValue(
+            GsIndirectUserDataLowRegister,
+            out var gsIndirectUserDataLow);
+        state.ShRegisters.TryGetValue(
+            GsIndirectUserDataHighRegister,
+            out var gsIndirectUserDataHigh);
         state.UcRegisters.TryGetValue(GeCntl, out var geCntl);
         state.UcRegisters.TryGetValue(GeUserVgprEn, out var geUserVgprEn);
         state.UcRegisters.TryGetValue(GeUserVgpr1, out var geUserVgpr1);
@@ -7585,6 +8270,7 @@ public static partial class AgcExports
             $"gs_rsrc1=0x{gsRsrc1:X8}:vgpr_comp={(gsRsrc1 >> 29) & 3} " +
             $"gs_rsrc2=0x{gsRsrc2:X8}:es_vgpr_comp={(gsRsrc2 >> 16) & 3}:" +
             $"lds_size={(gsRsrc2 >> 19) & 0xFF} " +
+            $"gs_indirect_ud=0x{gsIndirectUserDataHigh:X8}{gsIndirectUserDataLow:X8} " +
             $"ge_cntl=0x{geCntl:X8} " +
             $"user_vgpr_en=0x{geUserVgprEn:X8} " +
             $"user_vgpr=[0x{geUserVgpr1:X8},0x{geUserVgpr2:X8},0x{geUserVgpr3:X8}]");
@@ -9779,13 +10465,16 @@ public static partial class AgcExports
         TranslatedGuestDraw translatedDraw)
     {
         var buffers = CreateGuestMemoryBuffers(translatedDraw.GlobalMemoryBindings);
-        if (_bakeScalars && !translatedDraw.UsesGds)
+        if (_bakeScalars && !translatedDraw.UsesGds && translatedDraw.Ngg is null)
         {
             return buffers;
         }
 
         var combined = new List<GuestMemoryBuffer>(
-            buffers.Count + (_bakeScalars ? 0 : 2) + (translatedDraw.UsesGds ? 1 : 0));
+            buffers.Count +
+            (_bakeScalars ? 0 : 2) +
+            (translatedDraw.UsesGds ? 1 : 0) +
+            (translatedDraw.Ngg is null ? 0 : 1));
         combined.AddRange(buffers);
         if (!_bakeScalars)
         {
@@ -9817,6 +10506,10 @@ public static partial class AgcExports
                 Writable: true,
                 WriteBackToGuest: false));
         }
+        if (translatedDraw.Ngg is { } ngg)
+        {
+            combined.Add(ngg.OutputBuffer);
+        }
         return combined;
     }
 
@@ -9838,6 +10531,43 @@ public static partial class AgcExports
         return view;
     }
 
+    private static void SubmitNggComputePrepass(
+        TranslatedGuestDraw draw,
+        IReadOnlyList<GuestDrawTexture> textures,
+        IReadOnlyList<GuestMemoryBuffer> globalMemoryBuffers)
+    {
+        if (draw.Ngg is not { } ngg)
+        {
+            return;
+        }
+
+        GuestGpu.Current.SubmitComputeDispatch(
+            draw.ExportShaderAddress,
+            ngg.ComputeShader,
+            textures,
+            CreateGlobalBufferOwnershipView(
+                globalMemoryBuffers,
+                ownsPooledData: false),
+            groupCountX: 1,
+            groupCountY: 1,
+            groupCountZ: 1,
+            baseGroupX: 0,
+            baseGroupY: 0,
+            baseGroupZ: 0,
+            localSizeX: 64,
+            localSizeY: 1,
+            localSizeZ: 1,
+            isIndirect: false,
+            writesGlobalMemory: true,
+            threadCountX: 64,
+            threadCountY: 1,
+            threadCountZ: 1);
+        TraceAgcShader(
+            $"agc.ngg_compute_submit es=0x{draw.ExportShaderAddress:X16} " +
+            $"output=0x{ngg.OutputBuffer.BaseAddress:X16}:" +
+            $"{ngg.OutputBuffer.Length}");
+    }
+
     /// <summary>
     /// Present-time variant: the flip path can reuse the same translated
     /// draw across several flips and swapchain retries, so it must not wrap
@@ -9850,7 +10580,10 @@ public static partial class AgcExports
     {
         var bindings = translatedDraw.GlobalMemoryBindings;
         var combined = new List<GuestMemoryBuffer>(
-            bindings.Count + (_bakeScalars ? 0 : 2) + (translatedDraw.UsesGds ? 1 : 0));
+            bindings.Count +
+            (_bakeScalars ? 0 : 2) +
+            (translatedDraw.UsesGds ? 1 : 0) +
+            (translatedDraw.Ngg is null ? 0 : 1));
         foreach (var binding in bindings)
         {
             var data = new byte[Math.Max(binding.DataLength, sizeof(uint))];
@@ -9899,6 +10632,11 @@ public static partial class AgcExports
                 Pooled: false,
                 Writable: true,
                 WriteBackToGuest: false));
+        }
+
+        if (translatedDraw.Ngg is { } ngg)
+        {
+            combined.Add(ngg.OutputBuffer);
         }
 
         return combined;
@@ -10082,23 +10820,40 @@ public static partial class AgcExports
     /// one translated pipeline serves every matching shader/resource shape.
     /// </summary>
     private static IReadOnlyList<GuestMemoryBuffer> CreateTranslatedComputeGlobalBuffers(
-        Gen5ShaderEvaluation evaluation)
+        Gen5ShaderEvaluation evaluation,
+        bool usesGds)
     {
         var buffers = CreateGuestMemoryBuffers(evaluation.GlobalMemoryBindings);
-        if (_bakeScalars)
+        if (_bakeScalars && !usesGds)
         {
             return buffers;
         }
 
-        var combined = new List<GuestMemoryBuffer>(buffers.Count + 1);
+        var combined = new List<GuestMemoryBuffer>(
+            buffers.Count + (_bakeScalars ? 0 : 1) + (usesGds ? 1 : 0));
         combined.AddRange(buffers);
-        combined.Add(new GuestMemoryBuffer(
-            0,
-            PackRuntimeScalarState(
-                evaluation.InitialScalarRegisters,
-                evaluation.GlobalMemoryBindings),
-            GetRuntimeScalarBufferLength(evaluation.GlobalMemoryBindings.Count),
-            Pooled: true));
+        if (!_bakeScalars)
+        {
+            combined.Add(new GuestMemoryBuffer(
+                0,
+                PackRuntimeScalarState(
+                    evaluation.InitialScalarRegisters,
+                    evaluation.GlobalMemoryBindings),
+                GetRuntimeScalarBufferLength(evaluation.GlobalMemoryBindings.Count),
+                Pooled: true));
+        }
+
+        if (usesGds)
+        {
+            combined.Add(new GuestMemoryBuffer(
+                SyntheticGdsBaseAddress,
+                _persistentGds,
+                Gen5SpirvTranslator.GdsByteSize,
+                Pooled: false,
+                Writable: true,
+                WriteBackToGuest: false));
+        }
+
         return combined;
     }
 
@@ -11436,6 +12191,9 @@ public static partial class AgcExports
 
         var writesGlobalMemory = evaluation.GlobalMemoryBindings.Any(static binding =>
             binding.Writable);
+        var usesGds = shaderState.Program.Instructions.Any(static instruction =>
+            (instruction.Opcode is "DsConsume" or "DsAppend") &&
+            instruction.Control is Gen5DataShareControl { Gds: true });
         var gpuDispatch = false;
         var evaluationHandledByCpu = false;
         var computeError = string.Empty;
@@ -11473,7 +12231,7 @@ public static partial class AgcExports
                     $"semantic-global-write-sync-timeout sequence={semanticCopySequence}";
             }
         }
-        else if ((hasStorageBinding || writesGlobalMemory) &&
+        else if ((hasStorageBinding || writesGlobalMemory || usesGds) &&
             (ulong)localSizeX * localSizeY * localSizeZ <= 1024)
         {
             var shaderKey = (
@@ -11486,11 +12244,15 @@ public static partial class AgcExports
                 localSizeY,
                 localSizeZ,
                 dispatch.WaveLaneCount,
+                usesGds,
                 _storageBufferOffsetAlignment);
             var guestGlobalBufferCount = evaluation.GlobalMemoryBindings.Count;
-            var totalGlobalBufferCount = _bakeScalars
-                ? guestGlobalBufferCount
-                : guestGlobalBufferCount + 1;
+            var scalarBufferCount = _bakeScalars ? 0 : 1;
+            var gdsBufferIndex = usesGds
+                ? guestGlobalBufferCount + scalarBufferCount
+                : -1;
+            var totalGlobalBufferCount =
+                guestGlobalBufferCount + scalarBufferCount + (usesGds ? 1 : 0);
             _computeShaderCache.TryGetValue(shaderKey, out var computeShader);
 
             if (computeShader is null &&
@@ -11508,7 +12270,8 @@ public static partial class AgcExports
                         : guestGlobalBufferCount,
                     waveLaneCount: dispatch.WaveLaneCount,
                     storageBufferOffsetAlignment:
-                        _storageBufferOffsetAlignment))
+                        _storageBufferOffsetAlignment,
+                    gdsBufferIndex: gdsBufferIndex))
             {
                 DumpCompiledShader(
                     "cs",
@@ -11527,7 +12290,7 @@ public static partial class AgcExports
                     translatedBindings,
                     out _);
                 var globalMemoryBuffers =
-                    CreateTranslatedComputeGlobalBuffers(evaluation);
+                    CreateTranslatedComputeGlobalBuffers(evaluation, usesGds);
                 GuestGpu.Current.SubmitComputeDispatch(
                     shaderAddress,
                     computeShader,
@@ -11543,7 +12306,7 @@ public static partial class AgcExports
                     localSizeY,
                     localSizeZ,
                     dispatch.IsIndirect,
-                    writesGlobalMemory,
+                    writesGlobalMemory || usesGds,
                     dispatch.ThreadCountX,
                     dispatch.ThreadCountY,
                     dispatch.ThreadCountZ);
@@ -11978,6 +12741,54 @@ public static partial class AgcExports
             : EsUserDataRegister;
     }
 
+    internal static Gen5GraphicsSystemRegisters?
+        DecodeNggGraphicsSystemRegisters(
+            IReadOnlyDictionary<uint, uint> registers,
+            uint? mergedWaveInfo = null)
+    {
+        var hasLow = registers.TryGetValue(
+            GsIndirectUserDataLowRegister,
+            out var low);
+        var hasHigh = registers.TryGetValue(
+            GsIndirectUserDataHighRegister,
+            out var high);
+        if (mergedWaveInfo is null && (!hasLow || !hasHigh))
+        {
+            return null;
+        }
+
+        var address = low | ((ulong)high << 32);
+        if (address == 0 && mergedWaveInfo is null)
+        {
+            return null;
+        }
+
+        return new Gen5GraphicsSystemRegisters(address, mergedWaveInfo);
+    }
+
+    internal static uint EncodeNggMergedWaveInfo(
+        uint primitiveType,
+        uint vertexCount)
+    {
+        var inputPrimitiveCount = primitiveType switch
+        {
+            1 => vertexCount,
+            2 => (vertexCount + 1) / 2,
+            3 => vertexCount > 1 ? vertexCount - 1 : 0,
+            5 or 6 => vertexCount > 2 ? vertexCount - 2 : 0,
+            _ => (vertexCount + 2) / 3,
+        };
+        var esThreadCount = Math.Min(vertexCount, 64u);
+        var gsThreadCount = Math.Min(inputPrimitiveCount, 64u);
+        var waveCount = Math.Clamp(
+            (Math.Max(vertexCount, inputPrimitiveCount) + 63) / 64,
+            1u,
+            15u);
+        return esThreadCount |
+            (gsThreadCount << 8) |
+            (waveCount << 28);
+    }
+
     private static bool HasShaderResource2(
         IReadOnlyDictionary<uint, uint> registers,
         uint userDataBaseRegister) =>
@@ -12408,6 +13219,8 @@ public static partial class AgcExports
 
             if (shouldDescribe)
             {
+                var isCombinedExportShader =
+                    Gen5ShaderTranslator.IsCombinedShader(ctx, exportShaderAddress);
                 shaderDecode = $" decode={Gen5ShaderTranslator.Describe(ctx, exportShaderAddress, pixelShaderAddress)}";
                 TraceAgcShader(
                     $"agc.shader_words es=0x{exportShaderAddress:X16} " +
@@ -12420,7 +13233,12 @@ public static partial class AgcExports
                         SelectExportUserDataRegister(state.ShRegisters),
                         out var exportState,
                         out _,
-                        userDataScalarRegisterBase: NggUserDataScalarRegisterBase) &&
+                        userDataScalarRegisterBase: isCombinedExportShader
+                            ? NggUserDataScalarRegisterBase
+                            : 0,
+                        graphicsSystemRegisters: isCombinedExportShader
+                            ? DecodeNggGraphicsSystemRegisters(state.ShRegisters)
+                            : null) &&
                     Gen5ShaderTranslator.TryCreateState(
                         ctx,
                         pixelShaderAddress,
