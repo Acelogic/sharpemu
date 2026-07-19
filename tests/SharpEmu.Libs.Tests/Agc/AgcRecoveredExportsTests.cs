@@ -17,6 +17,17 @@ public sealed class AgcRecoveredExportsTests
     private const int DescriptorSize = 0x60;
 
     [Fact]
+    public void DriverRegisterOwnerReturnsExactProviderConstantWithoutTouchingGuestMemory()
+    {
+        var context = new CpuContext(new FakeCpuMemory(BaseAddress, 1), Generation.Gen5);
+        context[CpuRegister.Rdi] = 0xDEAD_BEEF;
+        context[CpuRegister.Rsi] = 0xFEED_FACE;
+
+        Assert.Equal(unchecked((int)0x8A6C9018), AgcExports.DriverRegisterOwner(context));
+        Assert.Equal(unchecked((ulong)unchecked((int)0x8A6C9018)), context[CpuRegister.Rax]);
+    }
+
+    [Fact]
     public void DcbJumpGetSize_MatchesFirmware1270AndRegistersAsLlePreferred()
     {
         var ctx = new CpuContext(new FakeCpuMemory(BaseAddress, 0x100), Generation.Gen5);

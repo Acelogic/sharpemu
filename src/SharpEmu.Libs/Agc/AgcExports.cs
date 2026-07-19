@@ -14598,57 +14598,11 @@ public static partial class AgcExports
         LibraryName = "libSceAgc")]
     public static int DriverRegisterOwner(CpuContext ctx)
     {
-        var ownerAddress = ctx[CpuRegister.Rdi];
-        var nameAddress = ctx[CpuRegister.Rsi];
-        if (ownerAddress == 0 || nameAddress == 0 ||
-            !TryReadGuestCString(
-                ctx,
-                nameAddress,
-                ResourceRegistrationMaxNameLength,
-                out var nameBytes))
-        {
-            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
-        }
-
-        var state = _submittedGpuStates.GetValue(ctx.Memory, static _ => new SubmittedGpuState());
-        uint owner;
-        lock (state.Gate)
-        {
-            if (!state.ResourceRegistrationInitialized ||
-                state.ResourceRegistrationMaxOwners != 0 &&
-                state.ResourceOwners.Count >= state.ResourceRegistrationMaxOwners)
-            {
-                return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
-            }
-
-            owner = state.NextOwner;
-            while (owner == state.DefaultOwner || state.ResourceOwners.ContainsKey(owner))
-            {
-                owner++;
-                if (owner == 0)
-                {
-                    return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
-                }
-            }
-
-            state.NextOwner = owner + 1;
-            state.ResourceOwners.Add(owner, System.Text.Encoding.UTF8.GetString(nameBytes));
-        }
-
-        if (!ctx.TryWriteUInt32(ownerAddress, owner))
-        {
-            lock (state.Gate)
-            {
-                state.ResourceOwners.Remove(owner);
-            }
-
-            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
-        }
-
-        TraceAgc(
-            $"agc.driver_register_owner out=0x{ownerAddress:X16} owner={owner} " +
-            $"name={System.Text.Encoding.UTF8.GetString(nameBytes)}");
-        return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+        // Ghidra 12.1.2_PUBLIC_20260605, developer libSceAgc.sprx
+        // provider SHA-256 prefix bc2ca28f, entry RVA 0x71C0. The complete body is
+        // `mov eax, 0x8A6C9018; ret`: it reads no arguments, writes no owner,
+        // and creates no registration state.
+        return ctx.SetReturn(unchecked((int)0x8A6C9018));
     }
 
     [SysAbiExport(

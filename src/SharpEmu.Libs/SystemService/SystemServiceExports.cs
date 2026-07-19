@@ -64,6 +64,20 @@ public static class SystemServiceExports
         return ctx.SetReturn(0);
     }
 
+    // Ghidra 12.1.2_PUBLIC_20260605, libSceSystemService.sprx
+    // SHA-256 6bcb5dd125d9d09b6053f383ba89b1613335bff5ab83870f0bd732b767f4aac9,
+    // entry RVA 0x3A80. The provider takes no arguments and sends proxy
+    // operation 0x61. SharpEmu has no automatic flag setter to disable, so the
+    // faithful provider-free fallback succeeds without altering explicit state.
+    [SysAbiExport(
+        Nid = "8Lo6Zv94aho",
+        ExportName = "sceSystemServiceDisableNoticeScreenSkipFlagAutoSet",
+        Target = Generation.Gen5,
+        LibraryName = "libSceSystemService",
+        PreferLle = true)]
+    public static int SystemServiceDisableNoticeScreenSkipFlagAutoSet(CpuContext ctx) =>
+        ctx.SetReturn(0);
+
     [SysAbiExport(
         Nid = "4veE0XiIugA",
         ExportName = "sceSystemServiceGetMainAppTitleId",

@@ -34,13 +34,18 @@ public static class WebBrowserDialogLleExports
         Target = Generation.Gen5,
         LibraryName = "libSceWebBrowserDialog",
         PreferLle = true)]
-    // Ghidra entry 00001a00; body addresses 587.
+    // Ghidra entry 00001a00; body addresses 587. When the guest provider is
+    // unavailable, its initialization path deterministically reports that the
+    // browser service is unavailable and creates no state.
     [SysAbiExport(
         Nid = "jqb7HntFQFc",
         ExportName = "sceWebBrowserDialogInitialize",
         Target = Generation.Gen5,
         LibraryName = "libSceWebBrowserDialog",
         PreferLle = true)]
+    public static int InitializeWithoutGuestProvider(CpuContext ctx) =>
+        ctx.SetReturn(unchecked((int)0x80B8000E));
+
     // Ghidra entry 000027a0; body addresses 546.
     [SysAbiExport(
         Nid = "vCaW0fgVQmc",

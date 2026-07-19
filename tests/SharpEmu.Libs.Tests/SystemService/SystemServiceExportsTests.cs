@@ -62,4 +62,38 @@ public sealed class SystemServiceExportsTests
         Assert.True(export.PreferLle);
         Assert.Equal(typeof(SystemServiceExports), export.Function.Method.DeclaringType);
     }
+
+    [Fact]
+    public void DisableNoticeScreenSkipFlagAutoSetIsNoArgumentNoOpSuccess()
+    {
+        var memory = new FakeCpuMemory(MemoryBase, 1);
+        var context = new CpuContext(memory, Generation.Gen5);
+        Assert.Equal(0, SystemServiceExports.SystemServiceSetNoticeScreenSkipFlag(context));
+        context[CpuRegister.Rdi] = 0xDEAD_BEEF;
+
+        Assert.Equal(
+            0,
+            SystemServiceExports.SystemServiceDisableNoticeScreenSkipFlagAutoSet(context));
+        Assert.Equal(0UL, context[CpuRegister.Rax]);
+
+        context[CpuRegister.Rdi] = MemoryBase;
+        Assert.Equal(0, SystemServiceExports.SystemServiceGetNoticeScreenSkipFlag(context));
+        Span<byte> flag = stackalloc byte[1];
+        Assert.True(memory.TryRead(MemoryBase, flag));
+        Assert.Equal(1, flag[0]);
+    }
+
+    [Fact]
+    public void DisableNoticeScreenSkipFlagAutoSetRegistersExactGen5Fallback()
+    {
+        var export = Assert.Single(
+            SharpEmu.Generated.SysAbiExportRegistry.CreateExports(Generation.Gen5),
+            candidate => candidate.Nid == "8Lo6Zv94aho");
+
+        Assert.Equal("sceSystemServiceDisableNoticeScreenSkipFlagAutoSet", export.Name);
+        Assert.Equal("libSceSystemService", export.LibraryName);
+        Assert.Equal(Generation.Gen5, export.Target);
+        Assert.True(export.PreferLle);
+        Assert.Equal(typeof(SystemServiceExports), export.Function.Method.DeclaringType);
+    }
 }

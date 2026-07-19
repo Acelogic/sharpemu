@@ -96,6 +96,10 @@ public static partial class KernelMemoryCompatExports
     private const int KernelStatStGenOffset = 96;
     private const int KernelStatStLspareOffset = 100;
     private const int KernelStatStBirthtimOffset = 104;
+    private const int KernelDirectoryEntryHeaderSize = 8;
+    private const int KernelDirectoryEntryAlignment = sizeof(ulong);
+    private const int KernelDirectoryEntryMaximumNameLength = 255;
+    private const int KernelDirectoryReadMaximum = 1024 * 1024;
 
     private static readonly object _fdGate = new();
     private static readonly Dictionary<int, FileStream> _openFiles = new();
@@ -206,6 +210,7 @@ public static partial class KernelMemoryCompatExports
         public required string Path { get; init; }
         public required string[] Entries { get; init; }
         public int NextIndex { get; set; }
+        public ulong NextByteOffset { get; set; }
     }
 
     private readonly record struct DirectAllocation(ulong Start, ulong Length, int MemoryType);
@@ -8289,7 +8294,8 @@ public static partial class KernelMemoryCompatExports
 
     private static int KernelGetdirentriesCore(CpuContext ctx, int fd, ulong bufferAddress, int requested, ulong basePointerAddress)
     {
-        if (fd < 0 || bufferAddress == 0 || requested < 512)
+        var minimumRecordLength = AlignKernelDirectoryEntryLength(KernelDirectoryEntryHeaderSize + 2);
+        if (fd < 0 || bufferAddress == 0 || requested < minimumRecordLength)
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
@@ -8306,7 +8312,8 @@ public static partial class KernelMemoryCompatExports
         }
 
         var currentIndex = directory.NextIndex;
-        if (basePointerAddress != 0 && !TryWriteUInt64Compat(ctx, basePointerAddress, (ulong)currentIndex))
+        if (basePointerAddress != 0 &&
+            !TryWriteUInt64Compat(ctx, basePointerAddress, directory.NextByteOffset))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -8317,38 +8324,73 @@ public static partial class KernelMemoryCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
-        var entryName = directory.Entries[currentIndex];
-        directory.NextIndex = currentIndex + 1;
+        // GTA walks the returned buffer by the uint16 d_reclen at +0x04 and
+        // reads d_type/d_namlen/d_name at +0x06/+0x07/+0x08.  Pack as many
+        // aligned Orbis dirents as the caller can accept instead of returning
+        // one synthetic 512-byte record per syscall.
+        var payload = new byte[Math.Min(requested, KernelDirectoryReadMaximum)];
+        var written = 0;
+        var nextIndex = currentIndex;
+        while (nextIndex < directory.Entries.Length)
+        {
+            var entryName = directory.Entries[nextIndex];
+            var entryBytes = Encoding.UTF8.GetBytes(entryName);
+            var nameLength = Math.Min(entryBytes.Length, KernelDirectoryEntryMaximumNameLength);
+            var recordLength = AlignKernelDirectoryEntryLength(
+                KernelDirectoryEntryHeaderSize + nameLength + 1);
+            if (recordLength > payload.Length - written)
+            {
+                break;
+            }
 
-        var entryBytes = Encoding.UTF8.GetBytes(entryName);
-        var nameLength = Math.Min(entryBytes.Length, 255);
-        var entryPath = Path.Combine(directory.Path, entryName);
-        var entryType = Directory.Exists(entryPath) ? (byte)4 : (byte)8;
+            var record = payload.AsSpan(written, recordLength);
+            var entryPath = Path.Combine(directory.Path, entryName);
+            var entryType = entryName is "." or ".." || Directory.Exists(entryPath)
+                ? (byte)4
+                : (byte)8;
+            BinaryPrimitives.WriteUInt32LittleEndian(
+                record,
+                ComputeDirectoryEntryHash(entryBytes.AsSpan(0, nameLength)));
+            BinaryPrimitives.WriteUInt16LittleEndian(record[4..], unchecked((ushort)recordLength));
+            record[6] = entryType;
+            record[7] = unchecked((byte)nameLength);
+            entryBytes.AsSpan(0, nameLength).CopyTo(record[KernelDirectoryEntryHeaderSize..]);
 
-        var payload = new byte[512];
-        BinaryPrimitives.WriteUInt32LittleEndian(payload.AsSpan(0, sizeof(uint)), ComputeDirectoryEntryHash(entryBytes.AsSpan(0, nameLength)));
-        BinaryPrimitives.WriteUInt16LittleEndian(payload.AsSpan(4, sizeof(ushort)), 512);
-        payload[6] = entryType;
-        payload[7] = unchecked((byte)nameLength);
-        entryBytes.AsSpan(0, nameLength).CopyTo(payload.AsSpan(8));
+            written += recordLength;
+            nextIndex++;
+        }
 
-        if (!TryWriteCompat(ctx, bufferAddress, payload))
+        if (written == 0)
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
+        if (!TryWriteCompat(ctx, bufferAddress, payload.AsSpan(0, written)))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
-        ctx[CpuRegister.Rax] = 512;
+        directory.NextIndex = nextIndex;
+        directory.NextByteOffset += unchecked((ulong)written);
+        ctx[CpuRegister.Rax] = unchecked((ulong)written);
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
     private static string[] EnumerateDirectoryEntries(string hostPath)
     {
-        return Directory.EnumerateFileSystemEntries(hostPath)
+        return [
+            ".",
+            "..",
+            .. Directory.EnumerateFileSystemEntries(hostPath)
             .Select(Path.GetFileName)
             .Where(static name => !string.IsNullOrEmpty(name))
             .OrderBy(static name => name, StringComparer.OrdinalIgnoreCase)
-            .ToArray()!;
+            .Select(static name => name!)
+        ];
     }
+
+    private static int AlignKernelDirectoryEntryLength(int length) =>
+        (length + KernelDirectoryEntryAlignment - 1) & -KernelDirectoryEntryAlignment;
 
     private static uint ComputeDirectoryEntryHash(ReadOnlySpan<byte> utf8Name)
     {

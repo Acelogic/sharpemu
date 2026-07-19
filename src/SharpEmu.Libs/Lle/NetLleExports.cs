@@ -13,13 +13,6 @@ namespace SharpEmu.Libs.Lle;
 
 public static class NetLleExports
 {
-    // Ghidra entry 000034a0; body addresses 10.
-    [SysAbiExport(
-        Nid = "8Kcp5d-q1Uo",
-        ExportName = "sceNetInetPton",
-        Target = Generation.Gen5,
-        LibraryName = "libSceNet",
-        PreferLle = true)]
     // Ghidra entry 00004320; body addresses 11.
     [SysAbiExport(
         Nid = "9wO9XrMsNhc",

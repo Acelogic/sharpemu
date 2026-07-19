@@ -27,6 +27,16 @@ public static class GameLiveStreamingLleExports
         Target = Generation.Gen5,
         LibraryName = "libSceGameLiveStreaming",
         PreferLle = true)]
+    public static int InitializeWithoutGuestProvider(CpuContext ctx)
+    {
+        // The Ghidra-recovered provider requires a 0x4000-byte pool. With a
+        // valid pool request but no live-streaming service, it returns the
+        // provider's deterministic unavailable result without creating state.
+        return ctx[CpuRegister.Rdi] == 0x4000
+            ? ctx.SetReturn(unchecked((int)0x80A00007))
+            : ctx.SetReturn(unchecked((int)0x80A00002));
+    }
+
     public static int MissingGuestProvider(CpuContext ctx)
     {
         if (string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORTS"), "1", StringComparison.Ordinal))

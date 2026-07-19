@@ -213,6 +213,37 @@ public sealed class ProviderLleExportsTests
     }
 
     [Fact]
+    public void WebBrowserInitializeUsesExactProviderUnavailableResult()
+    {
+        var context = new CpuContext(new NullMemory(), Generation.Gen5);
+
+        Assert.Equal(
+            unchecked((int)0x80B8000E),
+            WebBrowserDialogLleExports.InitializeWithoutGuestProvider(context));
+        Assert.Equal(
+            unchecked((ulong)unchecked((int)0x80B8000E)),
+            context[CpuRegister.Rax]);
+    }
+
+    [Theory]
+    [InlineData(0x3FFFUL, 0x80A00002U)]
+    [InlineData(0x4000UL, 0x80A00007U)]
+    public void GameLiveStreamingInitializeMatchesProviderPoolValidation(
+        ulong poolSize,
+        uint expected)
+    {
+        var context = new CpuContext(new NullMemory(), Generation.Gen5);
+        context[CpuRegister.Rdi] = poolSize;
+
+        Assert.Equal(
+            unchecked((int)expected),
+            GameLiveStreamingLleExports.InitializeWithoutGuestProvider(context));
+        Assert.Equal(
+            unchecked((ulong)unchecked((int)expected)),
+            context[CpuRegister.Rax]);
+    }
+
+    [Fact]
     public void Provider23MissingGuestProviderFallbacks_AreExplicitlyFailClosed()
     {
         var fallbacks = new Func<CpuContext, int>[]
