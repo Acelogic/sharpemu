@@ -545,10 +545,17 @@ internal static unsafe class VulkanVideoPresenter
     // to reach the presenter.  Reference counts let failed/completed work
     // retire its reservation without leaving a permanent false cache hit.
     private readonly record struct PendingGuestImageUpload(int Count, long OwnerSequence);
+    private readonly record struct GuestImageExtent(
+        uint Width,
+        uint Height,
+        ulong ByteCount,
+        uint GuestFormat,
+        Format Format,
+        uint MipLevels);
     private static readonly Dictionary<(ulong Address, uint Format), PendingGuestImageUpload>
         _pendingGuestImageUploads = new();
     private static readonly Dictionary<ulong, byte[]> _pendingGuestImageInitialData = new();
-    private static readonly Dictionary<ulong, (uint Width, uint Height, ulong ByteCount)>
+    private static readonly Dictionary<ulong, GuestImageExtent>
         _guestImageExtents = new();
     private static readonly bool _traceGuestImageEvents =
         string.Equals(
@@ -1287,7 +1294,9 @@ internal static unsafe class VulkanVideoPresenter
 
     private sealed record VulkanGuestImageCopy(
         ulong SourceAddress,
-        ulong DestinationAddress);
+        GuestImageExtent Source,
+        ulong DestinationAddress,
+        GuestImageExtent Destination);
 
     /// <summary>
     /// Reports the extent of a live guest image so DMA writes to its backing
@@ -1304,7 +1313,9 @@ internal static unsafe class VulkanVideoPresenter
         {
             if (_guestImageExtents.TryGetValue(address, out var extent))
             {
-                (width, height, byteCount) = extent;
+                width = extent.Width;
+                height = extent.Height;
+                byteCount = extent.ByteCount;
                 return true;
             }
         }
@@ -1357,16 +1368,66 @@ internal static unsafe class VulkanVideoPresenter
             if (_closed ||
                 !_guestImageExtents.TryGetValue(sourceAddress, out var source) ||
                 !_guestImageExtents.TryGetValue(destinationAddress, out var destination) ||
-                source.Width != destination.Width ||
-                source.Height != destination.Height)
+                !IsGuestImageCopyCompatible(
+                    source.Width,
+                    source.Height,
+                    source.Format,
+                    destination.Width,
+                    destination.Height,
+                    destination.Format))
             {
                 return false;
             }
 
             _guestImageWorkSequences[destinationAddress] = EnqueueGuestWorkLocked(
-                new VulkanGuestImageCopy(sourceAddress, destinationAddress));
+                new VulkanGuestImageCopy(
+                    sourceAddress,
+                    source,
+                    destinationAddress,
+                    destination));
             return true;
         }
+    }
+
+    internal static bool IsGuestImageCopyCompatible(
+        uint sourceWidth,
+        uint sourceHeight,
+        Format sourceFormat,
+        uint destinationWidth,
+        uint destinationHeight,
+        Format destinationFormat) =>
+        sourceWidth == destinationWidth &&
+        sourceHeight == destinationHeight &&
+        sourceFormat == destinationFormat;
+
+    internal static bool ShouldMirrorGuestImageCopyOnGpu(
+        bool sourceInitialized,
+        bool sourceIsCpuBacked) =>
+        sourceInitialized && !sourceIsCpuBacked;
+
+    internal static bool IsSampledGuestImageExtentCompatible(
+        uint textureWidth,
+        uint textureHeight,
+        uint tileMode,
+        uint imageWidth,
+        uint imageHeight)
+    {
+        if (textureWidth == imageWidth && textureHeight == imageHeight)
+        {
+            return true;
+        }
+
+        if (tileMode == 0 || textureWidth == 0 || textureHeight == 0)
+        {
+            return false;
+        }
+
+        // Tiled render targets at one guest address are routinely reinterpreted
+        // at different dynamic-resolution extents. ASTRO's title compositor, for
+        // example, samples a 960/1920 image through a 2432 descriptor after the
+        // alias chain has been synchronized. Restrict linear images to an exact
+        // match, but permit both directions for a non-empty tiled alias.
+        return true;
     }
 
     private static long _perfDrawCount;
@@ -7844,27 +7905,12 @@ internal static unsafe class VulkanVideoPresenter
         private static bool IsCompatibleGuestImageAlias(
             GuestDrawTexture texture,
             GuestImageResource guestImage)
-        {
-            if (guestImage.Width == texture.Width &&
-                guestImage.Height == texture.Height)
-            {
-                return true;
-            }
-
-            if (texture.TileMode == 0 ||
-                texture.Width == 0 ||
-                texture.Height == 0)
-            {
-                return false;
-            }
-
-            // Tiled render targets are routinely rebound through descriptors
-            // whose logical extent differs from the current dynamic-resolution
-            // surface.  Vulkan samples normalized coordinates from the selected
-            // image, so either direction is usable; recency decides which cached
-            // variant contains the guest allocation's current contents.
-            return true;
-        }
+            => IsSampledGuestImageExtentCompatible(
+                texture.Width,
+                texture.Height,
+                texture.TileMode,
+                guestImage.Width,
+                guestImage.Height);
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private TextureResource ResolveStorageImageResource(GuestDrawTexture texture)
@@ -8253,8 +8299,13 @@ internal static unsafe class VulkanVideoPresenter
                         _availableGuestImages[texture.Address] = guestFormat;
                     }
 
-                    _guestImageExtents[texture.Address] =
-                        (width, height, expectedSize);
+                    _guestImageExtents[texture.Address] = new GuestImageExtent(
+                        width,
+                        height,
+                        expectedSize,
+                        guestFormat,
+                        vkFormat,
+                        1);
                 }
             }
 
@@ -11717,14 +11768,46 @@ internal static unsafe class VulkanVideoPresenter
 
         private void ExecuteGuestImageCopy(VulkanGuestImageCopy work)
         {
-            if (_deviceLost ||
-                !_guestImages.TryGetValue(work.SourceAddress, out var source) ||
-                !_guestImages.TryGetValue(work.DestinationAddress, out var target) ||
-                source.Format != target.Format ||
-                source.Width != target.Width ||
-                source.Height != target.Height ||
-                !source.Initialized)
+            if (_deviceLost)
             {
+                return;
+            }
+
+            if (!TryResolveGuestImageCopyResource(
+                    work.SourceAddress,
+                    work.Source,
+                    out var source))
+            {
+                ExecuteGuestImageCopyFallback(work, "source-missing");
+                return;
+            }
+
+            if (!TryResolveGuestImageCopyResource(
+                    work.DestinationAddress,
+                    work.Destination,
+                    out var target))
+            {
+                ExecuteGuestImageCopyFallback(work, "destination-missing");
+                return;
+            }
+
+            if (source.Format != target.Format ||
+                source.Width != target.Width ||
+                source.Height != target.Height)
+            {
+                ExecuteGuestImageCopyFallback(work, "identity-mismatch");
+                return;
+            }
+
+            if (!ShouldMirrorGuestImageCopyOnGpu(
+                    source.Initialized,
+                    source.IsCpuBacked))
+            {
+                ExecuteGuestImageCopyFallback(
+                    work,
+                    source.Initialized
+                        ? "source-cpu-backed"
+                        : "source-uninitialized");
                 return;
             }
 
@@ -11821,9 +11904,81 @@ internal static unsafe class VulkanVideoPresenter
                 2,
                 exitBarriers);
             target.Initialized = true;
+            target.ContentGeneration = Interlocked.Increment(
+                ref _guestImageContentGeneration);
+            target.AliasSyncSource = null;
+            target.AliasSyncGeneration = 0;
+            TraceGuestImageGeneration(target, "image-copy");
             TraceVulkanShader(
                 $"vk.guest_image_copy src=0x{work.SourceAddress:X16} " +
                 $"dst=0x{work.DestinationAddress:X16} {source.Width}x{source.Height}");
+        }
+
+        private bool TryResolveGuestImageCopyResource(
+            ulong address,
+            GuestImageExtent extent,
+            out GuestImageResource resource)
+        {
+            static bool Matches(GuestImageResource candidate, GuestImageExtent expected) =>
+                candidate.Width == expected.Width &&
+                candidate.Height == expected.Height &&
+                candidate.MipLevels == expected.MipLevels &&
+                candidate.GuestFormat == expected.GuestFormat &&
+                candidate.Format == expected.Format;
+
+            if (_guestImages.TryGetValue(address, out var active) &&
+                Matches(active, extent))
+            {
+                resource = active;
+                return true;
+            }
+
+            foreach (var (key, candidate) in _guestImageVariants)
+            {
+                if (key.Address == address && Matches(candidate, extent))
+                {
+                    resource = candidate;
+                    return true;
+                }
+            }
+
+            resource = null!;
+            return false;
+        }
+
+        private void ExecuteGuestImageCopyFallback(
+            VulkanGuestImageCopy work,
+            string reason)
+        {
+            if (!TryResolveGuestImageCopyResource(
+                    work.DestinationAddress,
+                    work.Destination,
+                    out var target) ||
+                work.Destination.ByteCount == 0 ||
+                work.Destination.ByteCount > int.MaxValue ||
+                _guestMemory is not { } memory)
+            {
+                TraceVulkanShader(
+                    $"vk.guest_image_copy_drop src=0x{work.SourceAddress:X16} " +
+                    $"dst=0x{work.DestinationAddress:X16} reason={reason}");
+                return;
+            }
+
+            var pixels = new byte[(int)work.Destination.ByteCount];
+            if (!memory.TryRead(work.DestinationAddress, pixels))
+            {
+                TraceVulkanShader(
+                    $"vk.guest_image_copy_drop src=0x{work.SourceAddress:X16} " +
+                    $"dst=0x{work.DestinationAddress:X16} reason={reason}-guest-read");
+                return;
+            }
+
+            UploadGuestImageInitialData(target, pixels);
+            TraceGuestImageUploadPayload(target, pixels);
+            TraceVulkanShader(
+                $"vk.guest_image_copy_fallback src=0x{work.SourceAddress:X16} " +
+                $"dst=0x{work.DestinationAddress:X16} reason={reason} " +
+                $"bytes={pixels.Length}");
         }
 
         private void UploadGuestImageInitialData(GuestImageResource target, byte[] pixels)
@@ -12330,10 +12485,13 @@ internal static unsafe class VulkanVideoPresenter
                 _guestImages.Add(target.Address, retained);
                 lock (_gate)
                 {
-                    _guestImageExtents[target.Address] = (
+                    _guestImageExtents[target.Address] = new GuestImageExtent(
                         target.Width,
                         target.Height,
-                        GetTextureByteCount(target.Format, target.Width, target.Height));
+                        GetTextureByteCount(target.Format, target.Width, target.Height),
+                        guestFormat,
+                        format,
+                        mipLevels);
                 }
 
                 if (target.Width <= 1920 && target.Height <= 1080)
@@ -12481,10 +12639,13 @@ internal static unsafe class VulkanVideoPresenter
             _guestImages.Add(target.Address, resource);
             lock (_gate)
             {
-                _guestImageExtents[target.Address] = (
+                _guestImageExtents[target.Address] = new GuestImageExtent(
                     target.Width,
                     target.Height,
-                    GetTextureByteCount(target.Format, target.Width, target.Height));
+                    GetTextureByteCount(target.Format, target.Width, target.Height),
+                    guestFormat,
+                    format,
+                    mipLevels);
             }
 
             if (target.Width <= 1920 && target.Height <= 1080)

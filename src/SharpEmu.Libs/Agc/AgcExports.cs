@@ -4988,7 +4988,7 @@ public static partial class AgcExports
         if (_traceDraws && Interlocked.Increment(ref _dmaMirrorTraceCount) <= 400)
         {
             Console.Error.WriteLine(
-                $"[DMA] dst=0x{destinationAddress:X} bytes={byteCount} " +
+                $"[DMA] src=0x{sourceAddress:X} dst=0x{destinationAddress:X} bytes={byteCount} " +
                 $"fill={(fillValue is { } f ? $"0x{f:X8}" : "copy")} image={hasImage}");
         }
 
