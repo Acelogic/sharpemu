@@ -5201,14 +5201,19 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			name = _moduleManager.TryGetExport(nid, out var export)
 				? $"{export.LibraryName}:{export.Name}"
 				: nid;
-			return nid is
-				"Op8TBGY5KHg" or // pthread_cond_wait
-				"27bAgiJmOh0" or // pthread_cond_timedwait
-				"fzyMKs9kim0";   // sceKernelWaitEqueue
+			return IsExpectedBlockingImportNid(nid);
 		}
 
 		return false;
 	}
+
+	internal static bool IsExpectedBlockingImportNid(string nid) =>
+		nid is
+			"WKAXJ4XBPQ4" or // scePthreadCondWait
+			"BmMjYxmew1w" or // scePthreadCondTimedwait
+			"Op8TBGY5KHg" or // pthread_cond_wait
+			"27bAgiJmOh0" or // pthread_cond_timedwait
+			"fzyMKs9kim0";   // sceKernelWaitEqueue
 
 	private void StopStallWatchdog()
 	{

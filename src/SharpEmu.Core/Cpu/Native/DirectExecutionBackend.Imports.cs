@@ -1401,12 +1401,40 @@ public sealed partial class DirectExecutionBackend
 			return false;
 		}
 
+		if (!IsExpectedImportResult(nid, result))
+		{
+			return true;
+		}
+
+		if (!ShouldLogExpectedImportResults())
+		{
+			return false;
+		}
+
+		var key = nid + "\0" + resultValue;
+		int count;
+		lock (_importResultLogSampleGate)
+		{
+			_importResultLogSamples.TryGetValue(key, out count);
+			count++;
+			_importResultLogSamples[key] = count;
+		}
+
+		return count <= 8 || count % 10000 == 0;
+	}
+
+	internal static bool IsExpectedImportResult(string nid, OrbisGen2Result result)
+	{
+		var resultValue = unchecked((int)result);
 		var expectedFileProbeMiss =
 			result == OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND &&
 			IsExpectedFileProbeNotFoundNid(nid);
-		var expectedTimedWaitTimeout =
+		var expectedPosixTimedWaitTimeout =
 			string.Equals(nid, "27bAgiJmOh0", StringComparison.Ordinal) &&
-			unchecked((int)result) == 60;
+			resultValue == 60;
+		var expectedSceTimedWaitTimeout =
+			string.Equals(nid, "BmMjYxmew1w", StringComparison.Ordinal) &&
+			result == OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT;
 		var expectedEqueueTimeout =
 			string.Equals(nid, "fzyMKs9kim0", StringComparison.Ordinal) &&
 			result == OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT;
@@ -1428,34 +1456,16 @@ public sealed partial class DirectExecutionBackend
 		var expectedPrivacyInvalidParameter =
 			string.Equals(nid, "D-CzAxQL0XI", StringComparison.Ordinal) &&
 			resultValue == unchecked((int)0x80960009);
-		if (!expectedFileProbeMiss &&
-			!expectedTimedWaitTimeout &&
-			!expectedEqueueTimeout &&
-			!expectedMutexTrylockBusy &&
-			!expectedSemaphoreTrywaitAgain &&
-			!expectedSemaphorePollBusy &&
-			!expectedNetAcceptWouldBlock &&
-			!expectedUserServiceNoEvent &&
-			!expectedPrivacyInvalidParameter)
-		{
-			return true;
-		}
-
-		if (!ShouldLogExpectedImportResults())
-		{
-			return false;
-		}
-
-		var key = nid + "\0" + resultValue;
-		int count;
-		lock (_importResultLogSampleGate)
-		{
-			_importResultLogSamples.TryGetValue(key, out count);
-			count++;
-			_importResultLogSamples[key] = count;
-		}
-
-		return count <= 8 || count % 10000 == 0;
+		return expectedFileProbeMiss ||
+			expectedPosixTimedWaitTimeout ||
+			expectedSceTimedWaitTimeout ||
+			expectedEqueueTimeout ||
+			expectedMutexTrylockBusy ||
+			expectedSemaphoreTrywaitAgain ||
+			expectedSemaphorePollBusy ||
+			expectedNetAcceptWouldBlock ||
+			expectedUserServiceNoEvent ||
+			expectedPrivacyInvalidParameter;
 	}
 
 	private static bool ShouldLogExpectedImportResults() =>
