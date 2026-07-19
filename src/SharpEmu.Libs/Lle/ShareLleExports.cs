@@ -4,8 +4,9 @@
 //
 // Ghidra 12.1.2_PUBLIC_20260605 program: libSceShare.native.sprx
 // Analyzed provider SHA-256: 02b41c8d10cc86418a7b3182a972d0a24163791eaf67a187ac6d1df531e4560d
-// Each registration prefers the loaded guest export. The shared HLE handler
-// is deliberately fail-closed and never claims provider behavior.
+// Each registration prefers the loaded guest export. The remaining feature-
+// prohibit fallback is deliberately fail-closed and never claims provider
+// behavior; feature permit has a semantic HLE contract in ShareExports.
 
 using SharpEmu.HLE;
 
@@ -17,13 +18,6 @@ public static class ShareLleExports
     [SysAbiExport(
         Nid = "5wjxESwX68I",
         ExportName = "sceShareFeatureProhibit",
-        Target = Generation.Gen5,
-        LibraryName = "libSceShare",
-        PreferLle = true)]
-    // Ghidra entry 00006d00; body addresses 39.
-    [SysAbiExport(
-        Nid = "YBiIdcDPrxs",
-        ExportName = "sceShareFeaturePermit",
         Target = Generation.Gen5,
         LibraryName = "libSceShare",
         PreferLle = true)]
