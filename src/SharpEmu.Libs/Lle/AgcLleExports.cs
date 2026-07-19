@@ -13,13 +13,6 @@ namespace SharpEmu.Libs.Lle;
 
 public static class AgcLleExports
 {
-    // Ghidra entry 0xce50; body bytes 22.
-    [SysAbiExport(
-        Nid = "-vnlTPPXPrw",
-        ExportName = "sceAgcDcbAcquireMemGetSize",
-        Target = Generation.Gen5,
-        LibraryName = "libSceAgc",
-        PreferLle = true)]
     // Ghidra entry 0x2b10; body bytes 736.
     [SysAbiExport(
         Nid = "03RZmELWWzw",
@@ -230,13 +223,6 @@ public static class AgcLleExports
         Target = Generation.Gen5,
         LibraryName = "libSceAgc",
         PreferLle = true)]
-    // Ghidra entry 0xc360; body bytes 85.
-    [SysAbiExport(
-        Nid = "Ikfdt-rIqCE",
-        ExportName = "Ikfdt-rIqCE#G#A",
-        Target = Generation.Gen5,
-        LibraryName = "libSceAgc",
-        PreferLle = true)]
     // Ghidra entry 0xcdc0; body bytes 8.
     [SysAbiExport(
         Nid = "JOWmDrl+j20",
@@ -328,13 +314,6 @@ public static class AgcLleExports
         Target = Generation.Gen5,
         LibraryName = "libSceAgc",
         PreferLle = true)]
-    // Ghidra entry 0xd0d0; body bytes 6.
-    [SysAbiExport(
-        Nid = "QIXCsbipds0",
-        ExportName = "sceAgcDcbRewindGetSize",
-        Target = Generation.Gen5,
-        LibraryName = "libSceAgc",
-        PreferLle = true)]
     // Ghidra entry 0x7060; body bytes 187.
     [SysAbiExport(
         Nid = "QhCbS4X9Rl8",
@@ -374,13 +353,6 @@ public static class AgcLleExports
     [SysAbiExport(
         Nid = "UQGTw4xRlcM",
         ExportName = "sceAgcDcbSetUcRegistersIndirectGetSize",
-        Target = Generation.Gen5,
-        LibraryName = "libSceAgc",
-        PreferLle = true)]
-    // Ghidra entry 0xcec0; body bytes 6.
-    [SysAbiExport(
-        Nid = "VEGu4dixjUg",
-        ExportName = "sceAgcDcbJumpGetSize",
         Target = Generation.Gen5,
         LibraryName = "libSceAgc",
         PreferLle = true)]
@@ -503,13 +475,6 @@ public static class AgcLleExports
         Target = Generation.Gen5,
         LibraryName = "libSceAgc",
         PreferLle = true)]
-    // Ghidra entry 0xd160; body bytes 22.
-    [SysAbiExport(
-        Nid = "ewobAQeMo5k",
-        ExportName = "sceAgcAcbAcquireMemGetSize",
-        Target = Generation.Gen5,
-        LibraryName = "libSceAgc",
-        PreferLle = true)]
     // Ghidra entry 0xc550; body bytes 54.
     [SysAbiExport(
         Nid = "fRG-JOH5+sI",
@@ -535,13 +500,6 @@ public static class AgcLleExports
     [SysAbiExport(
         Nid = "hFQ9pUxoLQ4",
         ExportName = "sceAgcGetSemaphoreLabel",
-        Target = Generation.Gen5,
-        LibraryName = "libSceAgc",
-        PreferLle = true)]
-    // Ghidra entry 0xcda0; body bytes 6.
-    [SysAbiExport(
-        Nid = "hL7C0IRpWZI",
-        ExportName = "sceAgcCbQueueEndOfPipeActionGetSize",
         Target = Generation.Gen5,
         LibraryName = "libSceAgc",
         PreferLle = true)]
@@ -741,13 +699,6 @@ public static class AgcLleExports
         Target = Generation.Gen5,
         LibraryName = "libSceAgc",
         PreferLle = true)]
-    // Ghidra entry 0xcd90; body bytes 8.
-    [SysAbiExport(
-        Nid = "t7PlZ9nt5Lc",
-        ExportName = "sceAgcCbNopGetSize",
-        Target = Generation.Gen5,
-        LibraryName = "libSceAgc",
-        PreferLle = true)]
     // Ghidra entry 0xcd70; body bytes 6.
     [SysAbiExport(
         Nid = "uZW-mqsxkrM",
@@ -766,13 +717,6 @@ public static class AgcLleExports
     [SysAbiExport(
         Nid = "w1KFAHVqpaU",
         ExportName = "sceAgcCbBranch",
-        Target = Generation.Gen5,
-        LibraryName = "libSceAgc",
-        PreferLle = true)]
-    // Ghidra entry 0x4900; body bytes 147.
-    [SysAbiExport(
-        Nid = "w4-d0n60hdo",
-        ExportName = "sceAgcDcbSetUcRegisterDirect",
         Target = Generation.Gen5,
         LibraryName = "libSceAgc",
         PreferLle = true)]

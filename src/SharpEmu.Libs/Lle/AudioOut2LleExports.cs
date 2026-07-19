@@ -27,13 +27,6 @@ public static class AudioOut2LleExports
         Target = Generation.Gen5,
         LibraryName = "libSceAudioOut2",
         PreferLle = true)]
-    // Ghidra entry 0004ec40; body addresses 25.
-    [SysAbiExport(
-        Nid = "G1YOKDJYX2Y",
-        ExportName = "sceAudioOut2GetSpeakerArrayMemorySize",
-        Target = Generation.Gen5,
-        LibraryName = "libSceAudioOut2",
-        PreferLle = true)]
     // Ghidra entry 0004ecf0; body addresses 126.
     [SysAbiExport(
         Nid = "erCWQR5eKiQ",

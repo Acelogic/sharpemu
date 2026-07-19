@@ -205,6 +205,7 @@ public static partial class AgcExports
     private const ulong ShaderTypeOffset = 0x5A;
     private const ulong ShaderNumShRegistersOffset = 0x5C;
     private const int AgcErrorIncompatibleShaderPair = unchecked((int)0x8A6C0008);
+    private const int AgcErrorInvalidPatchDescriptor = unchecked((int)0x8A6C000C);
     private const int AgcDriverErrorInvalidArgument = unchecked((int)0x8A6DFFFF);
     private const uint AgcDriverTfRingMaximumSize = 0x4000;
     private const int ShaderDescriptorSize = 0x60;
@@ -1341,6 +1342,51 @@ public static partial class AgcExports
         AddIndirectPatchRegisters(ctx, "uc");
 
     [SysAbiExport(
+        Nid = "Ikfdt-rIqCE",
+        ExportName = "Ikfdt-rIqCE#G#A",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int ConfigureUnknownPatchDescriptor(CpuContext ctx)
+    {
+        var descriptorAddress = ctx[CpuRegister.Rdi];
+        var mode = (byte)ctx[CpuRegister.Rsi];
+        var targetAddress = ctx[CpuRegister.Rdx];
+        var count = (uint)ctx[CpuRegister.Rcx];
+
+        // Firmware 12.70 libSceAgc.sprx SHA-256
+        // 110df81f759ae3dffcc9b5e3fa062c74058518631847641b8e08a54f6b8b6e2d:
+        // Ikfdt-rIqCE at 0xc360 accepts only a descriptor tagged 0x3f at
+        // byte +1. It preserves the low two address flags and selected control
+        // bits while installing the supplied address, mode, and 20-bit count.
+        if (!TryReadByte(ctx, descriptorAddress + 1, out var tag))
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        if (tag != 0x3F)
+        {
+            return ctx.SetReturn(AgcErrorInvalidPatchDescriptor);
+        }
+
+        if (!TryReadUInt32(ctx, descriptorAddress + 4, out var addressLowAndFlags) ||
+            !TryReadUInt32(ctx, descriptorAddress + 12, out var control) ||
+            !TryWriteUInt32(
+                ctx,
+                descriptorAddress + 4,
+                (addressLowAndFlags & 0x3) | ((uint)targetAddress & 0xFFFF_FFFC)) ||
+            !TryWriteUInt32(ctx, descriptorAddress + 8, (uint)(targetAddress >> 32)) ||
+            !TryWriteUInt32(
+                ctx,
+                descriptorAddress + 12,
+                ((uint)(mode & 0x3) << 28) | (control & 0xCFF0_0000) | (count & 0x000F_FFFF)))
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    [SysAbiExport(
         Nid = "D9sr1xGUriE",
         ExportName = "sceAgcCreatePrimState",
         Target = Generation.Gen5,
@@ -2096,6 +2142,36 @@ public static partial class AgcExports
         LibraryName = "libSceAgc")]
     public static int DcbSetUcRegistersIndirect(CpuContext ctx) =>
         DcbSetRegistersIndirect(ctx, RUcRegsIndirect, "uc");
+
+    [SysAbiExport(
+        Nid = "w4-d0n60hdo",
+        ExportName = "sceAgcDcbSetUcRegisterDirect",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int DcbSetUcRegisterDirect(CpuContext ctx)
+    {
+        var commandBufferAddress = ctx[CpuRegister.Rdi];
+        var packedRegisterAndValue = ctx[CpuRegister.Rsi];
+
+        // Firmware 12.70 libSceAgc.sprx SHA-256
+        // 110df81f759ae3dffcc9b5e3fa062c74058518631847641b8e08a54f6b8b6e2d:
+        // w4-d0n60hdo at 0x4900 reserves three dwords, then emits exactly
+        // C0017900, the low 16 bits of RSI, and the high 32 bits of RSI.
+        // GTA packs the UCONFIG register offset and value into that argument.
+        if (commandBufferAddress == 0 ||
+            !TryAllocateCommandDwords(ctx, commandBufferAddress, 3, out var commandAddress) ||
+            !TryWriteUInt32(ctx, commandAddress, Pm4(3, ItSetUconfigReg, 0)) ||
+            !TryWriteUInt32(ctx, commandAddress + sizeof(uint), (uint)packedRegisterAndValue & 0xFFFF) ||
+            !TryWriteUInt32(ctx, commandAddress + (2 * sizeof(uint)), (uint)(packedRegisterAndValue >> 32)))
+        {
+            return ReturnPointer(ctx, 0);
+        }
+
+        TraceAgc(
+            $"agc.dcb_set_uc_direct buf=0x{commandBufferAddress:X16} cmd=0x{commandAddress:X16} " +
+            $"reg=0x{((uint)packedRegisterAndValue & 0xFFFF):X4} value=0x{((uint)(packedRegisterAndValue >> 32)):X8}");
+        return ReturnPointer(ctx, commandAddress);
+    }
 
     [SysAbiExport(
         Nid = "GIIW2J37e70",
@@ -12974,20 +13050,25 @@ public static partial class AgcExports
 
     private static bool PatchShaderProgramRegisters(CpuContext ctx, ulong headerAddress, ulong codeAddress)
     {
+        if (!TryReadByte(ctx, headerAddress + ShaderTypeOffset, out var shaderType))
+        {
+            return false;
+        }
+
+        // Firmware 12.70 libSceAgc.sprx SHA-256
+        // 110df81f759ae3dffcc9b5e3fa062c74058518631847641b8e08a54f6b8b6e2d,
+        // f3dg2CSgRKY at 0xe770: types 4 and 5 deliberately skip program-address
+        // relocation. They are the first half of a combined shader; the paired
+        // type 6/7 descriptor carries the address that is reconciled later.
+        if (shaderType is 4 or 5)
+        {
+            return true;
+        }
+
         if (!TryReadUInt64(ctx, headerAddress + ShaderShRegistersOffset, out var shRegistersAddress) ||
-            !TryReadByte(ctx, headerAddress + ShaderTypeOffset, out var shaderType) ||
-            !TryReadByte(ctx, headerAddress + ShaderNumShRegistersOffset, out var registerCount))
-        {
-            return false;
-        }
-
-        if (shRegistersAddress == 0 || registerCount < 2)
-        {
-            return false;
-        }
-
-        if (!TryReadUInt32(ctx, shRegistersAddress, out var loRegister) ||
-            !TryReadUInt32(ctx, shRegistersAddress + 8, out var hiRegister))
+            !TryReadByte(ctx, headerAddress + ShaderNumShRegistersOffset, out var registerCount) ||
+            shRegistersAddress == 0 ||
+            registerCount == 0)
         {
             return false;
         }
@@ -12997,29 +13078,57 @@ public static partial class AgcExports
             0 => ComputePgmLo,
             1 => SpiShaderPgmLoPs,
             2 or 6 => SpiShaderPgmLoEs,
-            4 => SpiShaderPgmLoGs,
-            7 => SpiShaderPgmLoLs,
+            3 or 7 => SpiShaderPgmLoLs,
             _ => 0u,
         };
-        var expectedHi = shaderType switch
+        if (expectedLo == 0)
         {
-            0 => ComputePgmHi,
-            1 => SpiShaderPgmHiPs,
-            2 or 6 => SpiShaderPgmHiEs,
-            4 => SpiShaderPgmHiGs,
-            7 => SpiShaderPgmHiLs,
-            _ => 0u,
-        };
-        if (expectedLo == 0 || loRegister != expectedLo || hiRegister != expectedHi)
-        {
-            TraceCreateShader(0, headerAddress, codeAddress, $"unexpected-registers type={shaderType} lo=0x{loRegister:X8} hi=0x{hiRegister:X8}");
             return false;
         }
 
-        var loValue = (uint)((codeAddress >> 8) & 0xFFFF_FFFFUL);
-        var hiValue = (uint)((codeAddress >> 40) & 0xFFUL);
-        return TryWriteUInt32(ctx, shRegistersAddress + sizeof(uint), loValue) &&
-               TryWriteUInt32(ctx, shRegistersAddress + 8 + sizeof(uint), hiValue);
+        // The provider scans the complete register table, then treats the
+        // existing LO/HI value as a relative address and adds the supplied code
+        // base. The HI component is the low byte of the following entry's value.
+        for (var index = 0; index < registerCount; index++)
+        {
+            var entryAddress = shRegistersAddress + (ulong)index * 8;
+            if (!TryReadUInt32(ctx, entryAddress, out var register))
+            {
+                return false;
+            }
+
+            if (register != expectedLo)
+            {
+                continue;
+            }
+
+            if (!TryReadUInt32(ctx, entryAddress + sizeof(uint), out var relativeLo) ||
+                !TryReadByte(ctx, entryAddress + 12, out var relativeHi))
+            {
+                return false;
+            }
+
+            var relativeAddress = ((ulong)relativeLo << 8) | ((ulong)relativeHi << 40);
+            var relocatedAddress = relativeAddress + codeAddress;
+            if (!TryWriteUInt32(
+                    ctx,
+                    entryAddress + sizeof(uint),
+                    (uint)(relocatedAddress >> 8)))
+            {
+                return false;
+            }
+
+            Span<byte> highAddress = stackalloc byte[1];
+            highAddress[0] = (byte)(relocatedAddress >> 40);
+            return ctx.Memory.TryWrite(entryAddress + 12, highAddress);
+        }
+
+        TraceCreateShader(
+            0,
+            headerAddress,
+            codeAddress,
+            $"missing-program-register type={shaderType} expected=0x{expectedLo:X8}");
+        return false;
     }
 
     private static bool IsEsGeometryShaderType(byte shaderType) =>
@@ -14061,6 +14170,69 @@ public static partial class AgcExports
 
         Console.Error.WriteLine(
             $"[LOADER][TRACE] agc.create_shader dst=0x{destinationAddress:X16} header=0x{headerAddress:X16} code=0x{codeAddress:X16} {detail}");
+    }
+
+    // Firmware 12.70 libSceAgc.sprx SHA-256
+    // 110df81f759ae3dffcc9b5e3fa062c74058518631847641b8e08a54f6b8b6e2d:
+    // -vnlTPPXPrw at 0xce50 and ewobAQeMo5k at 0xd160 return 0x20
+    // in the non-Trinity mode exposed by GetIsTrinityMode.
+    [SysAbiExport(
+        Nid = "-vnlTPPXPrw",
+        ExportName = "sceAgcDcbAcquireMemGetSize",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc",
+        PreferLle = true)]
+    public static int DcbAcquireMemGetSize(CpuContext ctx) => ReturnAgcSize(ctx, 0x20);
+
+    [SysAbiExport(
+        Nid = "ewobAQeMo5k",
+        ExportName = "sceAgcAcbAcquireMemGetSize",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc",
+        PreferLle = true)]
+    public static int AcbAcquireMemGetSize(CpuContext ctx) => ReturnAgcSize(ctx, 0x20);
+
+    // t7PlZ9nt5Lc at 0xcd90 is `lea eax,[rdi*4]; ret`.
+    [SysAbiExport(
+        Nid = "t7PlZ9nt5Lc",
+        ExportName = "sceAgcCbNopGetSize",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc",
+        PreferLle = true)]
+    public static int CbNopGetSize(CpuContext ctx) =>
+        ReturnAgcSize(ctx, unchecked((uint)ctx[CpuRegister.Rdi] * sizeof(uint)));
+
+    // hL7C0IRpWZI at 0xcda0 is `mov eax,0x20; ret`.
+    [SysAbiExport(
+        Nid = "hL7C0IRpWZI",
+        ExportName = "sceAgcCbQueueEndOfPipeActionGetSize",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc",
+        PreferLle = true)]
+    public static int CbQueueEndOfPipeActionGetSize(CpuContext ctx) => ReturnAgcSize(ctx, 0x20);
+
+    // QIXCsbipds0 at 0xd0d0 is `mov eax,8; ret`.
+    [SysAbiExport(
+        Nid = "QIXCsbipds0",
+        ExportName = "sceAgcDcbRewindGetSize",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc",
+        PreferLle = true)]
+    public static int DcbRewindGetSize(CpuContext ctx) => ReturnAgcSize(ctx, 8);
+
+    // VEGu4dixjUg at 0xcec0 is exactly `mov eax, 0x10; ret`.
+    [SysAbiExport(
+        Nid = "VEGu4dixjUg",
+        ExportName = "sceAgcDcbJumpGetSize",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc",
+        PreferLle = true)]
+    public static int DcbJumpGetSize(CpuContext ctx) => ReturnAgcSize(ctx, 0x10);
+
+    private static int ReturnAgcSize(CpuContext ctx, uint size)
+    {
+        ctx[CpuRegister.Rax] = size;
+        return unchecked((int)size);
     }
 
     [SysAbiExport(

@@ -3,6 +3,7 @@
 
 using SharpEmu.HLE;
 using SharpEmu.Libs.Kernel;
+using System.Buffers.Binary;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -427,6 +428,35 @@ public sealed class KernelMemoryCompatExportsTests
         Span<byte> hex = stackalloc byte[sizeof(uint)];
         Assert.True(memory.TryRead(firstAddress, hex));
         Assert.Equal(0xFFu, BitConverter.ToUInt32(hex));
+    }
+
+    [Fact]
+    public void Sscanf_ParsesFirmwareDecimalIntoDwordWithoutClobberingAdjacentData()
+    {
+        const ulong memoryBase = 0x1_0000_0000;
+        const ulong inputAddress = memoryBase + 0x100;
+        const ulong formatAddress = memoryBase + 0x300;
+        const ulong outputAddress = memoryBase + 0x500;
+        const ulong canary = 0xC0DEC0DECAFEBA00;
+        var memory = new FakeCpuMemory(memoryBase, 0x1000);
+        var context = new CpuContext(memory, Generation.Gen5);
+
+        memory.WriteCString(inputAddress, "23");
+        memory.WriteCString(formatAddress, "%d");
+        Span<byte> outputAndCanary = stackalloc byte[sizeof(uint) + sizeof(ulong)];
+        outputAndCanary.Fill(0xA5);
+        BinaryPrimitives.WriteUInt64LittleEndian(outputAndCanary[sizeof(uint)..], canary);
+        Assert.True(memory.TryWrite(outputAddress, outputAndCanary));
+
+        context[CpuRegister.Rdi] = inputAddress;
+        context[CpuRegister.Rsi] = formatAddress;
+        context[CpuRegister.Rdx] = outputAddress;
+
+        Assert.Equal(0, KernelMemoryCompatExports.Sscanf(context));
+        Assert.Equal(1UL, context[CpuRegister.Rax]);
+        Assert.True(memory.TryRead(outputAddress, outputAndCanary));
+        Assert.Equal(23U, BinaryPrimitives.ReadUInt32LittleEndian(outputAndCanary));
+        Assert.Equal(canary, BinaryPrimitives.ReadUInt64LittleEndian(outputAndCanary[sizeof(uint)..]));
     }
 
     [Fact]

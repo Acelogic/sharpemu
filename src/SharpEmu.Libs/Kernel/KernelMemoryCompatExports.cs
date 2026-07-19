@@ -2143,9 +2143,37 @@ public static partial class KernelMemoryCompatExports
             }
 
             var conversion = format[formatIndex++];
-            if (conversion is 'f' or 'x' or 's')
+            if (conversion is 'd' or 'f' or 'x' or 's')
             {
                 SkipSscanfWhitespace(input, ref inputIndex);
+            }
+
+            if (conversion == 'd')
+            {
+                // Firmware 12.70 libSceLibcInternal.sprx SHA-256
+                // d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a:
+                // sscanf (1Pk0qZQGeWo) at 0x611c0 enters the scanner at
+                // 0x5cc70. Its conversion dispatch at 0x5d100 sends '%d' to
+                // the signed-integer scanner at 0x5f170, whose default output
+                // is an int-sized store. GTA V reads an asset count through
+                // this path and uses it immediately as an allocation count.
+                if (!TryScanSscanfDecimal(input, ref inputIndex, width, out var value))
+                {
+                    break;
+                }
+
+                if (!suppressAssignment)
+                {
+                    var destination = GetSscanfOutputAddress(ctx, outputIndex++);
+                    if (destination == 0 || !TryWriteUInt32Compat(ctx, destination, value))
+                    {
+                        break;
+                    }
+
+                    assignments++;
+                }
+
+                continue;
             }
 
             if (conversion == 'f')
@@ -2382,6 +2410,37 @@ public static partial class KernelMemoryCompatExports
             value = unchecked(0u - value);
         }
 
+        return true;
+    }
+
+    private static bool TryScanSscanfDecimal(string input, ref int index, int width, out uint value)
+    {
+        value = 0;
+        var start = index;
+        var limit = width > 0 ? Math.Min(input.Length, start + width) : input.Length;
+        if (index < limit && input[index] is '+' or '-')
+        {
+            index++;
+        }
+
+        var digitsStart = index;
+        while (index < limit && char.IsAsciiDigit(input[index]))
+        {
+            index++;
+        }
+
+        if (index == digitsStart ||
+            !long.TryParse(
+                input.AsSpan(start, index - start),
+                NumberStyles.AllowLeadingSign,
+                CultureInfo.InvariantCulture,
+                out var signedValue))
+        {
+            index = start;
+            return false;
+        }
+
+        value = unchecked((uint)(int)signedValue);
         return true;
     }
 

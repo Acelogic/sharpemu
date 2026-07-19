@@ -13,27 +13,6 @@ namespace SharpEmu.Libs.Lle;
 
 public static class RemoteplayLleExports
 {
-    // Ghidra entry 000019e0; body addresses 18.
-    [SysAbiExport(
-        Nid = "BOwybKVa3Do",
-        ExportName = "sceRemoteplayTerminate",
-        Target = Generation.Gen5,
-        LibraryName = "libSceRemoteplay",
-        PreferLle = true)]
-    // Ghidra entry 00001b30; body addresses 89.
-    [SysAbiExport(
-        Nid = "g3PNjYKWqnQ",
-        ExportName = "sceRemoteplayGetConnectionStatus",
-        Target = Generation.Gen5,
-        LibraryName = "libSceRemoteplay",
-        PreferLle = true)]
-    // Ghidra entry 000019b0; body addresses 36.
-    [SysAbiExport(
-        Nid = "k1SwgkMSOM8",
-        ExportName = "sceRemoteplayInitialize",
-        Target = Generation.Gen5,
-        LibraryName = "libSceRemoteplay",
-        PreferLle = true)]
     public static int MissingGuestProvider(CpuContext ctx)
     {
         if (string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORTS"), "1", StringComparison.Ordinal))
