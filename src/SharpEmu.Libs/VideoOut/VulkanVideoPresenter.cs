@@ -11234,7 +11234,10 @@ internal static unsafe class VulkanVideoPresenter
                             : depthTarget;
 
                     depth = GetOrCreateGuestDepth(effectiveDepthTarget);
-                    PrepareFirstUseDepth(depth, draw.RenderState.Depth);
+                    PrepareFirstUseDepth(
+                        depth,
+                        draw.RenderState.Depth,
+                        resolution.Kind == GuestDepthExtentResolutionKind.StaleOneByOne);
                     if (clearDepthForDraw)
                     {
                         depth.GuestClearDepth = effectiveDepthTarget.ClearDepth;
@@ -12963,7 +12966,8 @@ internal static unsafe class VulkanVideoPresenter
 
         private static void PrepareFirstUseDepth(
             GuestDepthResource depth,
-            GuestDepthState state)
+            GuestDepthState state,
+            bool staleOneByOneExtent)
         {
             if (depth.Initialized || depth.InitializationSource != "none")
             {
@@ -12972,19 +12976,30 @@ internal static unsafe class VulkanVideoPresenter
 
             var effectiveClear = depth.GuestClearDepth;
             var source = "guest-clear";
-            if (state.TestEnable && !state.WriteEnable)
+            // A 1x1 DB descriptor expanded to the active color extent carries
+            // reset-sized metadata, not a trustworthy full-surface clear.  A
+            // bootstrap point draw may enable writes while touching only one
+            // sample; clearing the expanded remainder to the guest value can
+            // then reject every later fragment.  Initialize that inferred
+            // surface to the neutral value for its compare function, just as
+            // we do for a read-only first use.
+            if (state.TestEnable && (!state.WriteEnable || staleOneByOneExtent))
             {
                 switch (state.CompareOp)
                 {
                     case 1: // Less
                     case 3: // LessOrEqual
                         effectiveClear = 1f;
-                        source = "neutral-first-use";
+                        source = staleOneByOneExtent
+                            ? "neutral-stale-one-by-one"
+                            : "neutral-first-use";
                         break;
                     case 4: // Greater
                     case 6: // GreaterOrEqual
                         effectiveClear = 0f;
-                        source = "neutral-first-use";
+                        source = staleOneByOneExtent
+                            ? "neutral-stale-one-by-one"
+                            : "neutral-first-use";
                         break;
                     case 7: // Always
                         break;

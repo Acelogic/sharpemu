@@ -1,6 +1,6 @@
 # ASTRO BOT menu progress
 
-Last updated: 2026-07-17
+Last updated: 2026-07-19
 
 This is the canonical working journal. The compact decisive-experiment ledger is in
 [`docs/astro-bot/experiments.md`](docs/astro-bot/experiments.md). Earlier
@@ -15,32 +15,27 @@ diagnostic controls only.
 
 ## Current checkpoint
 
-- Worktree: `/Users/mcruz/Developer/sharpemu-astro-playable-next`
-- Branch: `main`
-- Current upstream integration: documentation tip `06e6738` over merge commit
-  `2787757`, incorporating
-  `par274/main` through `24b82a7` without dropping the ASTRO fixes. The final
-  post-validation upstream delta was CI-only (`notify-site.yml`).
-- The original-shader boot sequence renders boot art, multiple controller-symbol
-  animation frames, and the PS Studios wordmark. The F1 performance overlay is
-  enabled by default.
-- The exact live milestone `GAME: Level has started: title_controller_ship`
-  passes reproducibly after the bounded host-buffer LRU fix.
-- Semantic-aware interpolant mapping now renders the controller-symbol animation
-  with coherent geometry and substantially more accurate brightness/color.
-- E218 confirms the same ordered controller-symbol animation and PS Studios
-  wordmark survive the latest upstream merge before exact title start.
-- The title/worldmap output is still a uniform red frame rather than the
-  recognizable menu. Sustained title performance is about 1.2 FPS on macOS and
-  1.2-1.4 FPS on the current Windows control.
-- Historical E206 proves the four rotating 96 KiB CPU selector tables can be
-  populated once the title is live. E234-E236 reproduce the same 653-byte
-  refill and `list_counts=28/0/0/0` at every committed boundary through clean
-  `06e6738`. E226-E227's zero-selector result is therefore caused by the local
-  uncommitted experiment layer, not the upstream merge.
-- E232-E233 reach the same red title endpoint on Windows from the normal GUI
-  library tile with zero environment toggles. Automatic guest `INT 0x41`
-  debug-trap recovery removes the Windows-only crash at `0x8000012B4`.
+- Worktree: `/Users/mcruz/Developer/sharpemu`
+- Branch: `codex/astro-bot-menu-progress`
+- PR 412's threading work and the upstream `gpu-bootstrap-stall` history are
+  integrated. The last pushed checkpoint before this depth fix is `af7978c`.
+- The original-shader boot reaches `title_controller_ship` reproducibly and the
+  cyan radial-line scene remains the retained visual baseline.
+- A stale `DB_DEPTH_SIZE_XY=0` descriptor was being expanded from 1x1 to
+  1920x1080 while retaining a zero clear. The first depth-writing bootstrap draw
+  contains one point, so the expanded remainder rejected the later 24,192-index
+  scene draw under `LESS_EQUAL`.
+- Vulkan now gives inferred stale-one-by-one depth surfaces a compare-neutral
+  first clear even when that bootstrap draw enables depth writes. This is a
+  general inferred-surface rule, not a title shader bypass.
+- Unmodified verification run
+  `20260719-112341-title-stale-depth-neutral-fix-visual` reaches visible
+  **Sony Interactive Entertainment presents** text. The decisive frame is
+  `frame-048-t+00079.7s.png`; the log records
+  `source=neutral-stale-one-by-one`, `guest_clear=0`, `effective_clear=1`.
+- Remaining blocker: the title text and feeder output are duplicated and
+  horizontally compressed into a central band. The next boundary is viewport /
+  render-target composition and scaling, not guest timing or CPU threading.
 
 ## Solved blockers
 
@@ -48,7 +43,7 @@ diagnostic controls only.
 | --- | --- | --- |
 | Real render targets and MRT | E01-E02 | Decode the full Gen5 register state and retain typed two-target MRT support. |
 | Missing imports and JSON ABI | E03, E44, E170 | Implement the required NIDs plus stable `sce::Json::Value`/`String` reference semantics, including `referValue(const String&)`. |
-| First-use depth | E13 | Track initialization source and apply a compare-neutral first-use depth value. Do not use a title depth bypass. |
+| First-use depth | E13 and 2026-07-19 stale-extent proof | Track initialization source and apply a compare-neutral first-use depth value, including inferred stale-one-by-one surfaces whose bootstrap draw enables writes. Do not use a title depth bypass. |
 | Shader semantics | E26, E37 | Retain GFX10 literal FMA opcodes and EXEC-only `VCMPX` behavior. |
 | Render-to-texture identity | E27, E57 | Reuse compatible UNORM/SRGB mutable views and preserve the storage-image lifecycle. |
 | PS Studios video | E50 | Preserve the full FFmpeg-backed AvPlayer decode/callback/upload path during upstream merges. |
