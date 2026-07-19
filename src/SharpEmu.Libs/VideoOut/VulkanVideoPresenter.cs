@@ -10975,11 +10975,19 @@ internal static unsafe class VulkanVideoPresenter
                 }
             }
 
-            if (work.Draw.RenderState.Blends.Count != targetFormats.Length)
+            if (work.Draw.RenderState.Blends.Count != 0 &&
+                work.Draw.RenderState.Blends.Count != targetFormats.Length)
             {
                 TraceMrtBlendCountMismatch(work, targetFormats);
                 ReturnPooledGuestData(work.Draw);
                 return;
+            }
+
+            if (work.Draw.RenderState.Blends.Count == 0)
+            {
+                Console.Error.WriteLine(
+                    $"[LOADER][INFO] Vulkan defaulted missing blend state for " +
+                    $"{targetFormats.Length} color attachment(s).");
             }
 
             var normalizedBlends = GuestBlendStateNormalizer.NormalizeIntegerAttachments(
