@@ -109,7 +109,7 @@ public sealed class KernelEventFlagCompatExportsTests
     }
 
     [Fact]
-    public void KernelWaitEventFlag_TimedFallbackDoesNotRecursivelyPumpScheduler()
+    public void KernelWaitEventFlag_TimedWaitDoesNotPumpScheduler()
     {
         const ulong memoryBase = 0x1_0000_0000;
         const ulong nameAddress = memoryBase + 0x100;
@@ -119,8 +119,8 @@ public sealed class KernelEventFlagCompatExportsTests
         var memory = new FakeCpuMemory(memoryBase, 0x1000);
         var context = new CpuContext(memory, Generation.Gen5);
         memory.WriteCString(nameAddress, "TimedFallback");
-        // Leave enough headroom for a parallel test run to reach the first
-        // scheduler pump before the positive timeout expires.
+        // A positive timeout must park the current host thread in place rather
+        // than re-entering guest execution through the scheduler.
         Assert.True(context.TryWriteUInt32(timeoutAddress, 100_000));
         context[CpuRegister.Rdi] = handleAddress;
         context[CpuRegister.Rsi] = nameAddress;
@@ -137,16 +137,15 @@ public sealed class KernelEventFlagCompatExportsTests
         context[CpuRegister.R8] = timeoutAddress;
 
         var previousScheduler = GuestThreadExecution.Scheduler;
-        var scheduler = new CountingScheduler(
-            nestedContext => KernelEventFlagCompatExports.KernelWaitEventFlag(nestedContext));
+        var scheduler = new CountingScheduler();
         GuestThreadExecution.Scheduler = scheduler;
         try
         {
             Assert.Equal(
                 (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT,
                 KernelEventFlagCompatExports.KernelWaitEventFlag(context));
-            Assert.Equal(1, scheduler.PumpCount);
-            Assert.Equal(1, scheduler.MaxPumpDepth);
+            Assert.Equal(0, scheduler.PumpCount);
+            Assert.Equal(0, scheduler.MaxPumpDepth);
         }
         finally
         {
