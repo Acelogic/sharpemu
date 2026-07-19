@@ -7,19 +7,24 @@
 // Each registration prefers the loaded guest export. Most HLE fallbacks remain
 // fail-closed; sceVoiceInit has a Ghidra-backed lifecycle fallback below.
 
+using System.Buffers.Binary;
 using SharpEmu.HLE;
 
 namespace SharpEmu.Libs.Lle;
 
 public static class VoiceLleExports
 {
+    private const int VoiceErrorNotInitialized = unchecked((int)0x804E0801);
     private const int VoiceErrorAlreadyInitialized = unchecked((int)0x804E0802);
     private const int VoiceErrorInvalidArgument = unchecked((int)0x804E0805);
     private const int VoiceInitParameterSize = 0x28;
+    private const int VoiceThreadParameterSize = 0x30;
 
     private static readonly object StateGate = new();
     private static readonly byte[] InitParameters = new byte[VoiceInitParameterSize];
+    private static readonly byte[] ThreadParameters = new byte[VoiceThreadParameterSize];
     private static int _initialized;
+    private static int _threadParametersConfigured;
     private static uint _version;
 
     // Ghidra entry 00017bf0; body addresses 165.
@@ -92,13 +97,6 @@ public static class VoiceLleExports
         Target = Generation.Gen5,
         LibraryName = "libSceVoice",
         PreferLle = true)]
-    // Ghidra entry 00017e60; body addresses 151.
-    [SysAbiExport(
-        Nid = "clyKUyi3RYU",
-        ExportName = "sceVoiceSetThreadsParams",
-        Target = Generation.Gen5,
-        LibraryName = "libSceVoice",
-        PreferLle = true)]
     // Ghidra entry 00018a10; body addresses 338.
     [SysAbiExport(
         Nid = "elcxZTEfHZM",
@@ -167,12 +165,67 @@ public static class VoiceLleExports
         }
     }
 
+    // Ghidra provider entry 00017e60 dispatches operation 0x20 to 00014170,
+    // which rejects an uninitialized service before applying the 0x30-byte
+    // selector-1 structure in 0000d500. Selector zero is an accepted no-op.
+    [SysAbiExport(
+        Nid = "clyKUyi3RYU",
+        ExportName = "sceVoiceSetThreadsParams",
+        Target = Generation.Gen5,
+        LibraryName = "libSceVoice",
+        PreferLle = true)]
+    public static int SetThreadsParamsWithoutGuestProvider(CpuContext ctx)
+    {
+        lock (StateGate)
+        {
+            if (_initialized == 0)
+            {
+                return ctx.SetReturn(VoiceErrorNotInitialized);
+            }
+
+            var parameterAddress = ctx[CpuRegister.Rdi];
+            if (parameterAddress == 0)
+            {
+                return ctx.SetReturn(VoiceErrorInvalidArgument);
+            }
+
+            Span<byte> selectorBytes = stackalloc byte[sizeof(uint)];
+            if (!ctx.Memory.TryRead(parameterAddress, selectorBytes))
+            {
+                return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            var selector = BinaryPrimitives.ReadUInt32LittleEndian(selectorBytes);
+            if (selector == 0)
+            {
+                return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+            }
+
+            if (selector != 1)
+            {
+                return ctx.SetReturn(VoiceErrorInvalidArgument);
+            }
+
+            Span<byte> parameters = stackalloc byte[VoiceThreadParameterSize];
+            if (!ctx.Memory.TryRead(parameterAddress, parameters))
+            {
+                return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            parameters.CopyTo(ThreadParameters);
+            _threadParametersConfigured = 1;
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+        }
+    }
+
     internal static void ResetForTests()
     {
         lock (StateGate)
         {
             Array.Clear(InitParameters);
+            Array.Clear(ThreadParameters);
             _version = 0;
+            _threadParametersConfigured = 0;
             _initialized = 0;
         }
     }
@@ -184,6 +237,28 @@ public static class VoiceLleExports
             lock (StateGate)
             {
                 return _version;
+            }
+        }
+    }
+
+    internal static bool ThreadParametersConfiguredForTests
+    {
+        get
+        {
+            lock (StateGate)
+            {
+                return _threadParametersConfigured != 0;
+            }
+        }
+    }
+
+    internal static byte[] ThreadParametersForTests
+    {
+        get
+        {
+            lock (StateGate)
+            {
+                return ThreadParameters.ToArray();
             }
         }
     }

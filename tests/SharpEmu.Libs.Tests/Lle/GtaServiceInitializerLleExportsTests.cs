@@ -19,13 +19,16 @@ public sealed class GtaServiceInitializerLleExportsTests : IDisposable
     public void Dispose() => ResetState();
 
     [Fact]
-    public void RegistryDispatchesTheThreeGtaInitializersToSemanticFallbacks()
+    public void RegistryDispatchesTheGtaVoiceContractsToSemanticFallbacks()
     {
         var exports = SharpEmu.Generated.SysAbiExportRegistry.CreateExports(Generation.Gen5);
 
         Assert.Equal(
             (SysAbiFunction)VoiceLleExports.InitializeWithoutGuestProvider,
             Assert.Single(exports, export => export.Nid == "9TrhuGzberQ").Function);
+        Assert.Equal(
+            (SysAbiFunction)VoiceLleExports.SetThreadsParamsWithoutGuestProvider,
+            Assert.Single(exports, export => export.Nid == "clyKUyi3RYU").Function);
         Assert.Equal(
             (SysAbiFunction)ContentSearchLleExports.InitializeWithoutGuestProvider,
             Assert.Single(exports, export => export.Nid == "dPj4ZtRcIWk").Function);
@@ -55,6 +58,50 @@ public sealed class GtaServiceInitializerLleExportsTests : IDisposable
 
         context[CpuRegister.Rdi] = 0;
         AssertResult(0x804E0802, VoiceLleExports.InitializeWithoutGuestProvider, context);
+    }
+
+    [Fact]
+    public void VoiceSetThreadsParamsMatchesProviderSelectorAndStateContract()
+    {
+        var memory = new FakeCpuMemory(MemoryBase, 0x1000);
+        var context = new CpuContext(memory, Generation.Gen5);
+
+        context[CpuRegister.Rdi] = ParameterAddress;
+        AssertResult(0x804E0801, VoiceLleExports.SetThreadsParamsWithoutGuestProvider, context);
+
+        Span<byte> initParameters = stackalloc byte[0x28];
+        Assert.True(memory.TryWrite(ParameterAddress, initParameters));
+        context[CpuRegister.Rdi] = ParameterAddress;
+        AssertResult(0, VoiceLleExports.InitializeWithoutGuestProvider, context);
+
+        context[CpuRegister.Rdi] = 0;
+        AssertResult(0x804E0805, VoiceLleExports.SetThreadsParamsWithoutGuestProvider, context);
+
+        context[CpuRegister.Rdi] = MemoryBase + 0x2000;
+        AssertResult(MemoryFault, VoiceLleExports.SetThreadsParamsWithoutGuestProvider, context);
+
+        WriteUInt32(memory, ParameterAddress, 2);
+        context[CpuRegister.Rdi] = ParameterAddress;
+        AssertResult(0x804E0805, VoiceLleExports.SetThreadsParamsWithoutGuestProvider, context);
+
+        WriteUInt32(memory, MemoryBase + 0xffc, 0);
+        context[CpuRegister.Rdi] = MemoryBase + 0xffc;
+        AssertResult(0, VoiceLleExports.SetThreadsParamsWithoutGuestProvider, context);
+        Assert.False(VoiceLleExports.ThreadParametersConfiguredForTests);
+
+        Span<byte> threadParameters = stackalloc byte[0x30];
+        BinaryPrimitives.WriteUInt32LittleEndian(threadParameters, 1);
+        BinaryPrimitives.WriteUInt32LittleEndian(threadParameters[4..], 700);
+        BinaryPrimitives.WriteUInt64LittleEndian(threadParameters[8..], 0x7f);
+        BinaryPrimitives.WriteUInt32LittleEndian(threadParameters[16..], 700);
+        BinaryPrimitives.WriteUInt64LittleEndian(threadParameters[24..], 0x7f);
+        BinaryPrimitives.WriteUInt32LittleEndian(threadParameters[32..], 700);
+        BinaryPrimitives.WriteUInt64LittleEndian(threadParameters[40..], 0x7f);
+        Assert.True(memory.TryWrite(ParameterAddress, threadParameters));
+        context[CpuRegister.Rdi] = ParameterAddress;
+        AssertResult(0, VoiceLleExports.SetThreadsParamsWithoutGuestProvider, context);
+        Assert.True(VoiceLleExports.ThreadParametersConfiguredForTests);
+        Assert.Equal(threadParameters.ToArray(), VoiceLleExports.ThreadParametersForTests);
     }
 
     [Fact]
@@ -119,6 +166,13 @@ public sealed class GtaServiceInitializerLleExportsTests : IDisposable
     {
         Span<byte> bytes = stackalloc byte[sizeof(ulong)];
         BinaryPrimitives.WriteUInt64LittleEndian(bytes, value);
+        Assert.True(memory.TryWrite(address, bytes));
+    }
+
+    private static void WriteUInt32(FakeCpuMemory memory, ulong address, uint value)
+    {
+        Span<byte> bytes = stackalloc byte[sizeof(uint)];
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes, value);
         Assert.True(memory.TryWrite(address, bytes));
     }
 
