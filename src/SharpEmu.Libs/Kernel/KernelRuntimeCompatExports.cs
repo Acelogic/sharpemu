@@ -2029,19 +2029,6 @@ public static class KernelRuntimeCompatExports
     public static int SysmoduleIsLoadedInternal(CpuContext ctx) => SysmoduleIsLoaded(ctx);
 
     [SysAbiExport(
-        Nid = "k+AXqu2-eBc",
-        ExportName = "getpagesize",
-        Target = Generation.Gen5,
-        LibraryName = "libKernel")]
-    public static int KernelGetPageSize(CpuContext ctx)
-    {
-        // Orbis/Prospero user processes use 16 KiB VM pages. Jemspace rejects
-        // larger values before it creates Mono's local heap.
-        ctx[CpuRegister.Rax] = 0x4000;
-        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
-    }
-
-    [SysAbiExport(
         Nid = "mkawd0NA9ts",
         ExportName = "sysconf",
         Target = Generation.Gen5,
@@ -2185,21 +2172,6 @@ public static class KernelRuntimeCompatExports
         }
 
         ctx[CpuRegister.Rax] = mappedAddress;
-        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
-    }
-
-    [SysAbiExport(
-        Nid = "UqDGjXA5yUM",
-        ExportName = "munmap",
-        Target = Generation.Gen5,
-        LibraryName = "libc")]
-    public static int LibcMunmap(CpuContext ctx)
-    {
-        // Anonymous libc mappings come from SharpEmu's monotonic guest arena,
-        // which cannot currently release individual spans. The address becomes
-        // logically unmapped to the caller even though backing is retained for
-        // the lifetime of this emulation process.
-        ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
@@ -3402,6 +3374,13 @@ public static class KernelRuntimeCompatExports
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
     public static int KernelNanosleep(CpuContext ctx) => NanosleepCore(ctx, posix: false);
+
+    [SysAbiExport(
+        Nid = "NhpspxdjEKU",
+        ExportName = "_nanosleep",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixNanosleepUnderscore(CpuContext ctx) => NanosleepCore(ctx, posix: true);
 
     [SysAbiExport(
         Nid = "yS8U2TGCe1A",

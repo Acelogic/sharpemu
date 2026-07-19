@@ -71,7 +71,7 @@ public sealed class GuiSettings
             if (File.Exists(SettingsPath))
             {
                 var json = File.ReadAllText(SettingsPath);
-                return JsonSerializer.Deserialize<GuiSettings>(json, SerializerOptions) ?? new GuiSettings();
+                return NormalizeFromJson(json);
             }
         }
         catch (Exception)
@@ -80,6 +80,35 @@ public sealed class GuiSettings
         }
 
         return new GuiSettings();
+    }
+
+    /// <summary>
+    /// Deserializes settings and normalizes null references and null or empty list
+    /// entries introduced by JSON. Empty scalar strings remain unchanged.
+    /// </summary>
+    internal static GuiSettings NormalizeFromJson(string json)
+    {
+        var settings = JsonSerializer.Deserialize<GuiSettings>(json, SerializerOptions) ?? new GuiSettings();
+
+        settings.GameFolders = FilterNullOrEmpty(settings.GameFolders);
+        settings.ExcludedGames = FilterNullOrEmpty(settings.ExcludedGames);
+        settings.EnvironmentToggles = FilterNullOrEmpty(settings.EnvironmentToggles);
+        settings.LogLevel ??= "Info";
+        settings.Language ??= "en";
+        settings.DiscordClientId ??= "1525606762248540221";
+
+        return settings;
+    }
+
+    // JSON can populate non-nullable lists with null references and entries.
+    private static List<string> FilterNullOrEmpty(List<string>? source)
+    {
+        if (source is null)
+        {
+            return [];
+        }
+
+        return source.Where(entry => !string.IsNullOrEmpty(entry)).ToList();
     }
 
     public void Save()

@@ -652,7 +652,7 @@ public static class KernelPthreadExtendedCompatExports
     [SysAbiExport(
         Nid = "FIs3-UQT9sg",
         ExportName = "pthread_getschedparam",
-        Target = Generation.Gen5,
+        Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
     public static int PosixPthreadGetschedparam(CpuContext ctx) => PthreadGetschedparam(ctx);
 
@@ -739,7 +739,7 @@ public static class KernelPthreadExtendedCompatExports
     [SysAbiExport(
         Nid = "Ucsu-OK+els",
         ExportName = "pthread_attr_get_np",
-        Target = Generation.Gen5,
+        Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
     public static int PosixPthreadAttrGetNp(CpuContext ctx)
     {
@@ -1022,7 +1022,7 @@ public static class KernelPthreadExtendedCompatExports
     [SysAbiExport(
         Nid = "vQm4fDEsWi8",
         ExportName = "pthread_attr_getstack",
-        Target = Generation.Gen5,
+        Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
     public static int PosixPthreadAttrGetstack(CpuContext ctx)
     {
@@ -1061,7 +1061,7 @@ public static class KernelPthreadExtendedCompatExports
     [SysAbiExport(
         Nid = "0qOtCR-ZHck",
         ExportName = "pthread_attr_getstacksize",
-        Target = Generation.Gen5,
+        Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
     public static int PosixPthreadAttrGetstacksize(CpuContext ctx)
     {
@@ -1119,7 +1119,7 @@ public static class KernelPthreadExtendedCompatExports
     [SysAbiExport(
         Nid = "E+tyo3lp5Lw",
         ExportName = "pthread_attr_setdetachstate",
-        Target = Generation.Gen5,
+        Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
     public static int PosixPthreadAttrSetdetachstate(CpuContext ctx)
     {
@@ -1186,6 +1186,18 @@ public static class KernelPthreadExtendedCompatExports
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
+
+    /// <summary>
+    /// The POSIX-named alias of <see cref="PthreadAttrGetschedparam"/>. libKernel
+    /// exports the same routine under two NIDs; middleware compiled against the
+    /// plain POSIX headers links this one rather than scePthreadAttrGetschedparam.
+    /// </summary>
+    [SysAbiExport(
+        Nid = "qlk9pSLsUmM",
+        ExportName = "pthread_attr_getschedparam",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PthreadAttrGetschedparamPOSIX(CpuContext ctx) => PthreadAttrGetschedparam(ctx);
 
     [SysAbiExport(
         Nid = "FXPWHNk8Of0",
@@ -1459,6 +1471,90 @@ public static class KernelPthreadExtendedCompatExports
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
     public static int PosixPthreadRwlockWrlock(CpuContext ctx) => PthreadRwlockWrlock(ctx);
+
+    [SysAbiExport(
+        Nid = "SFxTMOfuCkE",
+        ExportName = "pthread_rwlock_tryrdlock",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadRwlockTryrdlock(CpuContext ctx) =>
+        PthreadRwlockTryLockCore(ctx, ctx[CpuRegister.Rdi], write: false);
+
+    [SysAbiExport(
+        Nid = "XhWHn6P5R7U",
+        ExportName = "pthread_rwlock_trywrlock",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadRwlockTrywrlock(CpuContext ctx) =>
+        PthreadRwlockTryLockCore(ctx, ctx[CpuRegister.Rdi], write: true);
+
+    /// <summary>
+    /// Non-blocking counterpart of <see cref="PthreadRwlockLockCore"/>: acquires
+    /// only if the lock is free right now, otherwise reports BUSY.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not routed through TryAcquireBlockedRwlock. That helper exists
+    /// for the scheduler resume path and decrements WaitingWriters on success,
+    /// which is correct only for a thread that previously incremented it. A fresh
+    /// try never did, so reusing it would silently consume another thread's
+    /// waiter count and let a queued writer be skipped.
+    /// </remarks>
+    private static int PthreadRwlockTryLockCore(CpuContext ctx, ulong rwlockAddress, bool write)
+    {
+        if (rwlockAddress == 0)
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
+        if (!TryResolveRwlockState(ctx, rwlockAddress, createIfZero: true, out var resolvedAddress, out var rwlock))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
+        }
+
+        var currentThreadId = KernelPthreadState.GetCurrentThreadHandle();
+        lock (rwlock.SyncRoot)
+        {
+            if (write)
+            {
+                if (rwlock.WriterThreadId == currentThreadId || rwlock.GetReaderCount(currentThreadId) > 0)
+                {
+                    return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_DEADLOCK;
+                }
+
+                // Mirrors the blocking path's re-entrant compat-writer grant so the
+                // two agree on what counts as already owning the lock.
+                if (rwlock.CompatWriterCounts.GetValueOrDefault(currentThreadId) > 0)
+                {
+                    rwlock.AddCompatWriter(currentThreadId);
+                    return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+                }
+
+                if (rwlock.WriterThreadId != 0 ||
+                    rwlock.ReaderTotalCount != 0 ||
+                    rwlock.CompatWriterTotalCount != 0)
+                {
+                    return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY;
+                }
+
+                DetectRwlockWriterConflict(resolvedAddress, rwlock, currentThreadId, "trywrlock");
+                rwlock.WriterThreadId = currentThreadId;
+                return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+            }
+
+            if (rwlock.WriterThreadId == currentThreadId)
+            {
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_DEADLOCK;
+            }
+
+            if (ReaderMustWaitForRwlock(rwlock, currentThreadId))
+            {
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY;
+            }
+
+            rwlock.AddReader(currentThreadId);
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+    }
 
     [SysAbiExport(
         Nid = "+L98PIbGttk",
@@ -2117,4 +2213,59 @@ public static class KernelPthreadExtendedCompatExports
         BinaryPrimitives.WriteInt32LittleEndian(bytes, value);
         return KernelMemoryCompatExports.TryWriteCompat(ctx, address, bytes);
     }
+
+    // POSIX-named aliases. libKernel exports each of these routines under two
+    // NIDs -- a scePthread* name and the plain POSIX name -- and middleware
+    // compiled against POSIX headers links the latter. Both take identical
+    // arguments and, per the convention already used by scePthreadOnce's alias,
+    // return the same OrbisGen2Result rather than translating to errno.
+
+    [SysAbiExport(
+        Nid = "a2P9wYGeZvc",
+        ExportName = "pthread_setprio",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PthreadSetprioPOSIX(CpuContext ctx) => PthreadSetprio(ctx);
+
+    [SysAbiExport(
+        Nid = "JarMIy8kKEY",
+        ExportName = "pthread_attr_setschedpolicy",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PthreadAttrSetschedpolicyPOSIX(CpuContext ctx) => PthreadAttrSetschedpolicy(ctx);
+
+    [SysAbiExport(
+        Nid = "euKRgm0Vn2M",
+        ExportName = "pthread_attr_setschedparam",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PthreadAttrSetschedparamPOSIX(CpuContext ctx) => PthreadAttrSetschedparam(ctx);
+
+    [SysAbiExport(
+        Nid = "7ZlAakEf0Qg",
+        ExportName = "pthread_attr_setinheritsched",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PthreadAttrSetinheritschedPOSIX(CpuContext ctx) => PthreadAttrSetinheritsched(ctx);
+
+    [SysAbiExport(
+        Nid = "VUT1ZSrHT0I",
+        ExportName = "pthread_attr_getdetachstate",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PthreadAttrGetdetachstatePOSIX(CpuContext ctx) => PthreadAttrGetdetachstate(ctx);
+
+    [SysAbiExport(
+        Nid = "JKyG3SWyA10",
+        ExportName = "pthread_attr_setguardsize",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PthreadAttrSetguardsizePOSIX(CpuContext ctx) => PthreadAttrSetguardsize(ctx);
+
+    [SysAbiExport(
+        Nid = "JNkVVsVDmOk",
+        ExportName = "pthread_attr_getguardsize",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PthreadAttrGetguardsizePOSIX(CpuContext ctx) => PthreadAttrGetguardsize(ctx);
 }

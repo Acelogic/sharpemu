@@ -18,7 +18,9 @@ diagnostic controls only.
 - Worktree: `/Users/mcruz/Developer/sharpemu`
 - Branch: `codex/astro-bot-menu-progress`
 - PR 412's threading work and the upstream `gpu-bootstrap-stall` history are
-  integrated. The last pushed checkpoint before this depth fix is `af7978c`.
+  integrated. The pre-main-sync checkpoint is `6cc3f62`; the current tree also
+  merges upstream `main` through `90c72eb` while retaining the PR 412
+  one-host-thread-per-guest-thread synchronization model.
 - The original-shader boot reaches `title_controller_ship` reproducibly and the
   cyan radial-line scene remains the retained visual baseline.
 - A stale `DB_DEPTH_SIZE_XY=0` descriptor was being expanded from 1x1 to
@@ -135,6 +137,30 @@ diagnostic controls only.
   emulator graphics window remains visible; no diagnostic terminal windows are
   part of the launch flow.
 
+## 2026-07-19 upstream-main threading A/B
+
+- Upstream `main` through `90c72eb` is compatible with the PR 412 in-place
+  thread model only when two mainline cooperative-scheduler semantics are not
+  imported. With both adaptive self-lock idempotence and conditional
+  `pthread_self` registration enabled, Astro never reaches `ps_logo` or VideoOut
+  in 150 seconds, every captured frame is flat gray, and the guest spins through
+  roughly 179 million `sceKernelWaitEqueue` imports. Evidence:
+  `artifacts/astro-bot/runs/20260719-154455-title-upstream-main-90c72eb-inplace-adaptive/`.
+- Restoring adaptive NORMAL/ADAPTIVE compatibility recursion alone removes the
+  dead spin and reaches `ps_logo`, but only at about 92 seconds and not the title
+  by the 105-second cutoff. Evidence:
+  `artifacts/astro-bot/runs/20260719-154931-title-upstream-main-adaptive-recursion-ab/`.
+- Restoring the original unconditional `pthread_self` scheduler registration as
+  the second and only additional change recovers the checkpoint timing:
+  `ps_logo` at about 43 seconds and `title_controller_ship` at 57.3 seconds. The
+  title tail visibly renders the animated **Sony Interactive Entertainment
+  presents** wordmark from about 70.7 through 81.1 seconds. Evidence:
+  `artifacts/astro-bot/runs/20260719-155233-title-upstream-main-pthread-self-original-ab/`.
+- Retain the upstream `pthread_yield` alias and all compatible memory, CPU,
+  import, and runtime changes. Do not reapply direct cooperative waiter handoff,
+  adaptive idempotence, or conditional `pthread_self` registration on top of
+  PR 412's in-place execution model.
+
 ## Corrected conclusions: do not repeat
 
 - A zero selector snapshot before the exact title-start marker is expected early
@@ -188,26 +214,25 @@ scene lists               repaired playable build: 28 active records
 
 ## Next experiment
 
-1. Merge current upstream `main` through `90c72eb` after this checkpoint. It
-   contains direct mutex-owner handoff fixes (`73e8821`, refined by `90c72eb`)
-   that landed after the PR #412 / `gpu-bootstrap-stall` snapshot already in this
-   branch.
-2. Run a visible A/B with a full post-title capture tail. Compare title-start
-   time, presented FPS, DrawThread polling, waiter ownership, and whether the
-   wordmark advances. A log milestone alone is not success.
-3. If upstream mutex handoff does not improve the run, use headless live thread
-   and register snapshots to identify the exact guest mutex/condition predicate
-   holding the title producer. Do not change harness timing or convert the
-   1-microsecond poll into a blocking wait without predicate evidence.
-4. Resume downstream shader/composition work only after the CPU/title throughput
-   path is no longer limiting progress.
+1. Keep the now-verified PR 412 synchronization semantics fixed. Use headless
+   live thread/register/memory snapshots to identify the exact guest
+   mutex/condition predicate behind the title's roughly 0.7-1.5 FPS presentation
+   rate; do not tune harness deadlines or make the 1-microsecond equeue poll
+   blocking without predicate evidence.
+2. Correlate that predicate with one complete title flip and the already-proven
+   ES/Emitter producer chain. A change counts only if the visible tail advances
+   beyond the animated wordmark while preserving the 57-second title milestone.
+3. Resume ES `0x5002A9A00` position-export and final-composition tracing once the
+   synchronization owner/wait relationship is known not to be starving it.
 
 ## Validation and artifact policy
 
-- Current 2026-07-19 checkpoint: Release `osx-x64` publish and visible Astro
-  launch pass; 25 focused AGC tiling/event-queue/pthread tests pass.
+- Current 2026-07-19 upstream-main checkpoint: Release `osx-x64` publish and
+  visible Astro launch pass; 25 focused AGC tiling/event-queue/pthread tests
+  pass. The verified run reaches `title_controller_ship` at 57.3 seconds and
+  visibly renders the animated SIE wordmark.
 - Current solution run: shader 53/53, Metal shader 27/27, and source-generator
-  33/33 pass. Library tests are 737/744; the seven SaveData failures reproduce
+  33/33 pass. Library tests are 806/813; the seven SaveData failures reproduce
   unchanged at clean checkpoint `7002dd2` and are outside this GPU/threading
   change set.
 - Release `osx-x64` publish passed after the `par274/main` merge with zero

@@ -25,6 +25,10 @@ SPDX-License-Identifier: GPL-2.0-or-later
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="SharpEmu.Libs.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Avalonia" />
     <PackageReference Include="Avalonia.Desktop" />
     <PackageReference Include="Avalonia.Fonts.Inter" />
