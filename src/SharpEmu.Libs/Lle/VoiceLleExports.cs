@@ -4,8 +4,8 @@
 //
 // Ghidra 12.1.2_PUBLIC_20260605 program: libSceVoice.sprx
 // Analyzed provider SHA-256: bacd6c18bde775e27eade58f33460c86a7cad68b5c2716ce12b6bec8bd138df3
-// Each registration prefers the loaded guest export. The shared HLE handler
-// is deliberately fail-closed and never claims provider behavior.
+// Each registration prefers the loaded guest export. Most HLE fallbacks remain
+// fail-closed; sceVoiceInit has a Ghidra-backed lifecycle fallback below.
 
 using SharpEmu.HLE;
 
@@ -13,17 +13,19 @@ namespace SharpEmu.Libs.Lle;
 
 public static class VoiceLleExports
 {
+    private const int VoiceErrorAlreadyInitialized = unchecked((int)0x804E0802);
+    private const int VoiceErrorInvalidArgument = unchecked((int)0x804E0805);
+    private const int VoiceInitParameterSize = 0x28;
+
+    private static readonly object StateGate = new();
+    private static readonly byte[] InitParameters = new byte[VoiceInitParameterSize];
+    private static int _initialized;
+    private static uint _version;
+
     // Ghidra entry 00017bf0; body addresses 165.
     [SysAbiExport(
         Nid = "54phPH2LZls",
         ExportName = "sceVoiceStart",
-        Target = Generation.Gen5,
-        LibraryName = "libSceVoice",
-        PreferLle = true)]
-    // Ghidra entry 00017a90; body addresses 167.
-    [SysAbiExport(
-        Nid = "9TrhuGzberQ",
-        ExportName = "sceVoiceInit",
         Target = Generation.Gen5,
         LibraryName = "libSceVoice",
         PreferLle = true)]
@@ -126,5 +128,63 @@ public static class VoiceLleExports
         }
 
         return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_IMPLEMENTED);
+    }
+
+    // Ghidra entry 00017a90; body addresses 167. The provider rejects a null
+    // parameter, snapshots five qwords, records the second argument in its
+    // initialization descriptor, and rejects a second live initialization.
+    [SysAbiExport(
+        Nid = "9TrhuGzberQ",
+        ExportName = "sceVoiceInit",
+        Target = Generation.Gen5,
+        LibraryName = "libSceVoice",
+        PreferLle = true)]
+    public static int InitializeWithoutGuestProvider(CpuContext ctx)
+    {
+        lock (StateGate)
+        {
+            if (_initialized != 0)
+            {
+                return ctx.SetReturn(VoiceErrorAlreadyInitialized);
+            }
+
+            var parameterAddress = ctx[CpuRegister.Rdi];
+            if (parameterAddress == 0)
+            {
+                return ctx.SetReturn(VoiceErrorInvalidArgument);
+            }
+
+            Span<byte> parameters = stackalloc byte[VoiceInitParameterSize];
+            if (!ctx.Memory.TryRead(parameterAddress, parameters))
+            {
+                return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            parameters.CopyTo(InitParameters);
+            _version = unchecked((uint)ctx[CpuRegister.Rsi]);
+            _initialized = 1;
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+        }
+    }
+
+    internal static void ResetForTests()
+    {
+        lock (StateGate)
+        {
+            Array.Clear(InitParameters);
+            _version = 0;
+            _initialized = 0;
+        }
+    }
+
+    internal static uint VersionForTests
+    {
+        get
+        {
+            lock (StateGate)
+            {
+                return _version;
+            }
+        }
     }
 }

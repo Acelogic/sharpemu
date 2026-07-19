@@ -4,8 +4,8 @@
 //
 // Ghidra 12.1.2 program: libSceContentSearch.sprx
 // Analyzed provider SHA-256: ce2ecc3765d0228fac6808b5a425b8d77ffae5b6b99c73ee3313d8ac22cfadb8
-// Each registration prefers the loaded guest export. The shared HLE handler
-// is deliberately fail-closed and never claims provider behavior.
+// Each registration prefers the loaded guest export. Most HLE fallbacks remain
+// fail-closed; sceContentSearchInit has a Ghidra-backed lifecycle fallback.
 
 using SharpEmu.HLE;
 
@@ -13,6 +13,13 @@ namespace SharpEmu.Libs.Lle;
 
 public static class ContentSearchLleExports
 {
+    private const int ContentSearchErrorAlreadyInitialized = unchecked((int)0x809D1002);
+    private const int ContentSearchErrorInvalidArgument = unchecked((int)0x809D1003);
+
+    private static readonly object StateGate = new();
+    private static int _initialized;
+    private static ulong _memorySize;
+
     // Ghidra entry 0001e760; body addresses 217.
     [SysAbiExport(
         Nid = "-YbpaF0XS-I",
@@ -48,13 +55,6 @@ public static class ContentSearchLleExports
         Target = Generation.Gen5,
         LibraryName = "libSceContentSearch",
         PreferLle = true)]
-    // Ghidra entry 0001d2e0; body addresses 800.
-    [SysAbiExport(
-        Nid = "dPj4ZtRcIWk",
-        ExportName = "sceContentSearchInit",
-        Target = Generation.Gen5,
-        LibraryName = "libSceContentSearch",
-        PreferLle = true)]
     // Ghidra entry 0001e990; body addresses 302.
     [SysAbiExport(
         Nid = "ruNe-FgCzO8",
@@ -70,5 +70,64 @@ public static class ContentSearchLleExports
         }
 
         return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_IMPLEMENTED);
+    }
+
+    // Ghidra entry 0001d2e0; body addresses 800. The provider checks its
+    // lifecycle first, then requires a non-zero 0x4000-aligned size at *param.
+    [SysAbiExport(
+        Nid = "dPj4ZtRcIWk",
+        ExportName = "sceContentSearchInit",
+        Target = Generation.Gen5,
+        LibraryName = "libSceContentSearch",
+        PreferLle = true)]
+    public static int InitializeWithoutGuestProvider(CpuContext ctx)
+    {
+        lock (StateGate)
+        {
+            if (_initialized != 0)
+            {
+                return ctx.SetReturn(ContentSearchErrorAlreadyInitialized);
+            }
+
+            var parameterAddress = ctx[CpuRegister.Rdi];
+            if (parameterAddress == 0)
+            {
+                return ctx.SetReturn(ContentSearchErrorInvalidArgument);
+            }
+
+            if (!ctx.TryReadUInt64(parameterAddress, out var memorySize))
+            {
+                return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            if (memorySize == 0 || (memorySize & 0x3FFF) != 0)
+            {
+                return ctx.SetReturn(ContentSearchErrorInvalidArgument);
+            }
+
+            _memorySize = memorySize;
+            _initialized = 1;
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+        }
+    }
+
+    internal static void ResetForTests()
+    {
+        lock (StateGate)
+        {
+            _memorySize = 0;
+            _initialized = 0;
+        }
+    }
+
+    internal static ulong MemorySizeForTests
+    {
+        get
+        {
+            lock (StateGate)
+            {
+                return _memorySize;
+            }
+        }
     }
 }

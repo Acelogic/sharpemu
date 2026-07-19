@@ -4,8 +4,8 @@
 //
 // Ghidra 12.1.2 program: libSceContentDelete.sprx
 // Analyzed provider SHA-256: 0ad321f0f820ce2a08227a2bcf2050bc8abe349c63a7d71d1b7d1ef02d92e77c
-// Each registration prefers the loaded guest export. The shared HLE handler
-// is deliberately fail-closed and never claims provider behavior.
+// Each registration prefers the loaded guest export. Most HLE fallbacks remain
+// fail-closed; sceContentDeleteInitialize has a Ghidra-backed lifecycle fallback.
 
 using SharpEmu.HLE;
 
@@ -13,6 +13,12 @@ namespace SharpEmu.Libs.Lle;
 
 public static class ContentDeleteLleExports
 {
+    private const int ContentDeleteErrorInvalidArgument = unchecked((int)0x809D5001);
+    private const int ContentDeleteErrorAlreadyInitialized = unchecked((int)0x809D5003);
+
+    private static readonly object StateGate = new();
+    private static int _initialized;
+
     // Ghidra entry 00000650; body addresses 66.
     [SysAbiExport(
         Nid = "5XLSih32qHA",
@@ -27,13 +33,6 @@ public static class ContentDeleteLleExports
         Target = Generation.Gen5,
         LibraryName = "libSceContentDelete",
         PreferLle = true)]
-    // Ghidra entry 000005d0; body addresses 120.
-    [SysAbiExport(
-        Nid = "zoxb0wEChEM",
-        ExportName = "sceContentDeleteInitialize",
-        Target = Generation.Gen5,
-        LibraryName = "libSceContentDelete",
-        PreferLle = true)]
     public static int MissingGuestProvider(CpuContext ctx)
     {
         if (string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORTS"), "1", StringComparison.Ordinal))
@@ -42,5 +41,51 @@ public static class ContentDeleteLleExports
         }
 
         return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_IMPLEMENTED);
+    }
+
+    // Ghidra entry 000005d0; body addresses 120. The provider validates the
+    // parameter and its +0x08 pool-size field before checking lifecycle state.
+    [SysAbiExport(
+        Nid = "zoxb0wEChEM",
+        ExportName = "sceContentDeleteInitialize",
+        Target = Generation.Gen5,
+        LibraryName = "libSceContentDelete",
+        PreferLle = true)]
+    public static int InitializeWithoutGuestProvider(CpuContext ctx)
+    {
+        lock (StateGate)
+        {
+            var parameterAddress = ctx[CpuRegister.Rdi];
+            if (parameterAddress == 0 || parameterAddress > ulong.MaxValue - sizeof(ulong))
+            {
+                return ctx.SetReturn(ContentDeleteErrorInvalidArgument);
+            }
+
+            if (!ctx.TryReadUInt64(parameterAddress + sizeof(ulong), out var poolSize))
+            {
+                return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            if (poolSize != 0x4000)
+            {
+                return ctx.SetReturn(ContentDeleteErrorInvalidArgument);
+            }
+
+            if (_initialized != 0)
+            {
+                return ctx.SetReturn(ContentDeleteErrorAlreadyInitialized);
+            }
+
+            _initialized = 1;
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+        }
+    }
+
+    internal static void ResetForTests()
+    {
+        lock (StateGate)
+        {
+            _initialized = 0;
+        }
     }
 }
