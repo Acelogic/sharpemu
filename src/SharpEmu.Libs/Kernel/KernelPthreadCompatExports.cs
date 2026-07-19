@@ -39,6 +39,8 @@ public static class KernelPthreadCompatExports
     private static readonly bool _tracePthreadConds =
         _tracePthreads ||
         string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_PTHREAD_CONDS"), "1", StringComparison.Ordinal);
+    private static readonly bool _tracePthreadExitCleanup =
+        string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_PTHREAD_EXIT_CLEANUP"), "1", StringComparison.Ordinal);
     private static readonly HashSet<ulong>? _tracePthreadMutexFilter = ParseTraceAddressFilter(
         Environment.GetEnvironmentVariable("SHARPEMU_LOG_PTHREAD_MUTEX_FILTER"));
 
@@ -57,18 +59,118 @@ public static class KernelPthreadCompatExports
         public int WaiterCount { get; set; }
     }
 
-    private sealed class PthreadCondState
+    internal sealed class PthreadCondState
     {
         public object SyncRoot { get; } = new();
         public ulong SignalEpoch { get; set; }
-        public int Waiters { get; set; }
-        // Signals produced but not yet consumed by a waiter. A signal only
-        // increments this when an unserved waiter exists (POSIX: signaling an
-        // empty condvar is a no-op), so stale signals cannot accumulate.
-        public int SignalsPending { get; set; }
+        public int Waiters => WaiterQueue.Count;
+        internal LinkedList<PthreadCondWaiter> WaiterQueue { get; } = new();
+
+        internal void Enqueue(PthreadCondWaiter waiter)
+        {
+            waiter.Node = WaiterQueue.AddLast(waiter);
+        }
+
+        internal void Remove(PthreadCondWaiter waiter)
+        {
+            if (waiter.Node?.List is not null)
+            {
+                WaiterQueue.Remove(waiter.Node);
+            }
+
+            waiter.Node = null;
+        }
+
+        // A condition signal belongs to a thread that was already waiting at
+        // the instant of the signal. Keep that assignment on the waiter itself
+        // so another waiter cannot steal a shared pending count before the
+        // selected host thread gets scheduled.
+        internal int AssignSignals(bool broadcast)
+        {
+            var assigned = 0;
+            for (var node = WaiterQueue.First; node is not null; node = node.Next)
+            {
+                if (node.Value.Signaled)
+                {
+                    continue;
+                }
+
+                node.Value.Signaled = true;
+                assigned++;
+                if (!broadcast)
+                {
+                    break;
+                }
+            }
+
+            return assigned;
+        }
+    }
+
+    internal sealed class PthreadCondWaiter
+    {
+        public ulong ThreadId { get; init; }
+        public bool Signaled { get; set; }
+        internal LinkedListNode<PthreadCondWaiter>? Node { get; set; }
     }
 
     private readonly record struct PthreadMutexAttrState(int Type, int Protocol);
+
+    static KernelPthreadCompatExports()
+    {
+        GuestThreadExecution.GuestThreadExited += ReleaseThreadSynchronizationState;
+    }
+
+    /// <summary>
+    /// Releases mutex ownership left behind by a terminated guest thread.
+    /// The in-place blocking model has no persistent waiter nodes to remove,
+    /// but a dead owner would otherwise leave every Monitor.Wait caller parked
+    /// forever because no future pthread_mutex_unlock can clear it.
+    /// </summary>
+    public static void ReleaseThreadSynchronizationState(ulong threadHandle)
+    {
+        if (threadHandle == 0)
+        {
+            return;
+        }
+
+        // Each initialized mutex is indexed by both its guest address and its
+        // opaque handle. Visit each shared state object exactly once.
+        var visited = new HashSet<PthreadMutexState>(ReferenceEqualityComparer.Instance);
+        var releasedMutexCount = 0;
+        var wokenWaiterCount = 0;
+        foreach (var state in _mutexStates.Values)
+        {
+            if (!visited.Add(state))
+            {
+                continue;
+            }
+
+            lock (state)
+            {
+                if (state.OwnerThreadId != threadHandle)
+                {
+                    continue;
+                }
+
+                state.OwnerThreadId = 0;
+                state.RecursionCount = 0;
+                releasedMutexCount++;
+                if (state.WaiterCount != 0)
+                {
+                    wokenWaiterCount += state.WaiterCount;
+                    Monitor.PulseAll(state);
+                }
+            }
+        }
+
+        if (_tracePthreadExitCleanup && releasedMutexCount != 0)
+        {
+            Console.Error.WriteLine(
+                $"[LOADER][TRACE] pthread exit cleanup: thread=0x{threadHandle:X16} " +
+                $"released_mutexes={releasedMutexCount} woken_waiters={wokenWaiterCount}");
+        }
+    }
 
     [SysAbiExport(
         Nid = "aI+OeCz8xrQ",
@@ -791,12 +893,19 @@ public static class KernelPthreadCompatExports
             // parks, so an unlock's PulseAll cannot be missed. Waits are
             // sliced only so teardown can unwind parked threads.
             TracePthreadMutex(ctx, "lock-block", mutexAddress, resolvedAddress, state, currentThreadId, (int)OrbisGen2Result.ORBIS_GEN2_OK);
-            GuestThreadBlocking.NoteBlocked(currentThreadId, "pthread_mutex_lock");
             state.WaiterCount++;
             try
             {
                 while (state.OwnerThreadId != 0)
                 {
+                    var ownerName = KernelPthreadState.TryGetThreadIdentity(state.OwnerThreadId, out var ownerIdentity)
+                        ? ownerIdentity.Name
+                        : "unregistered";
+                    GuestThreadBlocking.NoteBlocked(
+                        currentThreadId,
+                        $"pthread_mutex_lock mutex=0x{mutexAddress:X16} resolved=0x{resolvedAddress:X16} " +
+                        $"owner=0x{state.OwnerThreadId:X16} owner_name='{ownerName}' recursion={state.RecursionCount} " +
+                        $"type={state.Type} waiters={state.WaiterCount}");
                     if (GuestThreadBlocking.ShutdownRequested)
                     {
                         TracePthreadMutex(ctx, "lock-shutdown", mutexAddress, resolvedAddress, state, currentThreadId, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TRY_AGAIN);
@@ -1047,10 +1156,13 @@ public static class KernelPthreadCompatExports
             return false;
         }
 
-        // A zero-filled static std::mutex uses the platform's normal mutex
-        // initializer. Treating it as error-checking turns nested execution in
-        // the cooperative guest scheduler into EDEADLK and libc++ throws.
-        return CreateImplicitMutexState(ctx, mutexAddress, MutexTypeNormal, out resolvedAddress, out state);
+        // Keep zero-filled implicit mutexes aligned with the in-place blocking
+        // model from the threading rework. Treating them as NORMAL enables the
+        // compatibility-recursion path above; a single matching unlock can then
+        // leave the mutex permanently owned and park every competing guest
+        // thread. ERRORCHECK reports the invalid self-lock without inflating the
+        // recursion count.
+        return CreateImplicitMutexState(ctx, mutexAddress, MutexTypeErrorCheck, out resolvedAddress, out state);
     }
 
     private static ulong ResolveMutexAttrHandle(CpuContext ctx, ulong attrAddress)
@@ -1344,21 +1456,24 @@ public static class KernelPthreadCompatExports
             }
         }
 
+        var waiter = new PthreadCondWaiter
+        {
+            ThreadId = currentThreadId,
+        };
         var signaled = false;
         lock (state.SyncRoot)
         {
-            state.Waiters++;
+            state.Enqueue(waiter);
             TracePthreadCond("wait-enter", condAddress, mutexAddress, state, timed, (int)OrbisGen2Result.ORBIS_GEN2_OK);
 
-            // POSIX atomicity: we are registered as a waiter (Waiters++ under
-            // SyncRoot) before the mutex is released, so a signal issued the
-            // instant the mutex unlocks already counts us and lands in
-            // SignalsPending — checked before the first Monitor.Wait. No
-            // window exists where a wake can be lost.
+            // POSIX atomicity: this specific waiter is queued under SyncRoot
+            // before the mutex is released. A signal issued the instant the
+            // mutex unlocks assigns itself to this waiter (or another waiter
+            // that was already present) before any future waiter can arrive.
             var unlockResult = PthreadMutexUnlockCore(ctx, mutexAddress, requireOwner: true);
             if (unlockResult != (int)OrbisGen2Result.ORBIS_GEN2_OK)
             {
-                state.Waiters--;
+                state.Remove(waiter);
                 TracePthreadCond("wait-unlock-fail", condAddress, mutexAddress, state, timed, unlockResult);
                 return unlockResult;
             }
@@ -1369,7 +1484,7 @@ public static class KernelPthreadCompatExports
             GuestThreadBlocking.NoteBlocked(currentThreadId, timed ? "pthread_cond_timedwait" : "pthread_cond_wait");
             try
             {
-                while (state.SignalsPending == 0 && !GuestThreadBlocking.ShutdownRequested)
+                while (!waiter.Signaled && !GuestThreadBlocking.ShutdownRequested)
                 {
                     var remaining = timed
                         ? GetRemainingTimeout(deadline)
@@ -1393,21 +1508,8 @@ public static class KernelPthreadCompatExports
                 GuestThreadBlocking.NoteUnblocked(currentThreadId);
             }
 
-            if (state.SignalsPending > 0)
-            {
-                state.SignalsPending--;
-                signaled = true;
-            }
-
-            state.Waiters--;
-            if (state.SignalsPending > state.Waiters)
-            {
-                // A timed-out waiter left a signal unconsumed with nobody
-                // remaining to take it; drop it so a future wait does not
-                // observe a phantom wake (signals on an empty condvar are
-                // no-ops on real hardware).
-                state.SignalsPending = state.Waiters;
-            }
+            signaled = waiter.Signaled;
+            state.Remove(waiter);
         }
 
         // POSIX guarantees the mutex is re-acquired on every return path,
@@ -1436,19 +1538,12 @@ public static class KernelPthreadCompatExports
         lock (state.SyncRoot)
         {
             state.SignalEpoch++;
-            if (broadcast)
+            var assigned = state.AssignSignals(broadcast);
+            if (assigned != 0)
             {
-                state.SignalsPending = state.Waiters;
-            }
-            else if (state.SignalsPending < state.Waiters)
-            {
-                // Only count a signal an unserved waiter can consume; signaling
-                // an empty condvar is a no-op per POSIX.
-                state.SignalsPending++;
-            }
-
-            if (state.Waiters != 0)
-            {
+                // Monitor cannot target a particular host waiter. Wake all of
+                // them, but only the waiter(s) assigned above may leave the
+                // predicate loop; every other waiter immediately parks again.
                 Monitor.PulseAll(state.SyncRoot);
             }
 

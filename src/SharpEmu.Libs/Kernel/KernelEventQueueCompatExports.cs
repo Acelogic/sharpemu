@@ -399,6 +399,34 @@ public static class KernelEventQueueCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
+        // Host wait primitives only provide millisecond scheduling granularity.
+        // Treat shorter guest deadlines as cooperative polls once the queue has
+        // been checked: rounding (for example) a 1-us render-queue wait up to
+        // Monitor.Wait(1) slows it by three orders of magnitude and serializes
+        // the guest frame. A single yield for a non-zero deadline prevents a
+        // render thread from hot-polling millions of imports while allowing an
+        // event producer to run before the final check.
+        if (timeoutAddress != 0 && IsSubMillisecondPoll(timeoutUsec))
+        {
+            if (timeoutUsec != 0)
+            {
+                Thread.Yield();
+                deliveredCount = DequeueEvents(ctx, handle, eventsAddress, eventCapacity);
+                if (outCountAddress != 0 && !TryWriteUInt32(ctx, outCountAddress, (uint)deliveredCount))
+                {
+                    return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+                }
+                if (deliveredCount > 0)
+                {
+                    TraceEventQueue(ctx, "wait-deliver", handle);
+                    return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+                }
+            }
+
+            TraceEventQueue(ctx, "wait-timeout", handle);
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT;
+        }
+
         // No events ready: block this host thread in place on the queue gate.
         // Monitor.Wait releases the gate and parks atomically, so an
         // EnqueueEvent/TriggerDisplayEvent PulseAll issued the instant after
@@ -477,6 +505,8 @@ public static class KernelEventQueueCompatExports
         TraceEventQueue(ctx, "wait", handle);
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
+
+    internal static bool IsSubMillisecondPoll(uint timeoutUsec) => timeoutUsec < 1_000;
 
     public static bool IsValidEqueue(ulong handle)
     {
@@ -904,8 +934,24 @@ public static class KernelEventQueueCompatExports
 
         var returnRip = 0UL;
         _ = TryReadUInt64(ctx, ctx[CpuRegister.Rsp], out returnRip);
+        var timeoutAddress = ctx[CpuRegister.R8];
+        var timeoutDescription = timeoutAddress == 0
+            ? "infinite"
+            : TryReadUInt32(ctx, timeoutAddress, out var timeoutUsec)
+                ? $"{timeoutUsec}us"
+                : "unreadable";
+        var guestThreadHandle = GuestThreadExecution.CurrentGuestThreadHandle;
+        var guestThreadName = KernelPthreadState.TryGetThreadIdentity(
+            guestThreadHandle,
+            out var guestIdentity)
+            ? guestIdentity.Name
+            : "<unregistered>";
         Console.Error.WriteLine(
-            $"[LOADER][TRACE] equeue.{operation}: handle=0x{handle:X16} rsi=0x{ctx[CpuRegister.Rsi]:X16} rdx=0x{ctx[CpuRegister.Rdx]:X16} ret=0x{returnRip:X16}");
+            $"[LOADER][TRACE] equeue.{operation}: handle=0x{handle:X16} " +
+            $"rsi=0x{ctx[CpuRegister.Rsi]:X16} rdx=0x{ctx[CpuRegister.Rdx]:X16} " +
+            $"r8=0x{timeoutAddress:X16} timeout={timeoutDescription} " +
+            $"guest=0x{guestThreadHandle:X16} name=\"{guestThreadName}\" " +
+            $"host={Environment.CurrentManagedThreadId} ret=0x{returnRip:X16}");
     }
 
     private static bool TryWriteUInt32(CpuContext ctx, ulong address, uint value)

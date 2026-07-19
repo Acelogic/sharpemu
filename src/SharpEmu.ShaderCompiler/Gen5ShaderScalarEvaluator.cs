@@ -1380,6 +1380,7 @@ public static class Gen5ShaderScalarEvaluator
         }
 
         if (instruction.Opcode is
+            "SAbsI32" or
             "SNotB32" or
             "SBrevB32" or
             "SBcnt1I32B32" or
@@ -1388,6 +1389,9 @@ public static class Gen5ShaderScalarEvaluator
         {
             registers[destination.Value] = instruction.Opcode switch
             {
+                "SAbsI32" => (left & 0x8000_0000u) != 0
+                    ? unchecked(0u - left)
+                    : left,
                 "SNotB32" => ~left,
                 "SBrevB32" => ReverseBits(left),
                 "SBcnt1I32B32" => (uint)BitOperations.PopCount(left),

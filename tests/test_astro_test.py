@@ -135,6 +135,27 @@ class TimelineDiagnosticsTests(unittest.TestCase):
 
 
 class EnvironmentTests(unittest.TestCase):
+    def test_astro_uses_real_gpu_waits_by_default(self) -> None:
+        with mock.patch.dict(os.environ, {"SHARPEMU_GPU_WAIT_MODE": "force"}):
+            environment = HARNESS.build_environment(
+                Path("/tmp/astro/eboot.bin"),
+                Path("/tmp/sharpemu/SharpEmu"),
+                {},
+                [],
+            )
+
+        self.assertNotIn("SHARPEMU_GPU_WAIT_MODE", environment)
+
+    def test_unset_removes_a_harness_default(self) -> None:
+        environment = HARNESS.build_environment(
+            Path("/tmp/astro/eboot.bin"),
+            Path("/tmp/sharpemu/SharpEmu"),
+            {},
+            ["SHARPEMU_IGNORE_STACK_CHK"],
+        )
+
+        self.assertNotIn("SHARPEMU_IGNORE_STACK_CHK", environment)
+
     def test_astro_defaults_to_validated_all_lle_libc_routing(self) -> None:
         with mock.patch.dict(os.environ, {"SHARPEMU_LLE_LIBC_ALL": "0"}):
             environment = HARNESS.build_environment(

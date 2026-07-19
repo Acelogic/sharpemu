@@ -95,6 +95,25 @@ public sealed class Gen5DataShareTests
     }
 
     [Fact]
+    public void DsWriteAddtidB32DecodesRealTitleShaderWord()
+    {
+        var program = DecodeProgram(0xB0, offset: 0x700);
+
+        var instruction = Assert.Single(
+            program.Instructions,
+            item => item.Opcode == "DsWriteAddtidB32");
+        Assert.Equal([Gen5Operand.Vector(3)], instruction.Sources);
+        Assert.Empty(instruction.Destinations);
+        var control = Assert.IsType<Gen5DataShareControl>(instruction.Control);
+        Assert.Equal(0U, control.Offset0);
+        Assert.Equal(7U, control.Offset1);
+
+        var opcodes = CompileAndReadSpirvOpcodes(0xB0, offset: 0x700);
+        Assert.Contains((ushort)SpirvOp.IMul, opcodes);
+        Assert.Contains(OpStore, opcodes);
+    }
+
+    [Fact]
     public void GdsAppendLowersToOneDeviceAtomicAndWaveBroadcast()
     {
         var program = DecodeProgram(0x3E, offset: 0x14, gds: true);
@@ -201,9 +220,11 @@ public sealed class Gen5DataShareTests
         return program;
     }
 
-    private static IReadOnlyList<ushort> CompileAndReadSpirvOpcodes(uint opcode)
+    private static IReadOnlyList<ushort> CompileAndReadSpirvOpcodes(
+        uint opcode,
+        uint offset = 0)
     {
-        var program = DecodeProgram(opcode);
+        var program = DecodeProgram(opcode, offset);
         var state = new Gen5ShaderState(program, [], null);
         var scalarRegisters = new uint[256];
         var evaluation = new Gen5ShaderEvaluation(

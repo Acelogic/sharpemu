@@ -142,6 +142,99 @@ public sealed partial class DirectExecutionBackend
 		return true;
 	}
 
+	private unsafe static bool TryFindStackCheckRecoveryAddress(
+		ulong returnRip,
+		out ulong recoveryRip)
+	{
+		const int SearchBackBytes = 0x100;
+		const int ReturnOpcodeBytes = 2;
+
+		recoveryRip = 0;
+		if (returnRip < SearchBackBytes)
+		{
+			return false;
+		}
+
+		Span<byte> code = stackalloc byte[SearchBackBytes + ReturnOpcodeBytes];
+		var codeAddress = returnRip - SearchBackBytes;
+		if (!TryReadHostBytes(codeAddress, code) ||
+			!TryFindStackCheckRecovery(code, SearchBackBytes, out var recoveryOffset))
+		{
+			return false;
+		}
+
+		recoveryRip = codeAddress + (ulong)recoveryOffset;
+		return true;
+	}
+
+	internal static bool TryFindStackCheckRecovery(
+		ReadOnlySpan<byte> code,
+		int returnOffset,
+		out int recoveryOffset)
+	{
+		const int DirectCallBytes = 5;
+		const int MaxBranchSearchBytes = 0x80;
+
+		recoveryOffset = 0;
+		if (returnOffset < DirectCallBytes ||
+			returnOffset + 2 > code.Length ||
+			code[returnOffset] != 0x0F ||
+			code[returnOffset + 1] != 0x0B)
+		{
+			return false;
+		}
+
+		var failureCallOffset = returnOffset - DirectCallBytes;
+		if (code[failureCallOffset] != 0xE8)
+		{
+			return false;
+		}
+
+		var searchStart = Math.Max(0, failureCallOffset - MaxBranchSearchBytes);
+		for (var branchOffset = failureCallOffset - 2; branchOffset >= searchStart; branchOffset--)
+		{
+			int fallthroughOffset;
+			int branchTarget;
+			if (code[branchOffset] == 0x75 && branchOffset + 2 <= failureCallOffset)
+			{
+				fallthroughOffset = branchOffset + 2;
+				branchTarget = fallthroughOffset + unchecked((sbyte)code[branchOffset + 1]);
+			}
+			else if (code[branchOffset] == 0x0F &&
+				branchOffset + 6 <= failureCallOffset &&
+				code[branchOffset + 1] == 0x85)
+			{
+				fallthroughOffset = branchOffset + 6;
+				branchTarget = fallthroughOffset + BinaryPrimitives.ReadInt32LittleEndian(
+					code.Slice(branchOffset + 2, sizeof(int)));
+			}
+			else
+			{
+				continue;
+			}
+
+			if (branchTarget != failureCallOffset)
+			{
+				continue;
+			}
+
+			// The not-taken path must contain a real return before the cold
+			// stack-check call. This keeps the opt-in recovery constrained to
+			// the canonical compare/jne/epilogue/call/ud2 compiler layout.
+			for (var offset = fallthroughOffset; offset < failureCallOffset; offset++)
+			{
+				if (code[offset] == 0xC3 ||
+					(code[offset] == 0xC2 && offset + 2 < failureCallOffset))
+				{
+					recoveryOffset = fallthroughOffset;
+					return true;
+				}
+			}
+		}
+
+		return false;
+	}
+
 	private unsafe ulong DispatchImport(int importIndex, nint argPackPtr)
 	{
 		long num = NextImportDispatchIndex();
@@ -240,32 +333,25 @@ public sealed partial class DirectExecutionBackend
 			}
 		}
 		// Diagnostic compatibility escape hatch for a guest stack-protector
-		// failure whose noreturn call is immediately followed by UD2.  Returning
-		// normally from the HLE export would execute that UD2; redirect this one
-		// well-known compiler epilogue back through its register/stack unwind.
-		// Keep the byte-pattern check strict so the opt-in cannot guess at an
-		// unrelated function layout.
+		// failure whose noreturn call is immediately followed by UD2. Returning
+		// normally from the HLE export would execute that UD2; redirect through
+		// the guarded function's normal register/stack unwind instead. Compilers
+		// may place cold alternate paths between the epilogue and stack-check
+		// call, so recognize the bounded branch-to-failure shape rather than one
+		// fixed byte distance.
 		if (string.Equals(importStubEntry.Nid, "Ou3iL1abvng", StringComparison.Ordinal) &&
 			string.Equals(
 				Environment.GetEnvironmentVariable("SHARPEMU_IGNORE_STACK_CHK"),
 				"1",
 				StringComparison.Ordinal) &&
-			num7 >= 0x20)
+			TryFindStackCheckRecoveryAddress(num7, out var recoveredReturn))
 		{
-			var returnCode = (byte*)num7;
-			if (returnCode[0] == 0x0F && returnCode[1] == 0x0B &&
-				returnCode[-22] == 0x75 && returnCode[-21] == 0x0F &&
-				returnCode[-20] == 0x48 && returnCode[-19] == 0x83 &&
-				returnCode[-18] == 0xC4)
-			{
-				var recoveredReturn = num7 - 20;
-				*(ulong*)(argPackPtr + 96) = recoveredReturn;
-				cpuContext[CpuRegister.Rax] = 0;
-				Console.Error.WriteLine(
-					$"[LOADER][WARN] Recovered guest stack-check epilogue " +
-					$"ret=0x{num7:X16} -> 0x{recoveredReturn:X16}");
-				return 0;
-			}
+			*(ulong*)(argPackPtr + 96) = recoveredReturn;
+			cpuContext[CpuRegister.Rax] = 0;
+			Console.Error.WriteLine(
+				$"[LOADER][WARN] Recovered guest stack-check epilogue " +
+				$"ret=0x{num7:X16} -> 0x{recoveredReturn:X16}");
+			return 0;
 		}
 		if (_activeGuestThreadState is { } activeGuestThreadState)
 		{

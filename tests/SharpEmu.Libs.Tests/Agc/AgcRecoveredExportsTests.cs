@@ -17,6 +17,35 @@ public sealed class AgcRecoveredExportsTests
     private const int IncompatiblePair = unchecked((int)0x8A6C0008);
     private const int DescriptorSize = 0x60;
 
+    [Theory]
+    [InlineData(0x8Bu, 0x8Cu, 8u)]
+    [InlineData(0xCBu, 0xCCu, 0u)]
+    [InlineData(0x4Bu, 0x4Cu, 0u)]
+    public void DecodeExportUserDataLayout_UsesStageHardwareSgprBase(
+        uint resource2Register,
+        uint expectedUserDataRegister,
+        uint expectedScalarRegisterBase)
+    {
+        var registers = new Dictionary<uint, uint>
+        {
+            [resource2Register] = 3u << 1,
+        };
+
+        var decoded = AgcExports.DecodeExportUserDataLayout(registers);
+
+        Assert.Equal(expectedUserDataRegister, decoded.UserDataRegister);
+        Assert.Equal(expectedScalarRegisterBase, decoded.ScalarRegisterBase);
+    }
+
+    [Fact]
+    public void NggComputeRaster_RequiresExplicitOptIn()
+    {
+        Assert.False(AgcExports.IsNggComputeRasterEnabled(null));
+        Assert.False(AgcExports.IsNggComputeRasterEnabled("0"));
+        Assert.False(AgcExports.IsNggComputeRasterEnabled("true"));
+        Assert.True(AgcExports.IsNggComputeRasterEnabled("1"));
+    }
+
     [Fact]
     public void DecodeNggGraphicsSystemRegisters_UsesIndirectGsAddressPair()
     {

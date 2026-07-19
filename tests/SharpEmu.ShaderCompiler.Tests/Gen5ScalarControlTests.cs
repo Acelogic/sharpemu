@@ -14,6 +14,53 @@ public sealed class Gen5ScalarControlTests
     private const ulong ShaderAddress = 0x1_0000_8000;
     private const uint SEndpgm = 0xBF810000;
 
+    [Theory]
+    [InlineData(0x0000_0000u, 0x0000_0000u)]
+    [InlineData(0x0000_002Au, 0x0000_002Au)]
+    [InlineData(0xFFFF_FFD6u, 0x0000_002Au)]
+    [InlineData(0x8000_0000u, 0x8000_0000u)]
+    public void SAbsI32DecodesEvaluatesAndCompiles(uint input, uint expected)
+    {
+        var memory = new TestCpuMemory(ShaderAddress, 0x100);
+        Span<byte> shader = stackalloc byte[2 * sizeof(uint)];
+        // s_abs_i32 s2, s1 (SOP1 opcode 0x34).
+        BinaryPrimitives.WriteUInt32LittleEndian(shader, 0xBE823401u);
+        BinaryPrimitives.WriteUInt32LittleEndian(shader[sizeof(uint)..], SEndpgm);
+        Assert.True(memory.TryWrite(ShaderAddress, shader));
+
+        var ctx = new CpuContext(memory, Generation.Gen5);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                ShaderAddress,
+                out var program,
+                out var error),
+            error);
+        var instruction = Assert.Single(
+            program.Instructions,
+            item => item.Opcode == "SAbsI32");
+        Assert.Equal([Gen5Operand.Scalar(1)], instruction.Sources);
+        Assert.Equal([Gen5Operand.Scalar(2)], instruction.Destinations);
+
+        var scalarRegisters = new uint[256];
+        scalarRegisters[1] = input;
+        var state = new Gen5ShaderState(program, scalarRegisters, null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(ctx, state, out var evaluation, out error),
+            error);
+        Assert.Equal(expected, evaluation.ScalarRegisters[2]);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                1,
+                1,
+                1,
+                out _,
+                out error),
+            error);
+    }
+
     [Fact]
     public void STrapDecodesAndCompilesAsNoOpWithoutGuestGpuDebugger()
     {

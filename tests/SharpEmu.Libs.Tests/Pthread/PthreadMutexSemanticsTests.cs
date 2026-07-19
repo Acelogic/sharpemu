@@ -10,6 +10,25 @@ namespace SharpEmu.Libs.Tests.Pthread;
 public sealed class PthreadMutexSemanticsTests
 {
     [Fact]
+    public void ZeroInitializedMutex_SelfLockDoesNotInflateRecursion()
+    {
+        const ulong memoryBase = 0x2_0000_0000;
+        const ulong mutexAddress = memoryBase + 0x100;
+        var memory = new AllocatingCpuMemory(memoryBase, 0x4000);
+        var context = new CpuContext(memory, Generation.Gen5);
+        context[CpuRegister.Rdi] = mutexAddress;
+
+        Assert.Equal(0, KernelPthreadCompatExports.PthreadMutexLock(context));
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_DEADLOCK,
+            KernelPthreadCompatExports.PthreadMutexLock(context));
+        Assert.Equal(0, KernelPthreadCompatExports.PthreadMutexUnlock(context));
+
+        // One unlock must fully release the implicit mutex for the next lock.
+        Assert.Equal(0, KernelPthreadCompatExports.PthreadMutexLock(context));
+        Assert.Equal(0, KernelPthreadCompatExports.PthreadMutexUnlock(context));
+    }
+
+    [Fact]
     public void AdaptiveMutex_SelfLockUsesCompatibilityRecursion()
     {
         const ulong memoryBase = 0x1_0000_0000;
@@ -22,6 +41,27 @@ public sealed class PthreadMutexSemanticsTests
         Assert.Equal(0, KernelPthreadCompatExports.PthreadMutexLock(context));
         Assert.Equal(0, KernelPthreadCompatExports.PthreadMutexLock(context));
         Assert.Equal(0, KernelPthreadCompatExports.PthreadMutexUnlock(context));
+        Assert.Equal(0, KernelPthreadCompatExports.PthreadMutexUnlock(context));
+    }
+
+    [Fact]
+    public void ExitingOwner_ReleasesMutexForNextLocker()
+    {
+        const ulong memoryBase = 0x3_0000_0000;
+        const ulong mutexAddress = memoryBase + 0x100;
+        var memory = new AllocatingCpuMemory(memoryBase, 0x4000);
+        var context = new CpuContext(memory, Generation.Gen5);
+        context[CpuRegister.Rdi] = mutexAddress;
+
+        Assert.Equal(0, KernelPthreadCompatExports.PthreadMutexLock(context));
+        Assert.Equal(0, KernelPthreadCompatExports.PthreadSelf(context));
+        var ownerThreadHandle = context[CpuRegister.Rax];
+        Assert.NotEqual(0UL, ownerThreadHandle);
+
+        KernelPthreadCompatExports.ReleaseThreadSynchronizationState(ownerThreadHandle);
+
+        context[CpuRegister.Rdi] = mutexAddress;
+        Assert.Equal(0, KernelPthreadCompatExports.PthreadMutexLock(context));
         Assert.Equal(0, KernelPthreadCompatExports.PthreadMutexUnlock(context));
     }
 

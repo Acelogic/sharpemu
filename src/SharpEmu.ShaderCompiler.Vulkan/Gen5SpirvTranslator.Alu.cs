@@ -1857,6 +1857,16 @@ public static partial class Gen5SpirvTranslator
                     StoreS(destination, result);
                     Store(_scc, IsNotZero(result));
                     return true;
+                case "SAbsI32":
+                    result = _module.AddInstruction(
+                        SpirvOp.Select,
+                        _uintType,
+                        IsNotZero(BitwiseAnd(left, UInt(0x8000_0000))),
+                        _module.AddInstruction(SpirvOp.ISub, _uintType, UInt(0), left),
+                        left);
+                    StoreS(destination, result);
+                    Store(_scc, IsNotZero(result));
+                    return true;
                 case "SBrevB32":
                     result = _module.AddInstruction(SpirvOp.BitReverse, _uintType, left);
                     StoreS(destination, result);

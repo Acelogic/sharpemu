@@ -657,6 +657,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	private readonly record struct LazyCommitRange(ulong BaseAddress, ulong Size);
 
 	private readonly object _guestThreadGate = new object();
+	// Slot discovery and mapping must be atomic. Concurrent pthread_create
+	// calls can otherwise both select the same free stack/TLS slot; the second
+	// physical map then zeroes the first thread's live region.
+	private readonly object _guestThreadRegionGate = new object();
 
 	// Diagnostic owner tracking for _guestThreadGate; written only while the
 	// gate is held, read lock-free by the stall watchdog's periodic snapshot.
@@ -3967,7 +3971,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		return false;
 	}
 
-	private static bool TryMapGuestThreadRegion(
+	private bool TryMapGuestThreadRegion(
 		IVirtualMemory virtualMemory,
 		ulong baseAddress,
 		ulong size,
@@ -3975,27 +3979,30 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		out ulong mappedBase,
 		out string? error)
 	{
-		for (int i = 0; i < GuestThreadRegionSlots; i++)
+		lock (_guestThreadRegionGate)
 		{
-			var candidateBase = baseAddress - ((ulong)i * GuestThreadRegionStride);
-			if (!IsGuestThreadRegionFree(virtualMemory, candidateBase, size))
+			for (int i = 0; i < GuestThreadRegionSlots; i++)
 			{
-				continue;
-			}
-			try
-			{
-				virtualMemory.Map(
-					candidateBase,
-					size,
-					fileOffset: 0,
-					fileData: ReadOnlySpan<byte>.Empty,
-					protection: protection);
-				mappedBase = candidateBase;
-				error = null;
-				return true;
-			}
-			catch (InvalidOperationException)
-			{
+				var candidateBase = baseAddress - ((ulong)i * GuestThreadRegionStride);
+				if (!IsGuestThreadRegionFree(virtualMemory, candidateBase, size))
+				{
+					continue;
+				}
+				try
+				{
+					virtualMemory.Map(
+						candidateBase,
+						size,
+						fileOffset: 0,
+						fileData: ReadOnlySpan<byte>.Empty,
+						protection: protection);
+					mappedBase = candidateBase;
+					error = null;
+					return true;
+				}
+				catch (InvalidOperationException)
+				{
+				}
 			}
 		}
 
@@ -4004,34 +4011,37 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		return false;
 	}
 
-	private static bool TryMapGuestThreadTlsRegion(
+	private bool TryMapGuestThreadTlsRegion(
 		IVirtualMemory virtualMemory,
 		out ulong tlsBase,
 		out string? error)
 	{
-		for (int i = 0; i < GuestThreadRegionSlots; i++)
+		lock (_guestThreadRegionGate)
 		{
-			var candidateBase = GuestThreadTlsBaseAddress - ((ulong)i * GuestThreadRegionStride);
-			var mappedBase = candidateBase - GuestThreadTlsPrefixSize;
-			var mappedSize = GuestThreadTlsSize + GuestThreadTlsPrefixSize;
-			if (!IsGuestThreadRegionFree(virtualMemory, mappedBase, mappedSize))
+			for (int i = 0; i < GuestThreadRegionSlots; i++)
 			{
-				continue;
-			}
-			try
-			{
-				virtualMemory.Map(
-					mappedBase,
-					mappedSize,
-					fileOffset: 0,
-					fileData: ReadOnlySpan<byte>.Empty,
-					protection: ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
-				tlsBase = candidateBase;
-				error = null;
-				return true;
-			}
-			catch (InvalidOperationException)
-			{
+				var candidateBase = GuestThreadTlsBaseAddress - ((ulong)i * GuestThreadRegionStride);
+				var mappedBase = candidateBase - GuestThreadTlsPrefixSize;
+				var mappedSize = GuestThreadTlsSize + GuestThreadTlsPrefixSize;
+				if (!IsGuestThreadRegionFree(virtualMemory, mappedBase, mappedSize))
+				{
+					continue;
+				}
+				try
+				{
+					virtualMemory.Map(
+						mappedBase,
+						mappedSize,
+						fileOffset: 0,
+						fileData: ReadOnlySpan<byte>.Empty,
+						protection: ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+					tlsBase = candidateBase;
+					error = null;
+					return true;
+				}
+				catch (InvalidOperationException)
+				{
+				}
 			}
 		}
 
@@ -4243,6 +4253,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 					$"[LOADER][INFO] Pumping guest thread '{thread.Name}' reason={reason} entry=0x{thread.EntryPoint:X16}");
 			}
 			var exitReason = ExecuteGuestThreadEntry(thread.Context, thread.EntryPoint, thread.Name, out var blockReason);
+			var guestThreadExited = false;
 			using (LockGate("RunGuestThread.exit"))
 			{
 				switch (exitReason)
@@ -4250,6 +4261,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 					case GuestNativeCallExitReason.Returned:
 						thread.ExitValue = thread.Context[CpuRegister.Rax];
 						thread.State = GuestThreadRunState.Exited;
+						guestThreadExited = true;
 						if (_logGuestThreads)
 						Console.Error.WriteLine(
 							$"[LOADER][INFO] Guest thread exited: name='{thread.Name}' " +
@@ -4262,6 +4274,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 						thread.BlockReason = blockReason;
 						break;
 				}
+			}
+			if (guestThreadExited)
+			{
+				GuestThreadExecution.NotifyGuestThreadExited(thread.ThreadHandle);
 			}
 			if (_logGuestThreads)
 			{

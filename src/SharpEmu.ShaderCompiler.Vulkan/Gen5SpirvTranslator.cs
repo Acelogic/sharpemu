@@ -2361,6 +2361,27 @@ public static partial class Gen5SpirvTranslator
                         GetRawSource(instruction, 1));
                     return true;
                 }
+                case "DsWriteAddtidB32":
+                {
+                    if (instruction.Sources.Count < 1)
+                    {
+                        error = "missing LDS add-thread-id write source";
+                        return false;
+                    }
+
+                    var laneOffset = _module.AddInstruction(
+                        SpirvOp.IMul,
+                        _uintType,
+                        GuestWaveLane(),
+                        UInt(sizeof(uint)));
+                    var address = IAdd(LoadS(124), laneOffset);
+                    StoreLds(
+                        LdsPointer(
+                            address,
+                            EffectiveDsSingleOffsetBytes(control)),
+                        GetRawSource(instruction, 0));
+                    return true;
+                }
                 case "DsWriteB64":
                 {
                     if (instruction.Sources.Count < 3)

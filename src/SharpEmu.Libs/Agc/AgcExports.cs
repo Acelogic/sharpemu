@@ -313,6 +313,9 @@ public static partial class AgcExports
             Environment.GetEnvironmentVariable("SHARPEMU_LOG_AGC_SHADER"),
             "1",
             StringComparison.Ordinal);
+    private static readonly bool _enableNggComputeRaster =
+        IsNggComputeRasterEnabled(
+            Environment.GetEnvironmentVariable("SHARPEMU_ENABLE_NGG_COMPUTE_RASTER"));
     private static readonly ulong? _traceComputeShaderAddress = ParseOptionalHexAddress(
         Environment.GetEnvironmentVariable("SHARPEMU_TRACE_COMPUTE_SHADER_ADDRESS"));
     private static readonly ulong[] _tracePixelShaderAddresses = ParseHexAddresses(
@@ -719,7 +722,7 @@ public static partial class AgcExports
         public uint NextResource { get; set; } = 1;
         public ulong WorkSequence { get; set; }
         public ulong SubmissionSequence { get; set; }
-        public bool WaitMonitorRunning { get; set; }
+        public int WaitMonitorRunning;
         public object WaitMonitorSignalGate { get; } = new();
         public long WaitMonitorSignalVersion { get; set; }
     }
@@ -6241,19 +6244,41 @@ public static partial class AgcExports
         CpuContext submitContext,
         SubmittedGpuState gpuState)
     {
-        if (gpuState.WaitMonitorRunning)
+        // Multiple graphics/compute submissions can discover their first wait
+        // concurrently. Claim the monitor slot atomically so they cannot each
+        // start a lifetime worker for the same guest memory.
+        if (Interlocked.CompareExchange(ref gpuState.WaitMonitorRunning, 1, 0) != 0)
         {
             return;
         }
 
-        gpuState.WaitMonitorRunning = true;
         var monitorContext = new CpuContext(
             submitContext.Memory,
             submitContext.TargetGeneration);
-        ThreadPool.UnsafeQueueUserWorkItem(
-            static state => MonitorGpuWaits(state.Context, state.GpuState),
-            (Context: monitorContext, GpuState: gpuState),
-            preferLocal: false);
+        try
+        {
+            // The monitor can stay alive for the title's lifetime. Keeping it
+            // on the ThreadPool makes GPU progress depend on the pool noticing
+            // that loader/TBB work has saturated its current workers; heavy
+            // tracing used to hide this by provoking worker injection.
+            var monitorThread = new Thread(
+                static state =>
+                {
+                    var (context, submittedState) =
+                        ((CpuContext Context, SubmittedGpuState GpuState))state!;
+                    MonitorGpuWaits(context, submittedState);
+                })
+            {
+                IsBackground = true,
+                Name = "SharpEmu-GpuWaitMonitor",
+            };
+            monitorThread.Start((monitorContext, gpuState));
+        }
+        catch
+        {
+            Interlocked.Exchange(ref gpuState.WaitMonitorRunning, 0);
+            throw;
+        }
     }
 
     private static void MonitorGpuWaits(
@@ -6283,7 +6308,7 @@ public static partial class AgcExports
                 }
                 if (remaining == 0)
                 {
-                    gpuState.WaitMonitorRunning = false;
+                    Interlocked.Exchange(ref gpuState.WaitMonitorRunning, 0);
                     return;
                 }
             }
@@ -7350,6 +7375,7 @@ public static partial class AgcExports
 
         var isCombinedExportShader =
             Gen5ShaderTranslator.IsCombinedShader(ctx, exportShaderAddress);
+        var exportUserDataLayout = DecodeExportUserDataLayout(state.ShRegisters);
         state.UcRegisters.TryGetValue(VgtPrimitiveType, out var primitiveType);
         var mergedWaveInfo = isCombinedExportShader
             ? EncodeNggMergedWaveInfo(primitiveType, vertexCount)
@@ -7360,12 +7386,11 @@ public static partial class AgcExports
                 exportShaderAddress,
                 exportShaderHeader,
                 state.ShRegisters,
-                SelectExportUserDataRegister(state.ShRegisters),
+                exportUserDataLayout.UserDataRegister,
                 out var exportState,
                 out error,
-                userDataScalarRegisterBase: isCombinedExportShader
-                    ? NggUserDataScalarRegisterBase
-                    : 0,
+                userDataScalarRegisterBase:
+                    exportUserDataLayout.ScalarRegisterBase,
                 graphicsSystemRegisters: isCombinedExportShader
                     ? DecodeNggGraphicsSystemRegisters(
                         state.ShRegisters,
@@ -7583,6 +7608,7 @@ public static partial class AgcExports
 
         var isCombinedExportShader =
             Gen5ShaderTranslator.IsCombinedShader(ctx, exportShaderAddress);
+        var exportUserDataLayout = DecodeExportUserDataLayout(state.ShRegisters);
         state.UcRegisters.TryGetValue(VgtPrimitiveType, out var primitiveType);
         var mergedWaveInfo = isCombinedExportShader
             ? EncodeNggMergedWaveInfo(primitiveType, vertexCount)
@@ -7609,12 +7635,11 @@ public static partial class AgcExports
                 exportShaderAddress,
                 exportShaderHeader,
                 state.ShRegisters,
-                SelectExportUserDataRegister(state.ShRegisters),
+                exportUserDataLayout.UserDataRegister,
                 out var exportState,
                 out error,
-                userDataScalarRegisterBase: isCombinedExportShader
-                    ? NggUserDataScalarRegisterBase
-                    : 0,
+                userDataScalarRegisterBase:
+                    exportUserDataLayout.ScalarRegisterBase,
                 graphicsSystemRegisters: isCombinedExportShader
                     ? DecodeNggGraphicsSystemRegisters(
                         state.ShRegisters,
@@ -7843,7 +7868,8 @@ public static partial class AgcExports
         (IGuestCompiledShader Vertex, IGuestCompiledShader Pixel) compiled = default;
         TranslatedNggDraw? translatedNgg = null;
         var totalGlobalBuffers = baseGlobalBufferCount;
-        if (isCombinedExportShader &&
+        if (_enableNggComputeRaster &&
+            isCombinedExportShader &&
             TryGetNggParameterCount(
                 exportState.Program,
                 primitiveType,
@@ -12819,6 +12845,26 @@ public static partial class AgcExports
             : EsUserDataRegister;
     }
 
+    internal static (uint UserDataRegister, uint ScalarRegisterBase)
+        DecodeExportUserDataLayout(IReadOnlyDictionary<uint, uint> registers)
+    {
+        var userDataRegister = SelectExportUserDataRegister(registers);
+        // GFX10 NGG programs use the GS bank. Hardware system SGPRs occupy
+        // s0-s7 there, so USER_DATA_0 maps to s8 even before the two halves of
+        // a combined shader have been registered. Combined-shader discovery is
+        // therefore not a reliable source for this register-layout decision.
+        var scalarRegisterBase = userDataRegister == GsUserDataRegister
+            ? NggUserDataScalarRegisterBase
+            : 0;
+        return (userDataRegister, scalarRegisterBase);
+    }
+
+    internal static bool IsNggComputeRasterEnabled(string? value) =>
+        // The lowering remains experimental: it can create the final target
+        // without reproducing the guest export shader's colour writes. Keep
+        // the established graphics path unless a developer opts in explicitly.
+        string.Equals(value, "1", StringComparison.Ordinal);
+
     internal static Gen5GraphicsSystemRegisters?
         DecodeNggGraphicsSystemRegisters(
             IReadOnlyDictionary<uint, uint> registers,
@@ -13299,6 +13345,8 @@ public static partial class AgcExports
             {
                 var isCombinedExportShader =
                     Gen5ShaderTranslator.IsCombinedShader(ctx, exportShaderAddress);
+                var exportUserDataLayout =
+                    DecodeExportUserDataLayout(state.ShRegisters);
                 shaderDecode = $" decode={Gen5ShaderTranslator.Describe(ctx, exportShaderAddress, pixelShaderAddress)}";
                 TraceAgcShader(
                     $"agc.shader_words es=0x{exportShaderAddress:X16} " +
@@ -13308,12 +13356,11 @@ public static partial class AgcExports
                         exportShaderAddress,
                         exportShaderHeader,
                         state.ShRegisters,
-                        SelectExportUserDataRegister(state.ShRegisters),
+                        exportUserDataLayout.UserDataRegister,
                         out var exportState,
                         out _,
-                        userDataScalarRegisterBase: isCombinedExportShader
-                            ? NggUserDataScalarRegisterBase
-                            : 0,
+                        userDataScalarRegisterBase:
+                            exportUserDataLayout.ScalarRegisterBase,
                         graphicsSystemRegisters: isCombinedExportShader
                             ? DecodeNggGraphicsSystemRegisters(state.ShRegisters)
                             : null) &&

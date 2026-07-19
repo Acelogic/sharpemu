@@ -1104,6 +1104,7 @@ public static class Gen5ShaderTranslator
             0x29 => "SNandSaveexecB64",
             0x2A => "SNorSaveexecB64",
             0x2B => "SXnorSaveexecB64",
+            0x34 => "SAbsI32",
             0x37 => "SAndn1SaveexecB64",
             0x38 => "SOrn1SaveexecB64",
             0x3C => "SAndSaveexecB32",
@@ -1662,6 +1663,7 @@ public static class Gen5ShaderTranslator
             0x3E => "DsAppend",
             0x4D => "DsWriteB64",
             0x76 => "DsReadB64",
+            0xB0 => "DsWriteAddtidB32",
             0xB2 => "DsPermuteB32",
             0xDE => "DsWriteB96",
             0xDF => "DsWriteB128",
@@ -2436,6 +2438,9 @@ public static class Gen5ShaderTranslator
                     ((word >> 17) & 1) != 0);
                 sources = opcode switch
                 {
+                    "DsWriteAddtidB32" => [
+                        Gen5Operand.Vector(vectorData0),
+                    ],
                     "DsWriteB32" => [
                         Gen5Operand.Vector(vectorAddress),
                         Gen5Operand.Vector(vectorData0),

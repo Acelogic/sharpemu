@@ -29,6 +29,9 @@ public sealed class PthreadCondSemanticsTests
         var pendingSignalsProp = stateType.GetProperty("PendingSignals");
         Assert.Null(pendingSignalsProp);
 
+        var signalsPendingProp = stateType.GetProperty("SignalsPending");
+        Assert.Null(signalsPendingProp);
+
         var tryConsumeMethod = stateType.GetMethod("TryConsumePendingSignal");
         Assert.Null(tryConsumeMethod);
     }
@@ -36,51 +39,59 @@ public sealed class PthreadCondSemanticsTests
     [Fact]
     public void PthreadCondSignal_WithNoWaiter_DoesNotPersist()
     {
-        // This test verifies the semantic contract: signal without waiter is a no-op.
-        // We can't easily test the full pthread flow without the scheduler, but we can
-        // verify the code path by checking that SignalEpoch advances but no state persists.
-        var stateType = typeof(KernelPthreadCompatExports).GetNestedType("PthreadCondState", BindingFlags.NonPublic);
-        Assert.NotNull(stateType);
-
-        // Create an instance via reflection
-        var state = Activator.CreateInstance(stateType);
-        Assert.NotNull(state);
-
-        var syncRootProp = stateType.GetProperty("SyncRoot");
-        var signalEpochProp = stateType.GetProperty("SignalEpoch");
-        var waitersProp = stateType.GetProperty("Waiters");
-
-        Assert.NotNull(syncRootProp);
-        Assert.NotNull(signalEpochProp);
-        Assert.NotNull(waitersProp);
-
-        var syncRoot = syncRootProp.GetValue(state);
-        Assert.NotNull(syncRoot);
-
-        // Initial state
-        Assert.Equal(0UL, (ulong)signalEpochProp.GetValue(state)!);
-        Assert.Equal(0, (int)waitersProp.GetValue(state)!);
+        var state = new KernelPthreadCompatExports.PthreadCondState();
+        Assert.Equal(0UL, state.SignalEpoch);
+        Assert.Equal(0, state.Waiters);
 
         // Simulate signal with no waiter (this would have incremented PendingSignals before)
-        lock (syncRoot)
+        lock (state.SyncRoot)
         {
-            signalEpochProp.SetValue(state, (ulong)signalEpochProp.GetValue(state)! + 1);
-            // Note: we don't increment PendingSignals because it doesn't exist
+            state.SignalEpoch++;
+            Assert.Equal(0, state.AssignSignals(broadcast: false));
         }
 
         // Verify epoch advanced but no persistent signal state
-        Assert.Equal(1UL, (ulong)signalEpochProp.GetValue(state)!);
+        Assert.Equal(1UL, state.SignalEpoch);
 
-        // A new waiter arriving should see the new epoch but not consume any "pending" signal
-        // (because there's no such concept anymore)
-        lock (syncRoot)
+        // A waiter arriving later must not inherit that signal.
+        var lateWaiter = new KernelPthreadCompatExports.PthreadCondWaiter { ThreadId = 1 };
+        lock (state.SyncRoot)
         {
-            var observedEpoch = (ulong)signalEpochProp.GetValue(state)!;
-            waitersProp.SetValue(state, (int)waitersProp.GetValue(state)! + 1);
+            state.Enqueue(lateWaiter);
+            Assert.False(lateWaiter.Signaled);
+            Assert.Equal(1, state.Waiters);
+            state.Remove(lateWaiter);
+        }
+    }
 
-            // Waiter sees epoch=1, will block until epoch changes again
-            Assert.Equal(1UL, observedEpoch);
-            Assert.Equal(1, (int)waitersProp.GetValue(state)!);
+    [Fact]
+    public void PthreadCondSignal_IsAssignedToAnExistingWaiter()
+    {
+        var state = new KernelPthreadCompatExports.PthreadCondState();
+        var first = new KernelPthreadCompatExports.PthreadCondWaiter { ThreadId = 1 };
+        var second = new KernelPthreadCompatExports.PthreadCondWaiter { ThreadId = 2 };
+        var late = new KernelPthreadCompatExports.PthreadCondWaiter { ThreadId = 3 };
+
+        lock (state.SyncRoot)
+        {
+            state.Enqueue(first);
+            state.Enqueue(second);
+
+            Assert.Equal(1, state.AssignSignals(broadcast: false));
+            Assert.True(first.Signaled);
+            Assert.False(second.Signaled);
+
+            // A waiter that arrives after the signal cannot steal the assigned
+            // wake before the selected host thread gets scheduled.
+            state.Enqueue(late);
+            Assert.False(late.Signaled);
+
+            Assert.Equal(1, state.AssignSignals(broadcast: false));
+            Assert.True(second.Signaled);
+            Assert.False(late.Signaled);
+
+            Assert.Equal(1, state.AssignSignals(broadcast: true));
+            Assert.True(late.Signaled);
         }
     }
 

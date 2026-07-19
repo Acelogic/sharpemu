@@ -1036,6 +1036,15 @@ public static partial class Gen5MslTranslator
                     Line($"scc = {result} != 0u;");
                     return true;
                 }
+                case "SAbsI32":
+                {
+                    var result = Temp(
+                        "uint",
+                        $"(({left} & 0x80000000u) != 0u ? (0u - {left}) : {left})");
+                    StoreScalar(destination, result);
+                    Line($"scc = {result} != 0u;");
+                    return true;
+                }
                 case "SBrevB32":
                 {
                     var result = Temp("uint", $"reverse_bits({left})");

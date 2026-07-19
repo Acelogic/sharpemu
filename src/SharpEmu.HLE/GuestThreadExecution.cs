@@ -203,6 +203,21 @@ public static class GuestThreadExecution
 
     public static IGuestThreadScheduler? Scheduler { get; set; }
 
+    /// <summary>
+    /// Raised after a guest thread reaches its terminal state. Kernel
+    /// primitives use this to release ownership that the dead thread can no
+    /// longer relinquish itself.
+    /// </summary>
+    public static event Action<ulong>? GuestThreadExited;
+
+    public static void NotifyGuestThreadExited(ulong threadHandle)
+    {
+        if (threadHandle != 0)
+        {
+            GuestThreadExited?.Invoke(threadHandle);
+        }
+    }
+
     public static bool IsGuestThread => _currentGuestThreadHandle != 0;
 
     public static ulong CurrentGuestThreadHandle => _currentGuestThreadHandle;

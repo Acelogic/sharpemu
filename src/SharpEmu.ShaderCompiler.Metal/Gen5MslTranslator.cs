@@ -1513,6 +1513,22 @@ public static partial class Gen5MslTranslator
                     StoreLds(LdsIndex(address, control.Offset0), RawSource(instruction, 1));
                     return true;
                 }
+                case "DsWriteAddtidB32":
+                {
+                    if (instruction.Sources.Count < 1)
+                    {
+                        error = "missing LDS add-thread-id write source";
+                        return false;
+                    }
+
+                    var address = Temp(
+                        "uint",
+                        $"{ScalarExpression(124)} + (sharpemu_lane * {sizeof(uint)}u)");
+                    StoreLds(
+                        LdsIndex(address, EffectiveDsSingleOffsetBytes(control)),
+                        RawSource(instruction, 0));
+                    return true;
+                }
                 case "DsWriteB64":
                 {
                     var address = Temp("uint", RawSource(instruction, 0));

@@ -66,7 +66,6 @@ DEFAULT_GAME = Path(
 BASE_ENV = {
     "SHARPEMU_IGNORE_STACK_CHK": "1",
     "SHARPEMU_IGNORE_INT41": "1",
-    "SHARPEMU_GPU_WAIT_MODE": "force",
     # ASTRO regresses before the title milestone when newly imported HLE libc
     # compatibility exports take precedence over the firmware implementations.
     # Keep the title-specific harness on the validated all-LLE routing while the
@@ -1713,10 +1712,12 @@ def run_attempt(
 
 def build_environment(eboot: Path, binary: Path, overrides: dict[str, str], unset: list[str]) -> dict[str, str]:
     environment = os.environ.copy()
-    for key in [*BASE_ENV, *FORBIDDEN_ENV, *unset]:
+    for key in [*BASE_ENV, *FORBIDDEN_ENV, "SHARPEMU_GPU_WAIT_MODE"]:
         environment.pop(key, None)
     environment.update(BASE_ENV)
     environment.update(overrides)
+    for key in unset:
+        environment.pop(key, None)
     environment["SHARPEMU_APP0_DIR"] = str(eboot.parent)
     ffmpeg = environment.get("SHARPEMU_FFMPEG_PATH") or shutil.which("ffmpeg")
     if ffmpeg:
