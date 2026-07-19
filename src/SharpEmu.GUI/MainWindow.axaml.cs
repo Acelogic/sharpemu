@@ -88,6 +88,15 @@ public partial class MainWindow : Window
     private int _detailLoadGeneration;
     private int _backdropGeneration;
 
+    // Bundled key art shown whenever no game-specific backdrop applies; the
+    // plain window color remains the fallback when the asset fails to load.
+    private Bitmap? _defaultBackdrop;
+
+    // Whether the native loading/closing popup should be showing; it is a
+    // desktop-topmost popup, so it closes while the launcher is in the
+    // background or minimized and reopens from this flag on activation.
+    private bool _sessionLoadingActive;
+
     // Controller navigation state.
     private readonly DispatcherTimer _gamepadTimer;
     private HostGamepadButtons _previousPadButtons;
@@ -110,6 +119,18 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+
+        try
+        {
+            _defaultBackdrop = new Bitmap(
+                AssetLoader.Open(new Uri("avares://SharpEmu.GUI/Assets/pic0.png")));
+            BackdropImage.Source = _defaultBackdrop;
+            BackdropImage.Opacity = 1.0;
+        }
+        catch (Exception)
+        {
+            _defaultBackdrop = null; // color background remains the fallback
+        }
 
         GameList.ItemsSource = _visibleGames;
         ConsoleList.ItemsSource = _consoleLines;
@@ -134,8 +155,18 @@ public partial class MainWindow : Window
         };
         _libraryBlurTimer.Tick += (_, _) => AdvanceLibraryBlur();
 
-        Activated += (_, _) => UpdateSessionBarVisibility();
-        Deactivated += (_, _) => SessionBarPopup.IsOpen = false;
+        // Native popups float above every window on the desktop; they must
+        // follow the launcher into the background or a minimized state.
+        Activated += (_, _) =>
+        {
+            UpdateSessionBarVisibility();
+            SessionLoadingPopup.IsOpen = _sessionLoadingActive;
+        };
+        Deactivated += (_, _) =>
+        {
+            SessionBarPopup.IsOpen = false;
+            SessionLoadingPopup.IsOpen = false;
+        };
 
         TitleBar.PointerPressed += OnTitleBarPointerPressed;
         GameList.SelectionChanged += (_, _) => UpdateSelectedGame();
@@ -399,6 +430,15 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (_isRunning || _isStopping)
+        {
+            // The game renders inside the launcher window, so the launcher
+            // stays active while playing. The controller belongs to the game
+            // then: no navigation, and Circle/B must never stop the session.
+            _previousPadButtons = pad.Buttons;
+            return;
+        }
+
         var shoulderPressed = pad.Buttons & ~_previousPadButtons;
         if ((shoulderPressed & HostGamepadButtons.L1) != 0)
         {
@@ -446,11 +486,6 @@ public partial class MainWindow : Window
         if ((pressed & HostGamepadButtons.Cross) != 0)
         {
             LaunchSelected();
-        }
-
-        if ((pressed & HostGamepadButtons.Circle) != 0)
-        {
-            StopEmulator();
         }
 
         _previousPadButtons = pad.Buttons;
@@ -868,6 +903,11 @@ public partial class MainWindow : Window
             await Updater.DownloadAndRestartAsync(_availableUpdate, progress);
             SetUpdateStatus("Updater.Status.Installing");
             Close();
+        }
+        catch (InvalidDataException)
+        {
+            SetUpdateStatus("Updater.Status.ChecksumFailed");
+            UpdateButton.IsEnabled = true;
         }
         catch
         {
@@ -1606,13 +1646,23 @@ public partial class MainWindow : Window
         base.OnPropertyChanged(change);
         if (change.Property == WindowStateProperty)
         {
+            // The XAML WindowState="Maximized" assignment raises this change
+            // during InitializeComponent, before named controls are wired up.
             if (WindowState == WindowState.Minimized)
             {
                 _sndPreview.Pause();
+                if (SessionLoadingPopup is { } popup)
+                {
+                    popup.IsOpen = false;
+                }
             }
             else
             {
                 _sndPreview.Resume();
+                if (SessionLoadingPopup is { } popup)
+                {
+                    popup.IsOpen = _sessionLoadingActive;
+                }
             }
         }
     }
@@ -1627,8 +1677,20 @@ public partial class MainWindow : Window
         var generation = ++_backdropGeneration;
         BackdropImage.Opacity = 0;
 
+        // The bundled key art is the primary backdrop whenever the selection
+        // has no art of its own; the window color stays as the last fallback.
+        void ShowDefaultBackdrop()
+        {
+            if (generation == _backdropGeneration && _defaultBackdrop is not null)
+            {
+                BackdropImage.Source = _defaultBackdrop;
+                BackdropImage.Opacity = 1.0;
+            }
+        }
+
         if (game?.BackgroundPath is null)
         {
+            ShowDefaultBackdrop();
             return;
         }
 
@@ -1645,7 +1707,8 @@ public partial class MainWindow : Window
             }
             catch (Exception)
             {
-                return; // undecodable key art: keep the plain background
+                ShowDefaultBackdrop(); // undecodable key art
+                return;
             }
         }
 
@@ -2019,6 +2082,7 @@ public partial class MainWindow : Window
                 _awaitingFirstFrame = false;
                 ClearLibraryBlur();
                 MainContent.Margin = new Thickness(0);
+                RestoreGameViewToFull();
                 GameView.Background = Brushes.Black;
                 GameView.IsHitTestVisible = true;
                 _gameSurfaceHost?.SetPresentationVisible(true);
@@ -2029,7 +2093,7 @@ public partial class MainWindow : Window
                 ContentToolbar.IsVisible = false;
                 ConsolePanel.IsVisible = false;
                 LaunchBar.IsVisible = false;
-                SessionLoadingPopup.IsOpen = false;
+                HideSessionLoading();
                 UpdateSessionBarVisibility();
             }
         });
@@ -2080,11 +2144,31 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// The native host attachment is a real child window: it sits above every
+    /// Avalonia control it covers and swallows their mouse input regardless of
+    /// hit-test settings. While the library must stay interactive (loading,
+    /// closing), the surface is parked offscreen AT FULL SIZE via a negative
+    /// margin. It must not be shrunk instead: the emulator child polls the
+    /// HWND client size and its presenter defers swapchain creation while the
+    /// surface is 1px, which would deadlock the loading handshake.
+    /// </summary>
+    private void ParkGameViewOffscreen()
+    {
+        GameView.Margin = new Thickness(-20000, 0, 20000, 0);
+    }
+
+    private void RestoreGameViewToFull()
+    {
+        GameView.Margin = new Thickness(0);
+    }
+
     private void ShowGameView()
     {
         _isStopping = false;
         _awaitingFirstFrame = true;
         var host = EnsureGameSurfaceHost();
+        ParkGameViewOffscreen();
         GameView.IsVisible = true;
         GameView.Background = Brushes.Transparent;
         GameView.IsHitTestVisible = false;
@@ -2109,7 +2193,7 @@ public partial class MainWindow : Window
         GameView.IsVisible = false;
         GameView.IsHitTestVisible = true;
         SessionBarPopup.IsOpen = false;
-        SessionLoadingPopup.IsOpen = false;
+        HideSessionLoading();
         AnimateLibraryBlur(0, clearWhenComplete: true);
         MainContent.Margin = new Thickness(32, 24, 32, 20);
         ContentToolbar.IsVisible = true;
@@ -2118,16 +2202,15 @@ public partial class MainWindow : Window
         LibraryPage.IsVisible = _activePageIndex == 0;
         LibraryToolbar.IsVisible = _activePageIndex == 0;
         OptionsPage.IsVisible = _activePageIndex == 1;
-        if (GameList.SelectedItem is GameEntry game && game.Background is not null)
-        {
-            BackdropImage.Opacity = 1;
-        }
+        // Game art when the source still holds it, otherwise the bundled
+        // default; a bare color only when neither is available.
+        BackdropImage.Opacity = BackdropImage.Source is not null ? 1 : 0;
     }
 
     private void AnimateLibraryBlur(double targetRadius, bool clearWhenComplete = false)
     {
         _libraryBlur ??= new BlurEffect();
-        MainContent.Effect = _libraryBlur;
+        PagesHost.Effect = _libraryBlur;
 
         _libraryBlurStartRadius = _libraryBlur.Radius;
         _libraryBlurTargetRadius = Math.Max(0, targetRadius);
@@ -2176,7 +2259,7 @@ public partial class MainWindow : Window
 
         if (_clearLibraryBlurWhenComplete)
         {
-            MainContent.Effect = null;
+            PagesHost.Effect = null;
             _libraryBlur = null;
             _clearLibraryBlurWhenComplete = false;
         }
@@ -2187,14 +2270,21 @@ public partial class MainWindow : Window
         _libraryBlurTimer.Stop();
         _libraryBlur = null;
         _clearLibraryBlurWhenComplete = false;
-        MainContent.Effect = null;
+        PagesHost.Effect = null;
     }
 
     private void ShowSessionLoading(string title, string detail)
     {
         SessionLoadingTitle.Text = title;
         SessionLoadingDetail.Text = detail;
-        SessionLoadingPopup.IsOpen = true;
+        _sessionLoadingActive = true;
+        SessionLoadingPopup.IsOpen = IsActive && WindowState != WindowState.Minimized;
+    }
+
+    private void HideSessionLoading()
+    {
+        _sessionLoadingActive = false;
+        SessionLoadingPopup.IsOpen = false;
     }
 
     private void ReturnToLibraryWhileStopping()
@@ -2206,10 +2296,12 @@ public partial class MainWindow : Window
 
         // Keep the native child alive until the session exits, but hide it
         // immediately. Destroying it while Vulkan still owns the surface can
-        // crash the GUI; leaving it transparent lets the library recover
-        // while the native closing popup reports teardown progress.
+        // crash the GUI; parking it in the 1x1 corner lets the library
+        // recover — and stay clickable — while the native closing popup
+        // reports teardown progress.
         _gameSurfaceHost?.SetPresentationVisible(false);
         _awaitingFirstFrame = false;
+        ParkGameViewOffscreen();
         GameView.Background = Brushes.Transparent;
         GameView.IsHitTestVisible = false;
         SessionBarPopup.IsOpen = false;
@@ -2221,7 +2313,7 @@ public partial class MainWindow : Window
         LibraryPage.IsVisible = _activePageIndex == 0;
         LibraryToolbar.IsVisible = _activePageIndex == 0;
         OptionsPage.IsVisible = _activePageIndex == 1;
-        BackdropImage.Opacity = GameList.SelectedItem is GameEntry { Background: not null } ? 1 : 0;
+        BackdropImage.Opacity = BackdropImage.Source is not null ? 1 : 0;
         UpdateRunButtons();
         Console.Error.WriteLine("[GUI][INFO] Library restored while embedded session is closing.");
     }

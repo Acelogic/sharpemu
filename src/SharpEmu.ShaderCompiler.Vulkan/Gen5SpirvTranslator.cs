@@ -2052,7 +2052,12 @@ public static partial class Gen5SpirvTranslator
                 "SNop" or
                 "SWaitcnt" or
                 "SInstPrefetch" or
-                "STtraceData")
+                "STtraceData" or
+                // NGG shaders bracket their exports with s_sendmsg
+                // (GS_ALLOC_REQ/DEALLOC) to reserve hardware export space;
+                // exports are translated directly, so the message is moot.
+                "SSendmsg" or
+                "VInterpMovF32")
             {
                 return true;
             }

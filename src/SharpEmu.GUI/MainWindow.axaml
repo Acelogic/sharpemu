@@ -92,7 +92,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
         </StackPanel>
       </Grid>
 
-      <Panel Grid.Row="1">
+      <Panel Grid.Row="1" x:Name="PagesHost">
 
         <!-- Library page. The tile row gets extra top margin so it sits
              closer to eye level (PS5 home-screen style) instead of hugging
@@ -605,9 +605,12 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
     <!-- This is a native popup rather than an Avalonia overlay because the
          emulated Vulkan surface is a native child window. -->
+    <!-- Anchored to MainContent, not GameView: the surface host is parked in
+         a 1x1 corner while loading/closing, which would pull a GameView-
+         anchored popup into the corner with it. -->
     <primitives:Popup x:Name="SessionLoadingPopup"
                       IsOpen="False"
-                      PlacementTarget="{Binding #GameView}"
+                      PlacementTarget="{Binding #MainContent}"
                       Placement="Center"
                       Topmost="True"
                       ShouldUseOverlayLayer="False"

@@ -40,6 +40,7 @@ public static class PerfOverlay
     private static long _presentedInWindow;
     private static long _submittedInWindow;
     private static long _drawsInWindow;
+    private static long _guestBufferCacheBytes;
 
     // Refreshed once per second so per-frame fills never allocate.
     private static long _statsWindowStart = Stopwatch.GetTimestamp();
@@ -78,11 +79,8 @@ public static class PerfOverlay
         if (last != 0)
         {
             var milliseconds = (now - last) * 1000.0 / Stopwatch.Frequency;
-            if (milliseconds < 1000.0)
-            {
-                _frameMilliseconds[_frameHistoryIndex] = milliseconds;
-                _frameHistoryIndex = (_frameHistoryIndex + 1) % FrameHistorySize;
-            }
+            _frameMilliseconds[_frameHistoryIndex] = milliseconds;
+            _frameHistoryIndex = (_frameHistoryIndex + 1) % FrameHistorySize;
         }
     }
 
@@ -91,6 +89,9 @@ public static class PerfOverlay
 
     /// <summary>Called per translated draw/dispatch executed.</summary>
     public static void RecordDraw() => Interlocked.Increment(ref _drawsInWindow);
+
+    public static void SetGuestBufferCacheBytes(ulong bytes) =>
+        Interlocked.Exchange(ref _guestBufferCacheBytes, checked((long)bytes));
 
     /// <summary>
     /// Rasterizes the panel into a BGRA byte span of PanelWidth x PanelHeight.
@@ -169,7 +170,7 @@ public static class PerfOverlay
                 Environment.ProcessorCount;
             _lastCpuTime = cpuTime;
 
-            var drawsPerFrame = _fps > 0.5 ? _drawsPerSecond / _fps : 0;
+            var drawsPerFrame = _fps > 0 ? _drawsPerSecond / _fps : 0;
             var sessionStart = Interlocked.Read(ref _sessionStartTimestamp);
             var elapsedSeconds = sessionStart == 0
                 ? 0L
@@ -180,7 +181,9 @@ public static class PerfOverlay
             _line1 = $"FPS {_fps:0.0}  FLIP {_submittedFps:0.0}  {_averageFrameMs:0.0} MS";
             _line2 = $"DRAWS {_drawsPerSecond:0}/S  {drawsPerFrame:0}/F  Q {pendingWork}+{inFlightSubmissions}";
             _line3 = $"ALLOC {_allocatedMbPerSecond:0.0} MB/S  GC {_gen0PerWindow}/{_gen1PerWindow}/{_gen2PerWindow}";
-            _line4 = $"CPU {_cpuPercent:0}%  HEAP {GC.GetTotalMemory(false) / (1024 * 1024)} MB  F1 HIDE";
+            var heapMb = GC.GetTotalMemory(false) / (1024 * 1024);
+            var guestBufferMb = Interlocked.Read(ref _guestBufferCacheBytes) / (1024 * 1024);
+            _line4 = $"MEM {heapMb}M BUF {guestBufferMb}M CPU {_cpuPercent:0}%";
             _line5 = $"TIME {elapsedHours:00}:{elapsedMinutes:00}:{elapsedRemainingSeconds:00}";
         }
     }

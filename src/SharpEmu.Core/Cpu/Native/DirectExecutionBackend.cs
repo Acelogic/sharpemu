@@ -1295,6 +1295,12 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private unsafe bool TryCreateNativeImportIntrinsic(string nid, out nint address)
 	{
+		if (IsHlePreferredNid(nid))
+		{
+			address = 0;
+			return false;
+		}
+
 		if (nid == "1jfXLRVzisc" &&
 			string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_USLEEP"), "1", StringComparison.Ordinal))
 		{
@@ -1406,6 +1412,54 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				0x75, 0xE7,
 				0xC3,
 			],
+			"AV6ipCNa4Rw" =>
+			[
+				0x0F, 0xB6, 0x07,
+				0x0F, 0xB6, 0x16,
+				0x8D, 0x48, 0xBF,
+				0x83, 0xF9, 0x19,
+				0x77, 0x03,
+				0x83, 0xC0, 0x20,
+				0x8D, 0x4A, 0xBF,
+				0x83, 0xF9, 0x19,
+				0x77, 0x03,
+				0x83, 0xC2, 0x20,
+				0x29, 0xD0,
+				0x75, 0x0C,
+				0x85, 0xD2,
+				0x74, 0x08,
+				0x48, 0xFF, 0xC7,
+				0x48, 0xFF, 0xC6,
+				0xEB, 0xD4,
+				0xC3,
+			],
+			"viiwFMaNamA" =>
+			[
+				0x0F, 0xB6, 0x16,
+				0x84, 0xD2,
+				0x74, 0x2D,
+				0x0F, 0xB6, 0x07,
+				0x84, 0xC0,
+				0x74, 0x2A,
+				0x38, 0xD0,
+				0x75, 0x1D,
+				0x4C, 0x8D, 0x47, 0x01,
+				0x4C, 0x8D, 0x4E, 0x01,
+				0x41, 0x0F, 0xB6, 0x09,
+				0x84, 0xC9,
+				0x74, 0x12,
+				0x41, 0x38, 0x08,
+				0x75, 0x08,
+				0x49, 0xFF, 0xC0,
+				0x49, 0xFF, 0xC1,
+				0xEB, 0xEB,
+				0x48, 0xFF, 0xC7,
+				0xEB, 0xD3,
+				0x48, 0x89, 0xF8,
+				0xC3,
+				0x31, 0xC0,
+				0xC3,
+			],
 			"pNtJdE3x49E" or "fV2xHER+bKE" =>
 			[
 				0x0F, 0xB7, 0x07,
@@ -1470,8 +1524,14 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			"Q3VBxCXhUHs" =>
 			[
 				0x48, 0x89, 0xF8,
-				0x48, 0x89, 0xD1,
-				0xF3, 0xA4,
+				0x48, 0x85, 0xD2,
+				0x74, 0x11,
+				0x44, 0x8A, 0x06,
+				0x44, 0x88, 0x07,
+				0x48, 0xFF, 0xC6,
+				0x48, 0xFF, 0xC7,
+				0x48, 0xFF, 0xCA,
+				0x75, 0xEF,
 				0xC3,
 			],
 			"8zTFvBIAIN8" =>
@@ -1605,7 +1665,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private static bool IsHlePreferredNid(string nid)
 	{
-		return string.Equals(nid, "QrZZdJ8XsX0", StringComparison.Ordinal);
+		return string.Equals(nid, "QrZZdJ8XsX0", StringComparison.Ordinal) ||
+			string.Equals(nid, "Q3VBxCXhUHs", StringComparison.Ordinal);
 	}
 
 	private static bool IsLibcLibrary(string libraryName)
@@ -2513,28 +2574,22 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private unsafe bool TryPatchSse4aExtrqBlend(nint address, byte* source)
 	{
-		// Rosetta does not implement AMD SSE4a EXTRQ. This exact sequence masks
-		// xmm2 to its low 40 bits, then copies the resulting second dword into
-		// xmm0. PEXTRB/PINSRD provides the same observable result in 12 bytes:
-		// extract source byte 4 and insert the zero-extended value into lane 1.
-		ReadOnlySpan<byte> pattern =
-		[
-			0x66, 0x0F, 0x78, 0xC2, 0x28, 0x00,
-			0xC4, 0xE3, 0x79, 0x02, 0xC2, 0x02,
-		];
-		for (var i = 0; i < pattern.Length; i++)
+		// Rosetta does not implement AMD SSE4a EXTRQ. Recognize the compiler's
+		// EXTRQ+blend idiom (against whichever xmm0-xmm7 it allocated) and rewrite
+		// it into an equivalent SSE4.1 sequence. Match/encode is isolated in
+		// Sse4aExtrqBlendPatch so it can be unit-tested; here we only patch bytes.
+		var window = new ReadOnlySpan<byte>(source, Sse4aExtrqBlendPatch.SequenceLength);
+		if (!Sse4aExtrqBlendPatch.TryMatch(window, out var destRegister, out var srcRegister))
 		{
-			if (source[i] != pattern[i])
-			{
-				return false;
-			}
+			return false;
 		}
 
-		ReadOnlySpan<byte> replacement =
-		[
-			0x66, 0x0F, 0x3A, 0x14, 0xD0, 0x04,
-			0x66, 0x0F, 0x3A, 0x22, 0xC0, 0x01,
-		];
+		Span<byte> replacement = stackalloc byte[Sse4aExtrqBlendPatch.SequenceLength];
+		if (!Sse4aExtrqBlendPatch.TryEncode(destRegister, srcRegister, replacement))
+		{
+			return false;
+		}
+
 		uint oldProtect = 0;
 		if (!VirtualProtect((void*)address, (nuint)replacement.Length, 64u, &oldProtect))
 		{

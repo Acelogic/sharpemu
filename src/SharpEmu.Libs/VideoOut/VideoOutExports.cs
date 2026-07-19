@@ -171,9 +171,14 @@ public static class VideoOutExports
             return;
         }
 
+        // macOS can run either backend (Vulkan through MoltenVK, or Metal), so
+        // name the active one in the title to make which is in use unambiguous.
+        var backendSuffix = OperatingSystem.IsMacOS()
+            ? $" ({GuestGpu.Current.BackendName})"
+            : string.Empty;
         lock (_stateGate)
         {
-            _windowTitle = $"{_windowTitle} · {gpuName.Trim()}";
+            _windowTitle = $"{_windowTitle} · {gpuName.Trim()}{backendSuffix}";
         }
     }
 
@@ -206,11 +211,12 @@ public static class VideoOutExports
         HostSessionControl.RequestShutdown(reason);
 
         // A hosted game can still be issuing AGC work after it requests its
-        // own shutdown. Keep the Vulkan resources alive until the GUI session
-        // reaches its guest-safe exit path and disposes the host surface.
+        // own shutdown. Keep the presenter's resources alive until the GUI
+        // session reaches its guest-safe exit path and disposes the host
+        // surface.
         if (!embedded)
         {
-            VulkanVideoPresenter.RequestClose();
+            GuestGpu.Current.RequestClose();
         }
 
         // The embedded GUI owns the process lifetime. A guest shutdown should
@@ -1238,6 +1244,12 @@ public static class VideoOutExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
+        // SceVideoOutBufferCategory is a 32-bit enum passed on the stack; the
+        // upper 32 bits of the slot are stale (games leave GNM magic there), so
+        // mask before validating. UNCOMPRESSED (0) and COMPRESSED (1) are both
+        // valid — we present either identically, so accept both.
+        var category = (uint)categoryRaw;
+
         if (!TryGetPort(handle, out var port))
         {
             return OrbisVideoOutErrorInvalidHandle;
@@ -1258,7 +1270,7 @@ public static class VideoOutExports
             return OrbisVideoOutErrorInvalidValue;
         }
 
-        if (categoryRaw != 0 || option != 0)
+        if (category > 1 || option != 0)
         {
             return OrbisVideoOutErrorInvalidValue;
         }
@@ -1470,7 +1482,7 @@ public static class VideoOutExports
         {
             TriggerFlipEvents();
         }
-        else if (VulkanVideoPresenter.SubmitOrderedGuestAction(
+        else if (GuestGpu.Current.SubmitOrderedGuestAction(
                      TriggerFlipEvents,
                      $"videoout flip complete handle={handle} index={bufferIndex}") == 0)
         {
@@ -1560,7 +1572,7 @@ public static class VideoOutExports
         var elapsedSeconds = (double)elapsedTicks / Stopwatch.Frequency;
         var submitted = Interlocked.Exchange(ref _submittedFrameCount, 0);
         var presentedCount = Interlocked.Exchange(ref _presentedFrameCount, 0);
-        var (draws, drawMs, pipelines, spirvCompiles) = VulkanVideoPresenter.ReadAndResetPerfCounters();
+        var (draws, drawMs, pipelines, spirvCompiles) = GuestGpu.Current.ReadAndResetPerfCounters();
         Console.Error.WriteLine(
             $"[LOADER][PERF] videoout submitted_fps={submitted / elapsedSeconds:F1} " +
             $"presented_fps={presentedCount / elapsedSeconds:F1} " +
@@ -1999,7 +2011,7 @@ public static class VideoOutExports
             SceVideoOutPixelFormat2B10G10R10A2Bt2100Pq;
 
     // Maps the PS5 VideoOut pixel format space to the AGC "guest texture format" tags
-    // the backend keys its guest-image registry on (see VulkanVideoPresenter.
+    // the backend keys its guest-image registry on (see the presenter's
     // GetGuestTextureFormat: format=10 => 56 for 8-bit RGBA variants, format=9 => 9 for 10-bit).
     // Unknown formats default to 56 (8-bit RGBA) with a logged warning so games
     // display something rather than silently failing the flip pipeline.

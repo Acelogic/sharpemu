@@ -14,9 +14,9 @@ available, presents its decoded BGRA frames at the normal guest-flip boundary.
 This preserves the game's own timing and lets the host Vulkan presenter display
 the movie without trying to execute the PS5-specific Bink GPU decode path.
 
-Without an adapter, Bink movies are skipped by default: their open call returns
-not-found so games that mark cinematics as optional progress to their next
-state instead of waiting on an empty Bink GPU texture.
+Without an adapter, Bink files remain visible to the guest and the game's
+statically linked decoder runs normally. Set SHARPEMU_BINK_MODE=skip only when
+explicitly testing a title whose cinematics are optional.
 
 Set SHARPEMU_BINK_MODE=dummy to retain the open and show a built-in,
 non-decoded placeholder frame. This requires no SDK, but is a visual diagnostic
