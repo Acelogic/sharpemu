@@ -571,6 +571,13 @@ internal static unsafe class VulkanVideoPresenter
             Environment.GetEnvironmentVariable("SHARPEMU_TRACE_GUEST_WORK_COMPLETION"),
             "1",
             StringComparison.Ordinal);
+    private static readonly bool _traceGuestThroughput =
+        string.Equals(
+            Environment.GetEnvironmentVariable("SHARPEMU_TRACE_GUEST_THROUGHPUT"),
+            "1",
+            StringComparison.Ordinal);
+    private static readonly string? _guestImageTraceMode =
+        Environment.GetEnvironmentVariable("SHARPEMU_TRACE_GUEST_IMAGES");
     private static readonly int _maxGuestFlipQueueTraceEventsPerKind =
         int.TryParse(
             Environment.GetEnvironmentVariable("SHARPEMU_TRACE_GUEST_FLIP_QUEUE_LIMIT"),
@@ -666,6 +673,8 @@ internal static unsafe class VulkanVideoPresenter
     private static bool _enqueueAsImmediateQueueFollowup;
     [ThreadStatic]
     private static LinkedListNode<PendingGuestWork>? _immediateFollowupTail;
+    [ThreadStatic]
+    private static long _lastGuestWorkSequenceEnqueuedByCurrentThread;
 
     private sealed class GuestQueueScope : IDisposable
     {
@@ -709,14 +718,14 @@ internal static unsafe class VulkanVideoPresenter
     private static bool ShouldTraceGuestImageSubmissionsForDiagnostics()
     {
         return string.Equals(
-            Environment.GetEnvironmentVariable("SHARPEMU_TRACE_GUEST_IMAGES"),
+            _guestImageTraceMode,
             "1",
             StringComparison.Ordinal);
     }
 
     private static bool ShouldSamplePresentedGuestImageForDiagnostics(long frame)
     {
-        var mode = Environment.GetEnvironmentVariable("SHARPEMU_TRACE_GUEST_IMAGES");
+        var mode = _guestImageTraceMode;
         if (string.Equals(mode, "present", StringComparison.OrdinalIgnoreCase))
         {
             // A 4K Vulkan readback is deliberately synchronous and can take
@@ -1614,6 +1623,9 @@ internal static unsafe class VulkanVideoPresenter
     public static long CurrentGuestWorkSequenceForDiagnostics =>
         Volatile.Read(ref _executingGuestWorkSequence);
 
+    public static long CurrentThreadEnqueuedGuestWorkSequenceForDiagnostics =>
+        _lastGuestWorkSequenceEnqueuedByCurrentThread;
+
     private static bool IsGuestWorkCompletedLocked(long sequence) =>
         sequence <= 0 ||
         sequence <= _completedGuestWorkSequence ||
@@ -2510,6 +2522,7 @@ internal static unsafe class VulkanVideoPresenter
 
         var queue = _submittingGuestQueue ?? VulkanGuestQueueIdentity.Default;
         var sequence = ++_enqueuedGuestWorkSequence;
+        _lastGuestWorkSequenceEnqueuedByCurrentThread = sequence;
         _lastEnqueuedGuestWorkByQueue[queue.Name] = sequence;
         var requiredSequence = GetGuestWorkDependencyLocked(work);
         if (!_pendingGuestWorkByQueue.TryGetValue(queue.Name, out var pendingQueue))
@@ -2532,7 +2545,10 @@ internal static unsafe class VulkanVideoPresenter
                 $"[LOADER][TRACE] vk.guest_work_enqueue sequence={sequence} " +
                 $"required={requiredSequence} queue={queue.Name} " +
                 $"immediate={_enqueueAsImmediateQueueFollowup} " +
-                $"work={work.GetType().Name}");
+                $"work={work.GetType().Name}" +
+                (work is VulkanOrderedGuestAction ordered
+                    ? $" name='{ordered.DebugName}'"
+                    : string.Empty));
         }
         if (_enqueueAsImmediateQueueFollowup &&
             _immediateFollowupTail is { List: not null } tail &&
@@ -3136,13 +3152,48 @@ internal static unsafe class VulkanVideoPresenter
             _descriptorLayouts = new();
         private readonly VulkanHostBufferPool _hostBufferPool;
         private readonly List<GuestBufferAllocation> _guestBufferAllocations = [];
+        private readonly HashSet<string> _dirtyGuestBufferQueues =
+            new(StringComparer.Ordinal);
         private readonly Queue<PendingGuestSubmission> _pendingGuestSubmissions = new();
+        private sealed class GuestSubmissionThroughput
+        {
+            public int Count;
+            public long TotalTicks;
+            public long MaxTicks;
+        }
+        private readonly Dictionary<string, GuestSubmissionThroughput>
+            _throughputGuestSubmissions = new(StringComparer.Ordinal);
         private readonly Dictionary<string, ulong> _lastSubmittedTimelineByGuestQueue =
             new(StringComparer.Ordinal);
         private readonly Stack<DescriptorPool> _recycledDescriptorPools = new();
         private VulkanGuestQueueIdentity _activeGuestQueue =
             VulkanGuestQueueIdentity.Default;
         private long _activeGuestWorkSequence;
+        private long _throughputWindowStartTicks =
+            System.Diagnostics.Stopwatch.GetTimestamp();
+        private long _throughputDrawTicks;
+        private long _throughputComputeTicks;
+        private long _throughputOrderedTicks;
+        private long _throughputOtherTicks;
+        private long _throughputFlushTicks;
+        private long _throughputFrameWaitTicks;
+        private long _throughputGpuFrameTicks;
+        private long _throughputGpuFrameMaxTicks;
+        private long _throughputAcquireTicks;
+        private long _throughputPresentTicks;
+        private int _throughputDrawCount;
+        private int _throughputComputeCount;
+        private int _throughputOrderedCount;
+        private int _throughputOtherCount;
+        private int _throughputFlushCount;
+        private int _throughputRenderCallCount;
+        private int _throughputFrameWaitCount;
+        private int _throughputFrameWaitTimeoutCount;
+        private int _throughputGpuFrameCount;
+        private int _throughputAcquireCount;
+        private int _throughputPresentCount;
+        private readonly long[] _throughputFrameSubmittedAtTicks =
+            new long[MaxFramesInFlight];
 
         private readonly record struct GraphicsPipelineKey(
             string VertexShader,
@@ -3365,7 +3416,8 @@ internal static unsafe class VulkanVideoPresenter
             ulong Timeline,
             string DebugName,
             VulkanGuestQueueIdentity Queue,
-            long WorkSequence);
+            long WorkSequence,
+            long SubmittedTicks);
 
         private sealed record InlineRefreshReadbackTrace(
             GuestImageResource Image,
@@ -5107,6 +5159,9 @@ internal static unsafe class VulkanVideoPresenter
                 return;
             }
 
+            var throughputStart = _traceGuestThroughput
+                ? System.Diagnostics.Stopwatch.GetTimestamp()
+                : 0L;
             CloseOpenTranslatedRenderPass();
             _batchOpen = false;
             try
@@ -5117,6 +5172,12 @@ internal static unsafe class VulkanVideoPresenter
                     _batchResources.ToArray(),
                     _batchTraceImages.ToArray(),
                     _batchRetireBuffers.Count > 0 ? _batchRetireBuffers.ToArray() : []);
+                if (throughputStart != 0)
+                {
+                    _throughputFlushTicks +=
+                        System.Diagnostics.Stopwatch.GetTimestamp() - throughputStart;
+                    _throughputFlushCount++;
+                }
             }
             catch
             {
@@ -5209,7 +5270,8 @@ internal static unsafe class VulkanVideoPresenter
                     _submitTimeline,
                     resources.Count > 0 ? resources[0].DebugName : "batch",
                     _activeGuestQueue,
-                    _activeGuestWorkSequence));
+                    _activeGuestWorkSequence,
+                    System.Diagnostics.Stopwatch.GetTimestamp()));
             _lastSubmittedTimelineByGuestQueue[_activeGuestQueue.Name] =
                 _submitTimeline;
         }
@@ -5346,6 +5408,13 @@ internal static unsafe class VulkanVideoPresenter
                 }
 
                 _pendingGuestSubmissions.Dequeue();
+
+                if (_traceGuestThroughput)
+                {
+                    RecordGuestSubmissionThroughput(
+                        submission,
+                        System.Diagnostics.Stopwatch.GetTimestamp() - submission.SubmittedTicks);
+                }
 
                 if (!_deviceLost)
                 {
@@ -5812,8 +5881,51 @@ internal static unsafe class VulkanVideoPresenter
                 return null;
             }
 
-            var pixels = new byte[(int)byteCount];
-            return memory.TryRead(texture.Address, pixels) ? pixels : null;
+            var physicalByteCount = texture.PhysicalSourceByteCount != 0
+                ? texture.PhysicalSourceByteCount
+                : byteCount;
+            if (physicalByteCount > int.MaxValue)
+            {
+                return null;
+            }
+
+            ulong sourceAddress;
+            try
+            {
+                sourceAddress = checked(texture.Address + texture.SourceOffset);
+            }
+            catch (OverflowException)
+            {
+                return null;
+            }
+
+            var source = new byte[(int)physicalByteCount];
+            if (!memory.TryRead(sourceAddress, source))
+            {
+                return null;
+            }
+
+            if (texture.TileMode != 0 &&
+                texture.ElementsWide > 0 &&
+                texture.ElementsHigh > 0 &&
+                texture.BytesPerElement > 0)
+            {
+                var linear = new byte[(int)byteCount];
+                if (GnmTiling.TryDetile(
+                        source,
+                        linear,
+                        texture.TileMode,
+                        texture.ElementsWide,
+                        texture.ElementsHigh,
+                        texture.BytesPerElement,
+                        texture.SourceX,
+                        texture.SourceY))
+                {
+                    return linear;
+                }
+            }
+
+            return source.AsSpan(0, (int)byteCount).ToArray();
         }
 
         /// <summary>
@@ -7417,7 +7529,7 @@ internal static unsafe class VulkanVideoPresenter
                 }
 
                 if (string.Equals(
-                        Environment.GetEnvironmentVariable("SHARPEMU_TRACE_GUEST_IMAGES"),
+                        _traceGuestImagesMode,
                         "alias",
                         StringComparison.OrdinalIgnoreCase) &&
                     _tracedGuestImageContents.Add(guestImage.Address))
@@ -7784,6 +7896,7 @@ internal static unsafe class VulkanVideoPresenter
                 texture.DstSelect,
                 texture.TileMode,
                 texture.Pitch,
+                texture.SourceOffset,
                 texture.Sampler);
             if (_textureCache.TryGetValue(key, out var cached))
             {
@@ -7813,7 +7926,9 @@ internal static unsafe class VulkanVideoPresenter
                 MarkTextureContentCached(key);
                 SharpEmu.HLE.GuestImageWriteTracker.Track(
                     texture.Address,
-                    (ulong)texture.RgbaPixels.Length,
+                    texture.GuestAllocationByteCount != 0
+                        ? texture.GuestAllocationByteCount
+                        : (ulong)texture.RgbaPixels.Length,
                     CurrentGuestWorkSequenceForDiagnostics,
                     "vulkan.texture-cache");
             }
@@ -8292,7 +8407,9 @@ internal static unsafe class VulkanVideoPresenter
                 resource.GuestImage = guestImage;
                 SharpEmu.HLE.GuestImageWriteTracker.Track(
                     texture.Address,
-                    expectedSize,
+                    texture.GuestAllocationByteCount != 0
+                        ? texture.GuestAllocationByteCount
+                        : expectedSize,
                     CurrentGuestWorkSequenceForDiagnostics,
                     "vulkan.sampled-image");
                 lock (_gate)
@@ -8605,10 +8722,7 @@ internal static unsafe class VulkanVideoPresenter
             uint width,
             uint height)
         {
-            if (!string.Equals(
-                    Environment.GetEnvironmentVariable("SHARPEMU_DUMP_TEXTURES"),
-                    "1",
-                    StringComparison.Ordinal) ||
+            if (!_dumpTexturesEnabled ||
                 texture.IsFallback ||
                 texture.IsStorage ||
                 GetTextureBytesPerPixel(texture.Format) != 4 ||
@@ -10505,7 +10619,7 @@ internal static unsafe class VulkanVideoPresenter
                 null);
         }
 
-        private static void MarkGuestBufferDirty(
+        private void MarkGuestBufferDirty(
             GuestBufferAllocation allocation,
             ulong offset,
             ulong length,
@@ -10541,6 +10655,7 @@ internal static unsafe class VulkanVideoPresenter
 
             allocation.DirtyRanges.Add(
                 new DirtyGuestBufferRange(start, end - start, queueName, timeline));
+            _dirtyGuestBufferQueues.Add(queueName);
         }
 
         private void TraceAddressFilteredGlobalBufferWritebacks(
@@ -10667,7 +10782,9 @@ internal static unsafe class VulkanVideoPresenter
         private void WriteBackAllDirtyGuestBuffers(string? queueName = null)
         {
             var memory = _guestMemory;
-            if (memory is null)
+            if (memory is null ||
+                queueName is null && _dirtyGuestBufferQueues.Count == 0 ||
+                queueName is not null && !_dirtyGuestBufferQueues.Contains(queueName))
             {
                 return;
             }
@@ -10972,6 +11089,27 @@ internal static unsafe class VulkanVideoPresenter
                             $"changed_head={Convert.ToHexString(head)}");
                     }
                 }
+            }
+
+            if (queueName is null)
+            {
+                _dirtyGuestBufferQueues.Clear();
+                foreach (var allocation in _guestBufferAllocations)
+                {
+                    foreach (var range in allocation.DirtyRanges)
+                    {
+                        _dirtyGuestBufferQueues.Add(range.QueueName);
+                    }
+                }
+            }
+            else if (!_guestBufferAllocations.Any(allocation =>
+                         allocation.DirtyRanges.Any(range =>
+                             string.Equals(
+                                 range.QueueName,
+                                 queueName,
+                                 StringComparison.Ordinal))))
+            {
+                _dirtyGuestBufferQueues.Remove(queueName);
             }
         }
 
@@ -13517,6 +13655,7 @@ internal static unsafe class VulkanVideoPresenter
                     throw;
                 }
             }
+
         }
 
         private void RenderCore()
@@ -13565,10 +13704,41 @@ internal static unsafe class VulkanVideoPresenter
                 return;
             }
 
+            if (_traceGuestThroughput)
+            {
+                _throughputRenderCallCount++;
+            }
+
             // Reuse of a frame slot waits only on that slot's fence, keeping
             // up to MaxFramesInFlight frames pipelined between CPU and GPU.
             var frameSlot = _currentFrameSlot;
-            if (!TryWaitFrameSlot(frameSlot, _frameSlotWaitBudgetNs))
+            var frameWaitStart = _traceGuestThroughput
+                ? System.Diagnostics.Stopwatch.GetTimestamp()
+                : 0L;
+            var frameSlotReady = TryWaitFrameSlot(frameSlot, _frameSlotWaitBudgetNs);
+            if (frameWaitStart != 0)
+            {
+                var now = System.Diagnostics.Stopwatch.GetTimestamp();
+                _throughputFrameWaitTicks += now - frameWaitStart;
+                _throughputFrameWaitCount++;
+                if (!frameSlotReady)
+                {
+                    _throughputFrameWaitTimeoutCount++;
+                }
+                else if (_throughputFrameSubmittedAtTicks[frameSlot] != 0)
+                {
+                    var gpuFrameTicks =
+                        now - _throughputFrameSubmittedAtTicks[frameSlot];
+                    _throughputGpuFrameTicks += gpuFrameTicks;
+                    _throughputGpuFrameMaxTicks = Math.Max(
+                        _throughputGpuFrameMaxTicks,
+                        gpuFrameTicks);
+                    _throughputGpuFrameCount++;
+                    _throughputFrameSubmittedAtTicks[frameSlot] = 0;
+                }
+            }
+
+            if (!frameSlotReady)
             {
                 // The GPU is still finishing this slot's previous frame (slow
                 // compute backlog). Don't block the macOS main thread — return
@@ -13635,7 +13805,8 @@ internal static unsafe class VulkanVideoPresenter
                 var deferGuestWork = false;
 
                 var traceWork = ShouldTracePresentedGuestImageContentsForDiagnostics();
-                var workStart = traceWork ? System.Diagnostics.Stopwatch.GetTimestamp() : 0L;
+                var measureWork = traceWork || _traceGuestThroughput;
+                var workStart = measureWork ? System.Diagnostics.Stopwatch.GetTimestamp() : 0L;
                 if (traceWork && work is VulkanComputeGuestDispatch or VulkanOffscreenGuestDraw)
                 {
                     Console.Error.WriteLine(
@@ -13692,9 +13863,16 @@ internal static unsafe class VulkanVideoPresenter
 
                 if (workStart != 0)
                 {
-                    var elapsedMs = (System.Diagnostics.Stopwatch.GetTimestamp() - workStart)
-                        * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
-                    if (elapsedMs > 250.0)
+                    var elapsedTicks =
+                        System.Diagnostics.Stopwatch.GetTimestamp() - workStart;
+                    if (_traceGuestThroughput)
+                    {
+                        RecordGuestWorkThroughput(work, elapsedTicks);
+                    }
+
+                    var elapsedMs = elapsedTicks * 1000.0 /
+                        System.Diagnostics.Stopwatch.Frequency;
+                    if (traceWork && elapsedMs > 250.0)
                     {
                         var desc = work switch
                         {
@@ -13907,6 +14085,9 @@ internal static unsafe class VulkanVideoPresenter
             }
 
             uint imageIndex;
+            var acquireStart = _traceGuestThroughput
+                ? System.Diagnostics.Stopwatch.GetTimestamp()
+                : 0L;
             var acquireResult = _swapchainApi.AcquireNextImage(
                 _device,
                 _swapchain,
@@ -13914,6 +14095,12 @@ internal static unsafe class VulkanVideoPresenter
                 _frameImageAvailable[frameSlot],
                 default,
                 &imageIndex);
+            if (acquireStart != 0)
+            {
+                _throughputAcquireTicks +=
+                    System.Diagnostics.Stopwatch.GetTimestamp() - acquireStart;
+                _throughputAcquireCount++;
+            }
             if (acquireResult == Result.ErrorOutOfDateKhr)
             {
                 RecreateSwapchainResources("vkAcquireNextImageKHR", acquireResult);
@@ -14036,6 +14223,11 @@ internal static unsafe class VulkanVideoPresenter
             Check(
                 _vk.QueueSubmit(_queue, 1, &submitInfo, _frameFences[frameSlot]),
                 "vkQueueSubmit");
+            if (_traceGuestThroughput)
+            {
+                _throughputFrameSubmittedAtTicks[frameSlot] =
+                    System.Diagnostics.Stopwatch.GetTimestamp();
+            }
             _submitTimeline++;
             _frameTimelines[frameSlot] = _submitTimeline;
             _frameFencePending[frameSlot] = true;
@@ -14059,7 +14251,16 @@ internal static unsafe class VulkanVideoPresenter
                 PSwapchains = &swapchain,
                 PImageIndices = &imageIndex,
             };
+            var presentStart = _traceGuestThroughput
+                ? System.Diagnostics.Stopwatch.GetTimestamp()
+                : 0L;
             var presentResult = _swapchainApi.QueuePresent(_queue, &presentInfo);
+            if (presentStart != 0)
+            {
+                _throughputPresentTicks +=
+                    System.Diagnostics.Stopwatch.GetTimestamp() - presentStart;
+                _throughputPresentCount++;
+            }
             if (presentResult == Result.ErrorOutOfDateKhr)
             {
                 // The submitted frame still executes; RecreateSwapchainResources
@@ -14132,6 +14333,121 @@ internal static unsafe class VulkanVideoPresenter
             {
                 RecreateSwapchainResources("present suboptimal", Result.SuboptimalKhr);
             }
+        }
+
+        private void RecordGuestWorkThroughput(object work, long elapsedTicks)
+        {
+            switch (work)
+            {
+                case VulkanOffscreenGuestDraw:
+                    _throughputDrawTicks += elapsedTicks;
+                    _throughputDrawCount++;
+                    break;
+                case VulkanComputeGuestDispatch:
+                    _throughputComputeTicks += elapsedTicks;
+                    _throughputComputeCount++;
+                    break;
+                case VulkanOrderedGuestAction:
+                    _throughputOrderedTicks += elapsedTicks;
+                    _throughputOrderedCount++;
+                    break;
+                default:
+                    _throughputOtherTicks += elapsedTicks;
+                    _throughputOtherCount++;
+                    break;
+            }
+
+            var now = System.Diagnostics.Stopwatch.GetTimestamp();
+            var windowTicks = now - _throughputWindowStartTicks;
+            if (windowTicks < System.Diagnostics.Stopwatch.Frequency)
+            {
+                return;
+            }
+
+            int queuedWork;
+            lock (_gate)
+            {
+                queuedWork = _pendingGuestWorkCount;
+            }
+
+            var frequency = (double)System.Diagnostics.Stopwatch.Frequency;
+            var totalCount = _throughputDrawCount + _throughputComputeCount +
+                _throughputOrderedCount + _throughputOtherCount;
+            var totalTicks = _throughputDrawTicks + _throughputComputeTicks +
+                _throughputOrderedTicks + _throughputOtherTicks;
+            static double AverageMs(long ticks, int count, double frequency) =>
+                count == 0 ? 0.0 : ticks * 1000.0 / frequency / count;
+            var slowSubmissions = string.Join(
+                " | ",
+                _throughputGuestSubmissions
+                    .OrderByDescending(static pair => pair.Value.TotalTicks)
+                    .ThenByDescending(static pair => pair.Value.MaxTicks)
+                    .Take(6)
+                    .Select(pair =>
+                        $"{pair.Key}:" +
+                        $"{pair.Value.Count}/" +
+                        $"{AverageMs(pair.Value.TotalTicks, pair.Value.Count, frequency):F2}ms/" +
+                        $"{pair.Value.MaxTicks * 1000.0 / frequency:F2}ms"));
+
+            Console.Error.WriteLine(
+                $"[LOADER][TRACE] vk.guest_throughput " +
+                $"window_ms={windowTicks * 1000.0 / frequency:F1} " +
+                $"work={totalCount} work_ms={totalTicks * 1000.0 / frequency:F1} " +
+                $"draw={_throughputDrawCount}/{AverageMs(_throughputDrawTicks, _throughputDrawCount, frequency):F3}ms " +
+                $"compute={_throughputComputeCount}/{AverageMs(_throughputComputeTicks, _throughputComputeCount, frequency):F3}ms " +
+                $"ordered={_throughputOrderedCount}/{AverageMs(_throughputOrderedTicks, _throughputOrderedCount, frequency):F3}ms " +
+                $"other={_throughputOtherCount}/{AverageMs(_throughputOtherTicks, _throughputOtherCount, frequency):F3}ms " +
+                $"flush={_throughputFlushCount}/{AverageMs(_throughputFlushTicks, _throughputFlushCount, frequency):F3}ms " +
+                $"render_calls={_throughputRenderCallCount} " +
+                $"frame_wait={_throughputFrameWaitCount}/{AverageMs(_throughputFrameWaitTicks, _throughputFrameWaitCount, frequency):F3}ms " +
+                $"frame_wait_timeouts={_throughputFrameWaitTimeoutCount} " +
+                $"gpu_frame={_throughputGpuFrameCount}/{AverageMs(_throughputGpuFrameTicks, _throughputGpuFrameCount, frequency):F3}ms " +
+                $"gpu_frame_max={_throughputGpuFrameMaxTicks * 1000.0 / frequency:F3}ms " +
+                $"acquire={_throughputAcquireCount}/{AverageMs(_throughputAcquireTicks, _throughputAcquireCount, frequency):F3}ms " +
+                $"present={_throughputPresentCount}/{AverageMs(_throughputPresentTicks, _throughputPresentCount, frequency):F3}ms " +
+                $"queued={queuedWork} in_flight={_pendingGuestSubmissions.Count} " +
+                $"submissions=[{slowSubmissions}]");
+
+            _throughputWindowStartTicks = now;
+            _throughputDrawTicks = 0;
+            _throughputComputeTicks = 0;
+            _throughputOrderedTicks = 0;
+            _throughputOtherTicks = 0;
+            _throughputFlushTicks = 0;
+            _throughputFrameWaitTicks = 0;
+            _throughputGpuFrameTicks = 0;
+            _throughputGpuFrameMaxTicks = 0;
+            _throughputAcquireTicks = 0;
+            _throughputPresentTicks = 0;
+            _throughputDrawCount = 0;
+            _throughputComputeCount = 0;
+            _throughputOrderedCount = 0;
+            _throughputOtherCount = 0;
+            _throughputFlushCount = 0;
+            _throughputRenderCallCount = 0;
+            _throughputFrameWaitCount = 0;
+            _throughputFrameWaitTimeoutCount = 0;
+            _throughputGpuFrameCount = 0;
+            _throughputAcquireCount = 0;
+            _throughputPresentCount = 0;
+            _throughputGuestSubmissions.Clear();
+        }
+
+        private void RecordGuestSubmissionThroughput(
+            PendingGuestSubmission submission,
+            long elapsedTicks)
+        {
+            if (!_throughputGuestSubmissions.TryGetValue(
+                    submission.DebugName,
+                    out var throughput))
+            {
+                throughput = new GuestSubmissionThroughput();
+                _throughputGuestSubmissions[submission.DebugName] = throughput;
+            }
+
+            throughput.Count++;
+            throughput.TotalTicks += elapsedTicks;
+            throughput.MaxTicks = Math.Max(throughput.MaxTicks, elapsedTicks);
         }
 
         private void TraceGuestImageContents(
@@ -15348,9 +15664,7 @@ internal static unsafe class VulkanVideoPresenter
                 image.Height >= 720;
             if (GuestImageTraceInterval() is { } interval)
             {
-                var addressFilter = Environment.GetEnvironmentVariable(
-                    "SHARPEMU_TRACE_GUEST_IMAGE_ADDRS");
-                if (!string.IsNullOrWhiteSpace(addressFilter) && !addressMatched)
+                if (_traceGuestImageAddressFilterEnabled && !addressMatched)
                 {
                     return false;
                 }
@@ -15407,7 +15721,7 @@ internal static unsafe class VulkanVideoPresenter
         {
             if (_cachedGuestImageTraceInterval == long.MinValue)
             {
-                var mode = Environment.GetEnvironmentVariable("SHARPEMU_TRACE_GUEST_IMAGES");
+                var mode = _traceGuestImagesMode;
                 long? interval = null;
                 if (mode is not null && mode.StartsWith("every:", StringComparison.Ordinal))
                 {
@@ -15456,6 +15770,10 @@ internal static unsafe class VulkanVideoPresenter
                 StringComparison.Ordinal);
         private static readonly string? _traceGuestImagesMode =
             Environment.GetEnvironmentVariable("SHARPEMU_TRACE_GUEST_IMAGES");
+        private static readonly bool _dumpTexturesEnabled = string.Equals(
+            Environment.GetEnvironmentVariable("SHARPEMU_DUMP_TEXTURES"),
+            "1",
+            StringComparison.Ordinal);
         private static readonly bool _traceGuestImagesEnabled =
             string.Equals(_traceGuestImagesMode, "1", StringComparison.Ordinal);
         private static readonly bool _tracePresentedGuestImagesEnabled =

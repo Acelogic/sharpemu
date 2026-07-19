@@ -43,6 +43,7 @@ internal static partial class MetalVideoPresenter
         texture.DstSelect,
         texture.TileMode,
         texture.Pitch,
+        texture.SourceOffset,
         texture.Sampler);
 
     /// <summary>Caching requires the write tracker: without page protection a
@@ -71,7 +72,9 @@ internal static partial class MetalVideoPresenter
         _cachedDrawTextureIdentities[key] = 0;
         GuestImageWriteTracker.Track(
             texture.Address,
-            (ulong)texture.RgbaPixels.Length,
+            texture.GuestAllocationByteCount != 0
+                ? texture.GuestAllocationByteCount
+                : (ulong)texture.RgbaPixels.Length,
             Volatile.Read(ref _executingGuestWorkSequence),
             "metal.texture-cache");
     }

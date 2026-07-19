@@ -300,6 +300,41 @@ public static partial class AgcExports
         Environment.GetEnvironmentVariable("SHARPEMU_LOG_AGC"),
         "1",
         StringComparison.Ordinal);
+    // Diagnostic settings are process-launch configuration. Keep them off the
+    // draw/texture hot paths: Environment.GetEnvironmentVariable crosses into
+    // native code and is especially expensive while the guest runs in Rosetta.
+    private static readonly string? _traceGuestImagesMode =
+        Environment.GetEnvironmentVariable("SHARPEMU_TRACE_GUEST_IMAGES");
+    private static readonly bool _traceTitleGlobals = string.Equals(
+        Environment.GetEnvironmentVariable("SHARPEMU_TRACE_TITLE_GLOBALS"),
+        "1",
+        StringComparison.Ordinal);
+    private static readonly bool _traceTitleGlobalsLive = string.Equals(
+        Environment.GetEnvironmentVariable("SHARPEMU_TRACE_TITLE_GLOBALS_LIVE"),
+        "1",
+        StringComparison.Ordinal);
+    private static readonly string? _traceVertexBufferRecord =
+        Environment.GetEnvironmentVariable("SHARPEMU_TRACE_VERTEX_BUFFER_RECORD");
+    private static readonly bool _traceVertexBufferRecordSummary = string.Equals(
+        Environment.GetEnvironmentVariable("SHARPEMU_TRACE_VERTEX_BUFFER_RECORD_SUMMARY"),
+        "1",
+        StringComparison.Ordinal);
+    private static readonly bool _traceVertexShaderFull = string.Equals(
+        Environment.GetEnvironmentVariable("SHARPEMU_TRACE_VERTEX_SHADER_FULL"),
+        "1",
+        StringComparison.Ordinal);
+    private static readonly ulong? _traceStorageImageInitAddress = ParseOptionalHexAddress(
+        Environment.GetEnvironmentVariable("SHARPEMU_TRACE_STORAGE_IMAGE_INIT_ADDRESS"));
+    private static readonly string? _textureDumpDirectory =
+        Environment.GetEnvironmentVariable("SHARPEMU_TEXTURE_DUMP_DIR");
+    private static readonly string? _linearTextureDumpDirectory =
+        Environment.GetEnvironmentVariable("SHARPEMU_TEXTURE_LINEAR_DUMP_DIR");
+    private static readonly bool _dumpSpirv = string.Equals(
+        Environment.GetEnvironmentVariable("SHARPEMU_DUMP_SPIRV"),
+        "1",
+        StringComparison.Ordinal);
+    private static readonly string? _dumpSpirvAddress =
+        Environment.GetEnvironmentVariable("SHARPEMU_DUMP_SPIRV_ADDRESS");
     // Drop a draw on an undecodable texture descriptor instead of substituting
     // a 1x1 fallback binding. Off by default so a garbage descriptor degrades
     // the pass rather than dropping it (Demon's Souls composite feeders).
@@ -397,6 +432,16 @@ public static partial class AgcExports
         Environment.GetEnvironmentVariable("SHARPEMU_AGC_SUBMIT_COMPLETION_EVENT"),
         "1",
         StringComparison.Ordinal);
+    private static readonly bool _traceGuestThroughput = string.Equals(
+        Environment.GetEnvironmentVariable("SHARPEMU_TRACE_GUEST_THROUGHPUT"),
+        "1",
+        StringComparison.Ordinal);
+    private static long _agcThroughputWindowStartTicks =
+        System.Diagnostics.Stopwatch.GetTimestamp();
+    private static long _agcThroughputParseTicks;
+    private static long _agcThroughputParseMaxTicks;
+    private static long _agcThroughputParseDwords;
+    private static long _agcThroughputParseCalls;
     // Escape hatch for the cached-texture copy skip (per-draw texel copies
     // are re-enabled unconditionally when set), for A/B-ing rendering issues.
     private static readonly bool _textureCopySkipDisabled = string.Equals(
@@ -4287,6 +4332,44 @@ public static partial class AgcExports
         uint dwordCount,
         bool tracePackets)
     {
+        if (!_traceGuestThroughput)
+        {
+            return ParseSubmittedDcbWithWindow(
+                ctx,
+                gpuState,
+                state,
+                commandAddress,
+                dwordCount,
+                tracePackets);
+        }
+
+        var start = System.Diagnostics.Stopwatch.GetTimestamp();
+        try
+        {
+            return ParseSubmittedDcbWithWindow(
+                ctx,
+                gpuState,
+                state,
+                commandAddress,
+                dwordCount,
+                tracePackets);
+        }
+        finally
+        {
+            RecordAgcParseThroughput(
+                dwordCount,
+                System.Diagnostics.Stopwatch.GetTimestamp() - start);
+        }
+    }
+
+    private static bool ParseSubmittedDcbWithWindow(
+        CpuContext ctx,
+        SubmittedGpuState gpuState,
+        SubmittedDcbState state,
+        ulong commandAddress,
+        uint dwordCount,
+        bool tracePackets)
+    {
         if (commandAddress == 0 || dwordCount == 0 || dwordCount > 1_000_000)
         {
             return false;
@@ -4853,6 +4936,52 @@ public static partial class AgcExports
         return false;
     }
 
+    private static void RecordAgcParseThroughput(uint dwordCount, long elapsedTicks)
+    {
+        Interlocked.Increment(ref _agcThroughputParseCalls);
+        Interlocked.Add(ref _agcThroughputParseDwords, dwordCount);
+        Interlocked.Add(ref _agcThroughputParseTicks, elapsedTicks);
+        var observedMax = Volatile.Read(ref _agcThroughputParseMaxTicks);
+        while (elapsedTicks > observedMax)
+        {
+            var previous = Interlocked.CompareExchange(
+                ref _agcThroughputParseMaxTicks,
+                elapsedTicks,
+                observedMax);
+            if (previous == observedMax)
+            {
+                break;
+            }
+
+            observedMax = previous;
+        }
+
+        var now = System.Diagnostics.Stopwatch.GetTimestamp();
+        var windowStart = Volatile.Read(ref _agcThroughputWindowStartTicks);
+        var frequency = System.Diagnostics.Stopwatch.Frequency;
+        if (now - windowStart < frequency ||
+            Interlocked.CompareExchange(
+                ref _agcThroughputWindowStartTicks,
+                now,
+                windowStart) != windowStart)
+        {
+            return;
+        }
+
+        var calls = Interlocked.Exchange(ref _agcThroughputParseCalls, 0);
+        var dwords = Interlocked.Exchange(ref _agcThroughputParseDwords, 0);
+        var parseTicks = Interlocked.Exchange(ref _agcThroughputParseTicks, 0);
+        var maxTicks = Interlocked.Exchange(ref _agcThroughputParseMaxTicks, 0);
+        var frequencyDouble = (double)frequency;
+        Console.Error.WriteLine(
+            $"[AGC][TRACE] agc.guest_throughput " +
+            $"window_ms={(now - windowStart) * 1000.0 / frequencyDouble:F1} " +
+            $"parse_calls={calls} dwords={dwords} " +
+            $"parse_ms={parseTicks * 1000.0 / frequencyDouble:F1} " +
+            $"parse_avg_ms={(calls == 0 ? 0.0 : parseTicks * 1000.0 / frequencyDouble / calls):F3} " +
+            $"parse_max_ms={maxTicks * 1000.0 / frequencyDouble:F3}");
+    }
+
     private static void TraceFramePacketSummary(SubmittedDcbState state)
     {
         if (!_traceFramePackets)
@@ -5046,12 +5175,24 @@ public static partial class AgcExports
 
         void ApplyAndQueueCompletion()
         {
+            var enqueuedBeforeAction =
+                GuestGpu.Current.CurrentThreadEnqueuedGuestWorkSequenceForDiagnostics;
             action();
             // DMA side effects can enqueue a Vulkan image mirror while this
             // ordered action is executing. Completing the label here would
             // wake another queue before that mirror is visible. Queue a
             // second same-queue ordered action after all immediate follow-up
             // writes; it fences those writes before publishing the producer.
+            // Most RELEASE_MEM/WRITE_DATA/EVENT_WRITE actions do not enqueue
+            // any GPU work, though, so completing them here avoids doubling
+            // every PM4 side-effect packet into two presenter work items.
+            if (GuestGpu.Current.CurrentThreadEnqueuedGuestWorkSequenceForDiagnostics ==
+                enqueuedBeforeAction)
+            {
+                CompleteAndWake();
+                return;
+            }
+
             if (GuestGpu.Current.SubmitOrderedGuestAction(
                     CompleteAndWake,
                     $"{debugName} completion") == 0)
@@ -7735,13 +7876,13 @@ public static partial class AgcExports
             pixelEvaluation);
 
         if (pixelShaderAddress == 0x0000000500781200 &&
-            Environment.GetEnvironmentVariable("SHARPEMU_TRACE_TITLE_GLOBALS") == "1")
+            _traceTitleGlobals)
         {
             TraceAstroTitlePixelGlobals(pixelEvaluation);
         }
 
         if (pixelShaderAddress == 0x0000000500781200 &&
-            Environment.GetEnvironmentVariable("SHARPEMU_TRACE_TITLE_GLOBALS_LIVE") == "1")
+            _traceTitleGlobalsLive)
         {
             TraceAstroTitlePixelGlobalProbe(pixelEvaluation);
         }
@@ -8266,8 +8407,7 @@ public static partial class AgcExports
         Gen5ShaderEvaluation evaluation)
     {
         var hasRecordProbe = uint.TryParse(
-            Environment.GetEnvironmentVariable(
-                "SHARPEMU_TRACE_VERTEX_BUFFER_RECORD"),
+            _traceVertexBufferRecord,
             out var recordProbe);
         var initialScalars = string.Join(
             ',',
@@ -8405,9 +8545,7 @@ public static partial class AgcExports
             }
         }
 
-        var traceFullProgram =
-            Environment.GetEnvironmentVariable(
-                "SHARPEMU_TRACE_VERTEX_SHADER_FULL") == "1";
+        var traceFullProgram = _traceVertexShaderFull;
         foreach (var instruction in shaderState.Program.Instructions)
         {
             // The title failure is established by the first global accesses.
@@ -8732,8 +8870,7 @@ public static partial class AgcExports
             if (stage == "vertex" &&
                 initialDescriptorStride != 0 &&
                 uint.TryParse(
-                    Environment.GetEnvironmentVariable(
-                        "SHARPEMU_TRACE_VERTEX_BUFFER_RECORD"),
+                    _traceVertexBufferRecord,
                     out var record))
             {
                 var recordOffset = (ulong)record * initialDescriptorStride;
@@ -8753,8 +8890,7 @@ public static partial class AgcExports
             var recordSummary = "none";
             if (stage == "vertex" &&
                 _traceVertexShaderAddress == shaderAddress &&
-                Environment.GetEnvironmentVariable(
-                    "SHARPEMU_TRACE_VERTEX_BUFFER_RECORD_SUMMARY") == "1" &&
+                _traceVertexBufferRecordSummary &&
                 initialDescriptorStride is >= 32 and <= 256)
             {
                 var stride = checked((int)initialDescriptorStride);
@@ -11057,7 +11193,9 @@ public static partial class AgcExports
         TextureDescriptor descriptor,
         uint sourceWidth,
         int logicalByteCount,
-        byte[] source)
+        byte[] source,
+        int sourceX = 0,
+        int sourceY = 0)
     {
         if (!GnmTiling.NeedsDetile(descriptor.TileMode) ||
             !TryGetTextureElementLayout(
@@ -11077,14 +11215,16 @@ public static partial class AgcExports
             descriptor.TileMode,
             elementsWide,
             elementsHigh,
-            bytesPerElement)
+            bytesPerElement,
+            sourceX,
+            sourceY)
             ? linear
             : null;
     }
 
     private static void TraceTextureFallback(TextureDescriptor descriptor, string reason)
     {
-        var mode = Environment.GetEnvironmentVariable("SHARPEMU_TRACE_GUEST_IMAGES");
+        var mode = _traceGuestImagesMode;
         if ((!string.Equals(mode, "1", StringComparison.Ordinal) &&
              !string.Equals(mode, "present", StringComparison.OrdinalIgnoreCase)) ||
             Interlocked.Increment(ref _textureFallbackTraceCount) > 64)
@@ -11153,13 +11293,21 @@ public static partial class AgcExports
         }
 
         var physicalSourceByteCount = sourceByteCount;
+        var guestAllocationByteCount = sourceByteCount;
+        ulong sourceOffset = 0;
+        var sourceX = 0;
+        var sourceY = 0;
+        var elementsWide = 0;
+        var elementsHigh = 0;
+        var bytesPerElement = 0;
+        var hasElementLayout = TryGetTextureElementLayout(
+            descriptor,
+            sourceWidth,
+            out elementsWide,
+            out elementsHigh,
+            out bytesPerElement);
         if (GnmTiling.NeedsDetile(descriptor.TileMode) &&
-            TryGetTextureElementLayout(
-                descriptor,
-                sourceWidth,
-                out var elementsWide,
-                out var elementsHigh,
-                out var bytesPerElement) &&
+            hasElementLayout &&
             GnmTiling.TryGetTiledByteCount(
                 descriptor.TileMode,
                 elementsWide,
@@ -11168,11 +11316,51 @@ public static partial class AgcExports
                 out var tiledByteCount))
         {
             physicalSourceByteCount = tiledByteCount;
+            guestAllocationByteCount = tiledByteCount;
+        }
+
+        // Thin 64 KiB standard mip chains reserve their first block for the
+        // mip tail and store larger levels in reverse order. Standalone CPU
+        // textures currently upload resource mip 0, so resolve its real byte
+        // range instead of interpreting the tail and smaller levels as mip 0.
+        if (GnmTiling.NeedsDetile(descriptor.TileMode) &&
+            hasElementLayout &&
+            GnmTiling.TryGetStandard64KMipLayout(
+                descriptor.TileMode,
+                elementsWide,
+                elementsHigh,
+                bytesPerElement,
+                descriptor.ResourceMipLevels,
+                mipLevel: 0,
+                out var tiledMipLayout))
+        {
+            sourceOffset = tiledMipLayout.SourceOffset;
+            physicalSourceByteCount = tiledMipLayout.SourceByteCount;
+            guestAllocationByteCount = tiledMipLayout.AllocationByteCount;
+            sourceX = tiledMipLayout.SourceX;
+            sourceY = tiledMipLayout.SourceY;
         }
 
         if (physicalSourceByteCount > MaxPresentedTextureBytes ||
-            physicalSourceByteCount > int.MaxValue)
+            physicalSourceByteCount > int.MaxValue ||
+            guestAllocationByteCount > MaxPresentedTextureBytes)
         {
+            texture = CreateFallbackGuestDrawTexture(
+                isStorage,
+                writesImage,
+                descriptor.Format,
+                descriptor.NumberType);
+            return true;
+        }
+
+        ulong physicalSourceAddress;
+        try
+        {
+            physicalSourceAddress = checked(descriptor.Address + sourceOffset);
+        }
+        catch (OverflowException)
+        {
+            TraceTextureFallback(descriptor, $"source-address-overflow:{sourceOffset}");
             texture = CreateFallbackGuestDrawTexture(
                 isStorage,
                 writesImage,
@@ -11210,7 +11398,15 @@ public static partial class AgcExports
                 TileMode: descriptor.TileMode,
                 DstSelect: descriptor.DstSelect,
                 Sampler: ToGuestSampler(samplerDescriptor),
-                WritesImage: writesImage);
+                WritesImage: writesImage,
+                SourceOffset: sourceOffset,
+                PhysicalSourceByteCount: physicalSourceByteCount,
+                GuestAllocationByteCount: guestAllocationByteCount,
+                SourceX: sourceX,
+                SourceY: sourceY,
+                ElementsWide: elementsWide,
+                ElementsHigh: elementsHigh,
+                BytesPerElement: bytesPerElement);
             return true;
         }
 
@@ -11236,14 +11432,16 @@ public static partial class AgcExports
                     // and run the same AddrLib-derived detile path used below for
                     // sampled textures before seeding the Vulkan image.
                     var storageSource = new byte[(int)physicalSourceByteCount];
-                    if (ctx.Memory.TryRead(descriptor.Address, storageSource))
+                    if (ctx.Memory.TryRead(physicalSourceAddress, storageSource))
                     {
                         readSucceeded = true;
                         var linearStorage = TryDetileTextureSource(
                             descriptor,
                             sourceWidth,
                             checked((int)sourceByteCount),
-                            storageSource) ?? storageSource
+                            storageSource,
+                            sourceX,
+                            sourceY) ?? storageSource
                                 .AsSpan(0, checked((int)sourceByteCount))
                                 .ToArray();
                         if (linearStorage.AsSpan().IndexOfAnyExcept((byte)0) >= 0)
@@ -11254,10 +11452,7 @@ public static partial class AgcExports
                     }
                 }
 
-                if (ParseOptionalHexAddress(
-                        Environment.GetEnvironmentVariable(
-                            "SHARPEMU_TRACE_STORAGE_IMAGE_INIT_ADDRESS")) ==
-                    descriptor.Address)
+                if (_traceStorageImageInitAddress == descriptor.Address)
                 {
                     Console.Error.WriteLine(
                         $"[LOADER][TRACE] agc.storage_initial_data " +
@@ -11265,6 +11460,7 @@ public static partial class AgcExports
                         $"upload_known={uploadKnown} read={readSucceeded} " +
                         $"nonzero={linearNonzero} initial_bytes={initialPixels.Length} " +
                         $"logical_bytes={sourceByteCount} physical_bytes={physicalSourceByteCount} " +
+                        $"source_offset={sourceOffset} allocation_bytes={guestAllocationByteCount} " +
                         $"size={descriptor.Width}x{descriptor.Height} pitch={sourceWidth} " +
                         $"fmt={descriptor.Format} num={descriptor.NumberType} " +
                         $"tile={descriptor.TileMode} mip={mipLevel}");
@@ -11287,7 +11483,15 @@ public static partial class AgcExports
                     TileMode: descriptor.TileMode,
                     DstSelect: descriptor.DstSelect,
                     Sampler: ToGuestSampler(samplerDescriptor),
-                    WritesImage: writesImage);
+                    WritesImage: writesImage,
+                    SourceOffset: sourceOffset,
+                    PhysicalSourceByteCount: physicalSourceByteCount,
+                    GuestAllocationByteCount: guestAllocationByteCount,
+                    SourceX: sourceX,
+                    SourceY: sourceY,
+                    ElementsWide: elementsWide,
+                    ElementsHigh: elementsHigh,
+                    BytesPerElement: bytesPerElement);
                 return true;
             }
 
@@ -11314,6 +11518,7 @@ public static partial class AgcExports
                         descriptor.DstSelect,
                         descriptor.TileMode,
                         sourceWidth,
+                        sourceOffset,
                         sampler)))
             {
                 texture = new GuestDrawTexture(
@@ -11333,12 +11538,20 @@ public static partial class AgcExports
                     TileMode: descriptor.TileMode,
                     DstSelect: descriptor.DstSelect,
                     Sampler: sampler,
-                    WritesImage: writesImage);
+                    WritesImage: writesImage,
+                    SourceOffset: sourceOffset,
+                    PhysicalSourceByteCount: physicalSourceByteCount,
+                    GuestAllocationByteCount: guestAllocationByteCount,
+                    SourceX: sourceX,
+                    SourceY: sourceY,
+                    ElementsWide: elementsWide,
+                    ElementsHigh: elementsHigh,
+                    BytesPerElement: bytesPerElement);
                 return true;
             }
 
             var source = new byte[(int)physicalSourceByteCount];
-            if (!ctx.Memory.TryRead(descriptor.Address, source))
+            if (!ctx.Memory.TryRead(physicalSourceAddress, source))
             {
                 TraceTextureFallback(
                     descriptor,
@@ -11371,7 +11584,8 @@ public static partial class AgcExports
                     $"fmt={descriptor.Format} num={descriptor.NumberType} tile={descriptor.TileMode} " +
                     $"size={descriptor.Width}x{descriptor.Height} pitch={descriptor.Pitch} " +
                     $"dst=0x{descriptor.DstSelect:X3} " +
-                    $"bytes={source.Length} logical_bytes={sourceByteCount} nonzero64={nonZero}");
+                    $"bytes={source.Length} logical_bytes={sourceByteCount} nonzero64={nonZero} " +
+                    $"source_offset={sourceOffset} allocation_bytes={guestAllocationByteCount}");
             }
             DumpTextureSourceIfRequested(descriptor, sourceWidth, source);
 
@@ -11379,7 +11593,9 @@ public static partial class AgcExports
                 descriptor,
                 sourceWidth,
                 checked((int)sourceByteCount),
-                source) ?? source.AsSpan(0, checked((int)sourceByteCount)).ToArray();
+                source,
+                sourceX,
+                sourceY) ?? source.AsSpan(0, checked((int)sourceByteCount)).ToArray();
             DumpLinearTextureIfRequested(descriptor, sourceWidth, rgba);
             texture = new GuestDrawTexture(
                 descriptor.Address,
@@ -11398,7 +11614,15 @@ public static partial class AgcExports
                 TileMode: descriptor.TileMode,
                 DstSelect: descriptor.DstSelect,
                 Sampler: ToGuestSampler(samplerDescriptor),
-                WritesImage: writesImage);
+                WritesImage: writesImage,
+                SourceOffset: sourceOffset,
+                PhysicalSourceByteCount: physicalSourceByteCount,
+                GuestAllocationByteCount: guestAllocationByteCount,
+                SourceX: sourceX,
+                SourceY: sourceY,
+                ElementsWide: elementsWide,
+                ElementsHigh: elementsHigh,
+                BytesPerElement: bytesPerElement);
             dirtyGuestImageSnapshotSucceeded = true;
             return true;
         }
@@ -11637,7 +11861,7 @@ public static partial class AgcExports
         uint sourcePitch,
         byte[] source)
     {
-        var directory = Environment.GetEnvironmentVariable("SHARPEMU_TEXTURE_DUMP_DIR");
+        var directory = _textureDumpDirectory;
         if (string.IsNullOrWhiteSpace(directory))
         {
             return;
@@ -11679,7 +11903,7 @@ public static partial class AgcExports
         uint sourcePitch,
         byte[] source)
     {
-        var directory = Environment.GetEnvironmentVariable("SHARPEMU_TEXTURE_LINEAR_DUMP_DIR");
+        var directory = _linearTextureDumpDirectory;
         if (string.IsNullOrWhiteSpace(directory))
         {
             return;
@@ -14759,17 +14983,12 @@ public static partial class AgcExports
         IGuestCompiledShader shader,
         Gen5ShaderProgram program)
     {
-        if (shader.Payload.Length == 0 ||
-            !string.Equals(
-                Environment.GetEnvironmentVariable("SHARPEMU_DUMP_SPIRV"),
-                "1",
-                StringComparison.Ordinal))
+        if (shader.Payload.Length == 0 || !_dumpSpirv)
         {
             return;
         }
 
-        var addressFilter = Environment.GetEnvironmentVariable(
-            "SHARPEMU_DUMP_SPIRV_ADDRESS");
+        var addressFilter = _dumpSpirvAddress;
         if (_dumpSpirvAddresses.Length > 0)
         {
             if (!_dumpSpirvAddresses.Contains(shaderAddress))
@@ -14962,8 +15181,7 @@ public static partial class AgcExports
     {
         var isOk = string.Equals(detail, "ok", StringComparison.Ordinal);
         if (isOk &&
-            (!string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_AGC"), "1", StringComparison.Ordinal) ||
-             !ShouldTraceHotPath(ref _createShaderTraceCount)))
+            (!_traceAgc || !ShouldTraceHotPath(ref _createShaderTraceCount)))
         {
             return;
         }
@@ -15053,8 +15271,7 @@ public static partial class AgcExports
             return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
 
-        var tracePackets = string.Equals(
-            Environment.GetEnvironmentVariable("SHARPEMU_LOG_AGC"), "1", StringComparison.Ordinal);
+        var tracePackets = _traceAgc;
 
         var gpuState = _submittedGpuStates.GetValue(ctx.Memory, static _ => new SubmittedGpuState());
         lock (gpuState.Gate)

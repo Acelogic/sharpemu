@@ -28,7 +28,15 @@ internal sealed record GuestDrawTexture(
     uint TileMode = 0,
     uint DstSelect = 0xFAC,
     GuestSampler Sampler = default,
-    bool WritesImage = false);
+    bool WritesImage = false,
+    ulong SourceOffset = 0,
+    ulong PhysicalSourceByteCount = 0,
+    ulong GuestAllocationByteCount = 0,
+    int SourceX = 0,
+    int SourceY = 0,
+    int ElementsWide = 0,
+    int ElementsHigh = 0,
+    int BytesPerElement = 0);
 
 /// <summary>Raw guest sampler descriptor dwords, copied verbatim from guest memory.</summary>
 internal readonly record struct GuestSampler(
@@ -49,6 +57,7 @@ internal readonly record struct TextureContentIdentity(
     uint DstSelect,
     uint TileMode,
     uint Pitch,
+    ulong SourceOffset,
     GuestSampler Sampler);
 
 internal sealed record GuestMemoryBuffer(

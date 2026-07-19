@@ -49,6 +49,7 @@ diagnostic controls only.
 | PS Studios video | E50 | Preserve the full FFmpeg-backed AvPlayer decode/callback/upload path during upstream merges. |
 | Intro presentation starvation | E134 | Yield after ordered flips while keeping the four-frame head-plus-newest-three memory bound. |
 | Sampled-image coherency | E143 | Refresh dirty promoted images and use sampled-stage transfer barriers for vertex, fragment, and compute consumers. |
+| Standard-64K mip source layout | 2026-07-19 title checkpoint | Resolve the reverse-ordered non-tail levels and packed mip-tail origin before detiling; title BC7 mip 0 begins at `+0x80000`. |
 | Large compute programs | E188-E190 | Decode using the AGC header's exact shader size instead of the old 4,096-instruction ceiling. |
 | Post-sync title-start regression | E197-E201 | Replace the sticky 128 MiB host-buffer admission policy with a bounded global LRU that evicts cold idle allocations. |
 | Video layout and packed target order | E208 | Honor extended NV12 pitch/plane layout and `CB_COLOR_INFO.COMP_SWAP`; retain the focused layout/format tests. |
@@ -104,6 +105,36 @@ diagnostic controls only.
 | E251 | Address-filtered every consumer of the live 1.5 MiB ping-pong pair. Large compute shader `0x555F4F500` is the Emitter handoff, and vertex shaders `0x5001BBC00`, `0x5002B3000`, and target ES `0x5002A9A00` also read the same nonzero state buffers. At title, their snapshots contain about 10-11K nonzero bytes. The Emitter's late `s8` descriptor resolves to stride 64, 262,144 records, and a 16 MiB address (`0x553F41DD0` or `0x554F41DD0`), matching the rotating geometry buffers isolated in E190. | The 1.5 MiB producer output reaches both Emitter and target ES; the handoff is not missing. Inspect the real 16 MiB `s8` Emitter outputs and exact 64-byte record 24736. | `artifacts/astro-bot/runs/20260717-073315-e251-pingpong-consumer-map/`. |
 | E252-E252c | The initial generic 16 MiB diagnostic repeatedly distorted boot by hashing/copying every large binding, so it was replaced with a generic readback-only mode that skips upload probes and reads only requested post-fence dwords. The constant-cost run reached `title_controller_ship`; exact stride-64 geometry record 24736 at `0x553F41DD0 + 0x182800` changed from all zero to three stable nonzero words: dword 8 `0x3F7FFFEF`, dword 10 `0x3F800000`, and dword 12 `0x0000293B`. | Selector, ObjectUpdate, 1.5 MiB producer, GPU publication, Emitter, and rotating 16 MiB geometry are all working. Record 24736 is no longer the blocker. Validate target ES `0x5002A9A00` input and position exports next. | Inconclusive heavy probes: `artifacts/astro-bot/runs/20260717-073804-e252-emitter-geometry-record24736/` and `.../20260717-074512-e252b-emitter-record24736-readback-only/`; decisive slice: `artifacts/astro-bot/runs/20260717-075049-e252c-emitter-record24736-slice/`. |
 
+## 2026-07-19 title checkpoint
+
+- The Gen5 standard-64K, mode-9 BC7 mip chain for title texture
+  `0x5DDB00000` places mip 0 at allocation offset `0x80000`. Resolving that
+  layout produces one clean source wordmark instead of sampling the mip tail.
+  Evidence: `artifacts/astro-bot/readbacks/title-bc7-mode9-mip-layout-fix/title-source-mip0.png`
+  and `artifacts/astro-bot/runs/20260719-122639-title-bc7-mip-layout-long-draw-trace/attempt-01-frames/frame-082-t+00109.8s.png`.
+- The live title now renders readable, animated **Sony Interactive Entertainment
+  presents** text. ES `0x500779700` and PS `0x50077AC00` have a valid interface;
+  PS controls `[0,2,0x423,3]` map to the intended vertex exports. The alternating
+  blue/white groups are animation frames, not a remaining attribute-map fault.
+- GPU execution is making ordered progress. A steady title flip contains seven
+  graphics DCB submissions, about 2,100 PM4 packets, 31 draws, and 30-46
+  dispatches. Guest Vulkan submissions are normally 1-10 ms and packet parsing
+  accounts for only about 0.15 seconds of a roughly 1.4-second frame. Evidence:
+  `artifacts/astro-bot/runs/20260719-144625-title-gpu-submission-profile/` and
+  `artifacts/astro-bot/runs/20260719-145237-title-frame-packet-profile/`.
+- The remaining throughput problem is CPU/thread-side: DrawThread performs
+  hundreds of thousands of 1-microsecond `sceKernelWaitEqueue` polls per second,
+  while graphics event producers remain healthy. Blocking those polls, changing
+  sub-millisecond sleep behavior, FIFO mutex handoff, and preserving separate
+  pending hardware event types either regressed title timing or left the same
+  1.4-1.5 FPS wordmark. Do not repeat those variants. Evidence:
+  `artifacts/astro-bot/runs/20260719-143926-title-equeue-drawthread-h2/`,
+  `artifacts/astro-bot/runs/20260719-151635-title-fifo-mutex-handoff/`, and
+  `artifacts/astro-bot/runs/20260719-152702-title-distinct-graphics-event-types/`.
+- Live thread/register/memory diagnostics are headless artifacts only. The
+  emulator graphics window remains visible; no diagnostic terminal windows are
+  part of the launch flow.
+
 ## Corrected conclusions: do not repeat
 
 - A zero selector snapshot before the exact title-start marker is expected early
@@ -157,31 +188,28 @@ scene lists               repaired playable build: 28 active records
 
 ## Next experiment
 
-1. Address-filter target ES `0x5002A9A00` against both rotating 16 MiB geometry
-   buffers and verify it receives the nonzero record-24736 generation.
-2. Inspect the original ES IR/SPIR-V position-export path and capture the first
-   title draw's position values without replacing the shader.
-3. If positions are valid, return to packed-half exports, component swaps, and
-   final render-to-texture composition; if they are not, fix only the evidenced
-   ES instruction or binding fault.
-
-The E206 no-screenshot control was:
-
-```sh
-python3 scripts/astro-test.py test \
-  --build never \
-  --tag e206-live-selector-to-geometry \
-  --timeout 200 --stability 20 --retries 2 \
-  --no-screenshot --no-require-ps-studios \
-  --env SHARPEMU_TRACE_GUEST_EXEC_ADDRS=0x800253C22,0x800253C2A,0x800253C42,0x800253C48 \
-  --env SHARPEMU_TRACE_INDEXED_GLOBAL_BUFFER_SHADER_ADDRESS=0x50740A700 \
-  --env SHARPEMU_TRACE_INDEXED_GLOBAL_BUFFER_SPEC=2,8,4,6,276,176,180,184,188 \
-  --env SHARPEMU_TRACE_INDEXED_GLOBAL_BUFFER_INTERVAL=8 \
-  --env SHARPEMU_TRACE_INDEXED_GLOBAL_BUFFER_CPU_WRITES=1
-```
+1. Merge current upstream `main` through `90c72eb` after this checkpoint. It
+   contains direct mutex-owner handoff fixes (`73e8821`, refined by `90c72eb`)
+   that landed after the PR #412 / `gpu-bootstrap-stall` snapshot already in this
+   branch.
+2. Run a visible A/B with a full post-title capture tail. Compare title-start
+   time, presented FPS, DrawThread polling, waiter ownership, and whether the
+   wordmark advances. A log milestone alone is not success.
+3. If upstream mutex handoff does not improve the run, use headless live thread
+   and register snapshots to identify the exact guest mutex/condition predicate
+   holding the title producer. Do not change harness timing or convert the
+   1-microsecond poll into a blocking wait without predicate evidence.
+4. Resume downstream shader/composition work only after the CPU/title throughput
+   path is no longer limiting progress.
 
 ## Validation and artifact policy
 
+- Current 2026-07-19 checkpoint: Release `osx-x64` publish and visible Astro
+  launch pass; 25 focused AGC tiling/event-queue/pthread tests pass.
+- Current solution run: shader 53/53, Metal shader 27/27, and source-generator
+  33/33 pass. Library tests are 737/744; the seven SaveData failures reproduce
+  unchanged at clean checkpoint `7002dd2` and are outside this GPU/threading
+  change set.
 - Release `osx-x64` publish passed after the `par274/main` merge with zero
   warning or error lines.
 - Library tests: 271/271 passed in the Windows-parity worktree.

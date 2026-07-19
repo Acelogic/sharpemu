@@ -430,6 +430,9 @@ internal sealed class VulkanGuestGpuBackend : IGuestGpuBackend
     public long CurrentGuestWorkSequenceForDiagnostics =>
         VulkanVideoPresenter.CurrentGuestWorkSequenceForDiagnostics;
 
+    public long CurrentThreadEnqueuedGuestWorkSequenceForDiagnostics =>
+        VulkanVideoPresenter.CurrentThreadEnqueuedGuestWorkSequenceForDiagnostics;
+
     public bool IsGuestImageUploadKnown(ulong address, uint format, uint numberType) =>
         VulkanVideoPresenter.IsGuestImageUploadKnown(address, format, numberType);
 

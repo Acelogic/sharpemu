@@ -413,6 +413,9 @@ internal sealed class MetalGuestGpuBackend : IGuestGpuBackend
     public long CurrentGuestWorkSequenceForDiagnostics =>
         MetalVideoPresenter.CurrentGuestWorkSequenceForDiagnostics;
 
+    public long CurrentThreadEnqueuedGuestWorkSequenceForDiagnostics =>
+        MetalVideoPresenter.CurrentThreadEnqueuedGuestWorkSequenceForDiagnostics;
+
     public bool IsGuestImageUploadKnown(ulong address, uint format, uint numberType) =>
         MetalVideoPresenter.IsGuestImageUploadKnown(address, format, numberType);
 

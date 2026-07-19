@@ -47,6 +47,10 @@ public static class Gen5ShaderScalarEvaluator
             Environment.GetEnvironmentVariable("SHARPEMU_CFG_RESOURCE_DISCOVERY"),
             "0",
             StringComparison.Ordinal);
+    private static readonly bool _traceVertexRaw = string.Equals(
+        Environment.GetEnvironmentVariable("SHARPEMU_TRACE_VERTEX_RAW"),
+        "1",
+        StringComparison.Ordinal);
 
     /// <summary>
     /// Optional fallback for global-memory reads that ctx.Memory cannot satisfy (the
@@ -835,10 +839,7 @@ public static class Gen5ShaderScalarEvaluator
 
     private static void TraceTitleVertexInputs(IReadOnlyList<Gen5VertexInputBinding> bindings)
     {
-        if (!string.Equals(
-                Environment.GetEnvironmentVariable("SHARPEMU_TRACE_VERTEX_RAW"),
-                "1",
-                StringComparison.Ordinal) ||
+        if (!_traceVertexRaw ||
             bindings.Count != 3 ||
             !bindings.Any(static binding =>
                 binding.Pc == 0xF8 && binding.Stride == 16 &&

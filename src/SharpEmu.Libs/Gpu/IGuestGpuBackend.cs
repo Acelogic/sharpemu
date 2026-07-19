@@ -239,6 +239,10 @@ internal interface IGuestGpuBackend
     /// <summary>Sequence currently executing on the guest-work consumer; diagnostics only.</summary>
     long CurrentGuestWorkSequenceForDiagnostics { get; }
 
+    /// <summary>Most recent work sequence enqueued by the calling thread;
+    /// diagnostics only.</summary>
+    long CurrentThreadEnqueuedGuestWorkSequenceForDiagnostics { get; }
+
     // Guest image lifecycle beyond presentation: CPU-visible seeding, writes, and
     // extent queries the AGC layer uses to keep guest memory and backend images
     // coherent. Addresses and formats are always raw guest values.

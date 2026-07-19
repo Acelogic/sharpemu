@@ -89,6 +89,14 @@ public static class VideoOutExports
         Environment.GetEnvironmentVariable("SHARPEMU_LOG_VIDEOOUT_SYNC"),
         "1",
         StringComparison.Ordinal);
+    private static readonly bool _logVideoOutThreads = string.Equals(
+        Environment.GetEnvironmentVariable("SHARPEMU_LOG_VIDEOOUT_THREADS"),
+        "1",
+        StringComparison.Ordinal);
+    private static readonly bool _bootSplashEnabled = string.Equals(
+        Environment.GetEnvironmentVariable("SHARPEMU_BOOT_SPLASH"),
+        "1",
+        StringComparison.Ordinal);
     private static long _frameRateWindowStart = Stopwatch.GetTimestamp();
     private static long _submittedFrameCount;
     private static int _diagnosticFlipCount;
@@ -147,10 +155,7 @@ public static class VideoOutExports
     /// </summary>
     public static bool TryStartBootSplash()
     {
-        if (!string.Equals(
-                Environment.GetEnvironmentVariable("SHARPEMU_BOOT_SPLASH"),
-                "1",
-                StringComparison.Ordinal))
+        if (!_bootSplashEnabled)
         {
             return false;
         }
@@ -719,10 +724,7 @@ public static class VideoOutExports
         // VideoOut port. In explicit boot-screen diagnostic mode, use that
         // first real display milestone to bring up the existing Vulkan
         // presenter and its firmware-derived splash frame.
-        if (string.Equals(
-                Environment.GetEnvironmentVariable("SHARPEMU_BOOT_SPLASH"),
-                "1",
-                StringComparison.Ordinal))
+        if (_bootSplashEnabled)
         {
             VulkanVideoPresenter.EnsureStarted(1280, 720);
         }
@@ -1510,10 +1512,7 @@ public static class VideoOutExports
                 $"addr=0x{guestImageAddress:X16} submitted={guestImageSubmitted} " +
                 $"flipQueues={flipEventCount}");
         }
-        if (string.Equals(
-                Environment.GetEnvironmentVariable("SHARPEMU_LOG_VIDEOOUT_THREADS"),
-                "1",
-                StringComparison.Ordinal) &&
+        if (_logVideoOutThreads &&
             GuestThreadExecution.Scheduler is { } scheduler)
         {
             TraceGuestThreadsAtFlip(scheduler, "submit");

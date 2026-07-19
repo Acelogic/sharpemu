@@ -71,6 +71,7 @@ public sealed class AgcEventQueueTests
         Assert.Equal(1u, ReadUInt32(memory, eventsAddress + 0x0C));
         Assert.Equal(eventType, ReadUInt64(memory, eventsAddress + 0x10));
         Assert.Equal(userData, ReadUInt64(memory, eventsAddress + 0x18));
+        DeleteEqueue(ctx, handle);
     }
 
     [Fact]
@@ -98,6 +99,7 @@ public sealed class AgcEventQueueTests
             0x07);
 
         Assert.Equal(0, triggered);
+        DeleteEqueue(ctx, handle);
     }
 
     [Fact]
@@ -158,5 +160,12 @@ public sealed class AgcEventQueueTests
         Span<byte> buffer = stackalloc byte[8];
         BinaryPrimitives.WriteUInt64LittleEndian(buffer, value);
         Assert.True(memory.TryWrite(address, buffer));
+    }
+
+    private static void DeleteEqueue(CpuContext ctx, ulong handle)
+    {
+        ctx[CpuRegister.Rdi] = handle;
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK,
+            KernelEventQueueCompatExports.KernelDeleteEqueue(ctx));
     }
 }

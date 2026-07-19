@@ -117,6 +117,8 @@ internal static partial class MetalVideoPresenter
     private static bool _enqueueAsImmediateQueueFollowup;
     [ThreadStatic]
     private static LinkedListNode<PendingGuestWork>? _immediateFollowupTail;
+    [ThreadStatic]
+    private static long _lastGuestWorkSequenceEnqueuedByCurrentThread;
 
     private static readonly Dictionary<ulong, uint> _availableGuestImages = new();
     private static readonly Dictionary<ulong, (uint Width, uint Height, ulong ByteCount)>
@@ -191,6 +193,9 @@ internal static partial class MetalVideoPresenter
 
     public static long CurrentGuestWorkSequenceForDiagnostics =>
         Volatile.Read(ref _executingGuestWorkSequence);
+
+    public static long CurrentThreadEnqueuedGuestWorkSequenceForDiagnostics =>
+        _lastGuestWorkSequenceEnqueuedByCurrentThread;
 
     public static bool WaitForGuestWork(long workSequence, int timeoutMilliseconds)
     {
@@ -483,6 +488,7 @@ internal static partial class MetalVideoPresenter
 
         var queue = _submittingGuestQueue ?? GuestQueueIdentity.Default;
         var sequence = ++_enqueuedGuestWorkSequence;
+        _lastGuestWorkSequenceEnqueuedByCurrentThread = sequence;
         _lastEnqueuedGuestWorkByQueue[queue.Name] = sequence;
         if (!_pendingGuestWorkByQueue.TryGetValue(queue.Name, out var pendingQueue))
         {
