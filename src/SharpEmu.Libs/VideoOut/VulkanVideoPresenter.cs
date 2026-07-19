@@ -3035,6 +3035,7 @@ internal static unsafe class VulkanVideoPresenter
         private readonly Dictionary<int, int> _pixelSpirvWriteCounts = new();
         private int _tracedVertexBufferCount;
         private bool _tracedTitleDraw;
+        private long _mrtBlendCountMismatchCount;
         // Compute translation can produce an equivalent new byte array on a
         // later submit. Reference identity turns that into an expensive new
         // MoltenVK pipeline compilation every frame, so key the cache by the
@@ -10976,8 +10977,7 @@ internal static unsafe class VulkanVideoPresenter
 
             if (work.Draw.RenderState.Blends.Count != targetFormats.Length)
             {
-                Console.Error.WriteLine(
-                    "[LOADER][WARN] Vulkan skipped MRT draw with mismatched attachment/blend counts.");
+                TraceMrtBlendCountMismatch(work, targetFormats);
                 ReturnPooledGuestData(work.Draw);
                 return;
             }
@@ -11572,6 +11572,79 @@ internal static unsafe class VulkanVideoPresenter
                     _vk.DestroyRenderPass(_device, transientRenderPass, null);
                 }
             }
+        }
+
+        private void TraceMrtBlendCountMismatch(
+            VulkanOffscreenGuestDraw work,
+            IReadOnlyList<VulkanRenderTargetFormat> targetFormats)
+        {
+            var occurrence = Interlocked.Increment(ref _mrtBlendCountMismatchCount);
+            // Preserve the first complete failure packet while bounding a bad guest stream
+            // to one additional packet per 1,024 repeats.
+            if (occurrence != 1 && occurrence % 1024 != 0)
+            {
+                return;
+            }
+
+            var draw = work.Draw;
+            var vertexDigest = Convert.ToHexString(
+                SHA256.HashData(draw.VertexSpirv).AsSpan(0, 4));
+            var pixelDigest = Convert.ToHexString(
+                SHA256.HashData(draw.PixelSpirv).AsSpan(0, 4));
+            var topology = GetPrimitiveTopology(draw.PrimitiveType);
+            var effectiveVertexCount = GetDrawVertexCount(
+                draw.PrimitiveType,
+                draw.VertexCount,
+                draw.IndexBuffer);
+            var indexElementBytes = draw.IndexBuffer is { Is32Bit: true }
+                ? sizeof(uint)
+                : sizeof(ushort);
+            var indexCount = draw.IndexBuffer is null
+                ? 0
+                : draw.IndexBuffer.Length / indexElementBytes;
+            var targets = string.Join(
+                ',',
+                work.Targets.Select((target, index) =>
+                    $"t{index}:addr=0x{target.Address:X16}:extent={target.Width}x{target.Height}:" +
+                    $"mips={target.MipLevels}:format=0x{target.Format:X}:" +
+                    $"number_type=0x{target.NumberType:X}:component_swap=0x{target.ComponentSwap:X}:" +
+                    $"vk_format={targetFormats[index].Format}:output={targetFormats[index].OutputKind}"));
+            var blends = string.Join(
+                ',',
+                draw.RenderState.Blends.Select((blend, index) =>
+                    $"b{index}:enable={(blend.Enable ? 1 : 0)}:" +
+                    $"color={blend.ColorSrcFactor}/{blend.ColorDstFactor}/{blend.ColorFunc}:" +
+                    $"alpha={blend.AlphaSrcFactor}/{blend.AlphaDstFactor}/{blend.AlphaFunc}:" +
+                    $"separate_alpha={(blend.SeparateAlphaBlend ? 1 : 0)}:" +
+                    $"write_mask=0x{blend.WriteMask:X}"));
+            var depth = work.DepthTarget is null
+                ? "none"
+                : $"read=0x{work.DepthTarget.ReadAddress:X16}:" +
+                    $"write=0x{work.DepthTarget.WriteAddress:X16}:" +
+                    $"extent={work.DepthTarget.Width}x{work.DepthTarget.Height}:" +
+                    $"format=0x{work.DepthTarget.GuestFormat:X}:" +
+                    $"swizzle=0x{work.DepthTarget.SwizzleMode:X}:" +
+                    $"read_only={(work.DepthTarget.ReadOnly ? 1 : 0)}";
+            var indexType = draw.IndexBuffer is null
+                ? "none"
+                : draw.IndexBuffer.Is32Bit ? "uint32" : "uint16";
+
+            Console.Error.WriteLine(
+                "[LOADER][WARN] vk.mrt_blend_count_mismatch " +
+                $"occurrence={occurrence} target_count={work.Targets.Count} " +
+                $"blend_count={draw.RenderState.Blends.Count} max_targets={_maxColorAttachments} " +
+                $"shader=0x{work.ShaderAddress:X16} " +
+                $"vs_bytes={draw.VertexSpirv.Length} vs_hash={vertexDigest} " +
+                $"ps_bytes={draw.PixelSpirv.Length} ps_hash={pixelDigest} " +
+                $"primitive=0x{draw.PrimitiveType:X} topology={topology} " +
+                $"attributes={draw.AttributeCount} vertices={draw.VertexCount} " +
+                $"effective_vertices={effectiveVertexCount} instances={draw.InstanceCount} " +
+                $"indexed={(draw.IndexBuffer is null ? 0 : 1)} index_type={indexType} " +
+                $"index_bytes={draw.IndexBuffer?.Length ?? 0} index_count={indexCount} " +
+                $"vertex_buffers={draw.VertexBuffers.Count} textures={draw.Textures.Count} " +
+                $"global_buffers={draw.GlobalMemoryBuffers.Count} " +
+                $"publish_target={(work.PublishTarget ? 1 : 0)} depth=[{depth}] " +
+                $"targets=[{targets}] blends=[{blends}]");
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]
