@@ -40,17 +40,20 @@ public static class KernelPthreadCompatExports
 
     // Blocking model: waiters block their own host thread in place via
     // Monitor.Wait on the state object (mutexes) or SyncRoot (condvars).
-    // Block-and-wake is therefore atomic — no waiter queues, wake keys, or
-    // continuation hand-offs, and no lost-wakeup window between a thread
-    // deciding to block and registering as blocked.
+    // Block-and-wake is therefore atomic, with a per-mutex FIFO admission
+    // queue preventing the releasing thread from barging ahead of a waiter.
+    // There is no lost-wakeup window between a thread deciding to block and
+    // registering as blocked.
     private sealed class PthreadMutexState
     {
         public ulong OwnerThreadId { get; set; }
         public int RecursionCount { get; set; }
         public int Type { get; set; } = MutexTypeErrorCheck;
         public int Protocol { get; set; }
-        // Threads currently blocked in PthreadMutexLockCore; destroy reports BUSY while nonzero.
-        public int WaiterCount { get; set; }
+        // Threads currently blocked in PthreadMutexLockCore, ordered by arrival.
+        // Destroy reports BUSY while this queue is non-empty.
+        public LinkedList<ulong> Waiters { get; } = new();
+        public int WaiterCount => Waiters.Count;
     }
 
     private sealed class PthreadCondState
@@ -764,7 +767,11 @@ public static class KernelPthreadCompatExports
                 }
             }
 
-            if (state.OwnerThreadId == 0)
+            // A zero owner with queued waiters is a hand-off window, not an
+            // uncontended mutex. Reserving it for the queue head prevents the
+            // releasing thread (or a newcomer) from repeatedly barging ahead
+            // before a pulsed waiter can reacquire the host monitor.
+            if (state.OwnerThreadId == 0 && state.WaiterCount == 0)
             {
                 state.OwnerThreadId = currentThreadId;
                 state.RecursionCount = 1;
@@ -784,10 +791,10 @@ public static class KernelPthreadCompatExports
             // sliced only so teardown can unwind parked threads.
             TracePthreadMutex(ctx, "lock-block", mutexAddress, resolvedAddress, state, currentThreadId, (int)OrbisGen2Result.ORBIS_GEN2_OK);
             GuestThreadBlocking.NoteBlocked(currentThreadId, "pthread_mutex_lock");
-            state.WaiterCount++;
+            var waiter = state.Waiters.AddLast(currentThreadId);
             try
             {
-                while (state.OwnerThreadId != 0)
+                while (state.OwnerThreadId != 0 || !ReferenceEquals(state.Waiters.First, waiter))
                 {
                     if (GuestThreadBlocking.ShutdownRequested)
                     {
@@ -799,12 +806,22 @@ public static class KernelPthreadCompatExports
                     _ = Monitor.Wait(state, GuestThreadBlocking.WaitSliceMilliseconds);
                 }
 
+                state.Waiters.RemoveFirst();
                 state.OwnerThreadId = currentThreadId;
                 state.RecursionCount = 1;
             }
             finally
             {
-                state.WaiterCount--;
+                if (waiter.List is not null)
+                {
+                    var wasHead = ReferenceEquals(state.Waiters.First, waiter);
+                    state.Waiters.Remove(waiter);
+                    if (wasHead && state.OwnerThreadId == 0 && state.WaiterCount != 0)
+                    {
+                        Monitor.PulseAll(state);
+                    }
+                }
+
                 GuestThreadBlocking.NoteUnblocked(currentThreadId);
             }
 
