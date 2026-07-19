@@ -239,6 +239,13 @@ internal interface IGuestGpuBackend
 
     void SubmitGuestImageWrite(ulong address, byte[] pixels);
 
+    /// <summary>
+    /// Copies the current GPU-side contents between compatible live guest images.
+    /// Returns false when either image is unavailable so the caller can fall back
+    /// to uploading the guest CPU-memory snapshot.
+    /// </summary>
+    bool TrySubmitGuestImageCopy(ulong sourceAddress, ulong destinationAddress);
+
     bool TryGetGuestImageExtent(ulong address, out uint width, out uint height, out ulong byteCount);
 
     IReadOnlyList<(ulong Address, uint Width, uint Height, ulong ByteCount)> GetGuestImageExtents();

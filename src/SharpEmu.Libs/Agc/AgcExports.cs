@@ -5014,7 +5014,7 @@ public static partial class AgcExports
         // stale until a writeback lands. Copy image-to-image so the
         // destination sees what unified memory would hold on hardware.
         if (sourceAddress != 0 &&
-            VulkanVideoPresenter.SubmitGuestImageCopy(sourceAddress, destinationAddress))
+            GuestGpu.Current.TrySubmitGuestImageCopy(sourceAddress, destinationAddress))
         {
             return;
         }
