@@ -1435,6 +1435,9 @@ public sealed partial class DirectExecutionBackend
 		var expectedSceTimedWaitTimeout =
 			string.Equals(nid, "BmMjYxmew1w", StringComparison.Ordinal) &&
 			result == OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT;
+		var expectedKernelSemaTimeout =
+			string.Equals(nid, "Zxa0VhQVTsk", StringComparison.Ordinal) &&
+			result == OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT;
 		var expectedEqueueTimeout =
 			string.Equals(nid, "fzyMKs9kim0", StringComparison.Ordinal) &&
 			result == OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT;
@@ -1459,6 +1462,7 @@ public sealed partial class DirectExecutionBackend
 		return expectedFileProbeMiss ||
 			expectedPosixTimedWaitTimeout ||
 			expectedSceTimedWaitTimeout ||
+			expectedKernelSemaTimeout ||
 			expectedEqueueTimeout ||
 			expectedMutexTrylockBusy ||
 			expectedSemaphoreTrywaitAgain ||
@@ -1763,9 +1767,10 @@ public sealed partial class DirectExecutionBackend
 		return elapsedTicks >= (long)(_importLoopGuardSeconds * Stopwatch.Frequency);
 	}
 
-	private static bool IsImportLoopGuardBoundary(string nid) =>
+	internal static bool IsImportLoopGuardBoundary(string nid) =>
 		nid is
 			"1jfXLRVzisc" or // sceKernelUsleep
+			"Zxa0VhQVTsk" or // sceKernelWaitSema
 			"WKAXJ4XBPQ4" or // scePthreadCondWait
 			"BmMjYxmew1w" or // scePthreadCondTimedwait
 			"Op8TBGY5KHg" or // pthread_cond_wait

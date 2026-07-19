@@ -9,18 +9,21 @@ namespace SharpEmu.Libs.Tests.Cpu;
 
 public sealed class DirectExecutionBackendImportClassificationTests
 {
-    [Fact]
-    public void ScePthreadCondTimedwaitTimeout_IsExpectedPollingResult()
+    [Theory]
+    [InlineData("BmMjYxmew1w")]
+    [InlineData("Zxa0VhQVTsk")]
+    public void TimedBlockingImportTimeout_IsExpectedPollingResult(string nid)
     {
         Assert.True(DirectExecutionBackend.IsExpectedImportResult(
-            "BmMjYxmew1w",
+            nid,
             OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT));
         Assert.False(DirectExecutionBackend.IsExpectedImportResult(
-            "BmMjYxmew1w",
+            nid,
             OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_IMPLEMENTED));
     }
 
     [Theory]
+    [InlineData("Zxa0VhQVTsk")]
     [InlineData("WKAXJ4XBPQ4")]
     [InlineData("BmMjYxmew1w")]
     [InlineData("Op8TBGY5KHg")]
@@ -34,6 +37,12 @@ public sealed class DirectExecutionBackendImportClassificationTests
     [Fact]
     public void UnrelatedImport_IsNotClassifiedAsExpectedBlockingWait()
     {
-        Assert.False(DirectExecutionBackend.IsExpectedBlockingImportNid("Zxa0VhQVTsk"));
+        Assert.False(DirectExecutionBackend.IsExpectedBlockingImportNid("tn3VlD0hG60"));
+    }
+
+    [Fact]
+    public void SceKernelWaitSema_IsImportLoopGuardBoundary()
+    {
+        Assert.True(DirectExecutionBackend.IsImportLoopGuardBoundary("Zxa0VhQVTsk"));
     }
 }

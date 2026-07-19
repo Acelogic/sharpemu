@@ -5209,6 +5209,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	internal static bool IsExpectedBlockingImportNid(string nid) =>
 		nid is
+			"Zxa0VhQVTsk" or // sceKernelWaitSema
 			"WKAXJ4XBPQ4" or // scePthreadCondWait
 			"BmMjYxmew1w" or // scePthreadCondTimedwait
 			"Op8TBGY5KHg" or // pthread_cond_wait
