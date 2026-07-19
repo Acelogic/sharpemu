@@ -13,13 +13,6 @@ namespace SharpEmu.Libs.Lle;
 
 public static class NpGameIntentLleExports
 {
-    // Ghidra entry 000008d0; body addresses 42.
-    [SysAbiExport(
-        Nid = "0HBYxYAjmf0",
-        ExportName = "sceNpGameIntentTerminate",
-        Target = Generation.Gen5,
-        LibraryName = "libSceNpGameIntent",
-        PreferLle = true)]
     // Ghidra entry 00000900; body addresses 90.
     [SysAbiExport(
         Nid = "jEIXUAr9XE8",

@@ -81,6 +81,84 @@ public sealed class NpManagerExportsTests : IDisposable
     }
 
     [Fact]
+    public void ReachabilityStateCallback_RegistersExactGen5DispatchIdentity()
+    {
+        var gen5Manager = new ModuleManager();
+        gen5Manager.RegisterExports(
+            SharpEmu.Generated.SysAbiExportRegistry.CreateExports(Generation.Gen5));
+        var gen4Manager = new ModuleManager();
+        gen4Manager.RegisterExports(
+            SharpEmu.Generated.SysAbiExportRegistry.CreateExports(Generation.Gen4));
+
+        Assert.True(gen5Manager.TryGetExport("hw5KNqAAels", out var export));
+        Assert.Equal("sceNpRegisterNpReachabilityStateCallback", export.Name);
+        Assert.Equal("libSceNpManager", export.LibraryName);
+        Assert.True(export.PreferLle);
+        Assert.Equal(typeof(NpManagerExports), export.Function.Method.DeclaringType);
+        Assert.False(gen4Manager.TryGetExport("hw5KNqAAels", out _));
+    }
+
+    [Fact]
+    public void RegisterReachabilityStateCallback_PreservesValidationOrderAndOriginalPair()
+    {
+        _ctx[CpuRegister.Rdi] = 0;
+        _ctx[CpuRegister.Rsi] = UserData;
+        AssertResult(NpErrorNotInitialized, NpManagerExports.NpRegisterNpReachabilityStateCallback);
+
+        Initialize();
+        _ctx[CpuRegister.Rdi] = 0;
+        _ctx[CpuRegister.Rsi] = UserData;
+        AssertResult(NpErrorInvalidArgument, NpManagerExports.NpRegisterNpReachabilityStateCallback);
+
+        RegisterReachability(Callback, UserData);
+        Assert.True(NpManagerExports.TryGetReachabilityStateCallbackForTests(out var callback, out var userData));
+        Assert.Equal(Callback, callback);
+        Assert.Equal(UserData, userData);
+
+        _ctx[CpuRegister.Rdi] = OtherCallback;
+        _ctx[CpuRegister.Rsi] = UserData + 0x100;
+        AssertResult(
+            NpErrorCallbackAlreadyRegistered,
+            NpManagerExports.NpRegisterNpReachabilityStateCallback);
+        Assert.True(NpManagerExports.TryGetReachabilityStateCallbackForTests(out callback, out userData));
+        Assert.Equal(Callback, callback);
+        Assert.Equal(UserData, userData);
+    }
+
+    [Fact]
+    public void ManagerTerminate_ClearsReachabilityStateCallback()
+    {
+        Initialize();
+        RegisterReachability(Callback, UserData);
+
+        AssertResult(0, NpManagerExports.NpManagerGlobalTerminateCompat1270);
+        Assert.False(NpManagerExports.TryGetReachabilityStateCallbackForTests(out _, out _));
+
+        _ctx[CpuRegister.Rdi] = OtherCallback;
+        _ctx[CpuRegister.Rsi] = UserData + 0x100;
+        AssertResult(NpErrorNotInitialized, NpManagerExports.NpRegisterNpReachabilityStateCallback);
+    }
+
+    [Fact]
+    public void DispatchReachabilityState_CopiesPairUnderLockAndInvokesGuestAfterUnlock()
+    {
+        Initialize();
+        RegisterReachability(Callback, UserData);
+        var scheduler = new RecordingScheduler();
+        GuestThreadExecution.Scheduler = scheduler;
+
+        Assert.True(NpManagerExports.TryDispatchNpReachabilityState(_ctx, 11, 0, out var error));
+        Assert.Null(error);
+        Assert.Equal(1, scheduler.CallCount);
+        Assert.Equal(Callback, scheduler.EntryPoint);
+        Assert.Equal(11UL, scheduler.EventType);
+        Assert.Equal(0UL, scheduler.EventValue);
+        Assert.Equal(UserData, scheduler.UserData);
+        Assert.Equal("np_reachability_state_11_0", scheduler.Reason);
+        Assert.False(scheduler.ManagerGateHeldDuringCall);
+    }
+
+    [Fact]
     public void RegisterPremiumEventCallback_ChecksInitializationBeforeNullCallback()
     {
         _ctx[CpuRegister.Rdi] = 0;
@@ -190,6 +268,13 @@ public sealed class NpManagerExportsTests : IDisposable
         _ctx[CpuRegister.Rdi] = callback;
         _ctx[CpuRegister.Rsi] = userData;
         AssertResult(0, NpManagerExports.NpRegisterPremiumEventCallback);
+    }
+
+    private void RegisterReachability(ulong callback, ulong userData)
+    {
+        _ctx[CpuRegister.Rdi] = callback;
+        _ctx[CpuRegister.Rsi] = userData;
+        AssertResult(0, NpManagerExports.NpRegisterNpReachabilityStateCallback);
     }
 
     private void AssertResult(int expected, Func<CpuContext, int> export)

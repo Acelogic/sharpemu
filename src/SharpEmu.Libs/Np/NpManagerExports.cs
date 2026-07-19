@@ -22,6 +22,8 @@ public static class NpManagerExports
     private static ulong _managerAllocatorAddress;
     private static ulong _premiumEventCallback;
     private static ulong _premiumEventCallbackUserData;
+    private static ulong _reachabilityStateCallback;
+    private static ulong _reachabilityStateCallbackUserData;
 
     [SysAbiExport(
         Nid = "fHGhS3uP52k",
@@ -47,6 +49,7 @@ public static class NpManagerExports
                 }
 
                 ClearPremiumEventCallbackUnderLock();
+                ClearReachabilityStateCallbackUnderLock();
             }
         }
 
@@ -97,6 +100,7 @@ public static class NpManagerExports
             allocatorAddress = _managerAllocatorAddress;
             _managerAllocatorAddress = 0;
             ClearPremiumEventCallbackUnderLock();
+            ClearReachabilityStateCallbackUnderLock();
         }
 
         NpCommonExports.ReleaseHleAllocator(allocatorAddress);
@@ -262,6 +266,44 @@ public static class NpManagerExports
         }
 
         TraceNp("unregister_premium_event_callback");
+        return SetReturn(ctx, 0);
+    }
+
+    [SysAbiExport(
+        Nid = "hw5KNqAAels",
+        ExportName = "sceNpRegisterNpReachabilityStateCallback",
+        Target = Generation.Gen5,
+        LibraryName = "libSceNpManager",
+        PreferLle = true)]
+    public static int NpRegisterNpReachabilityStateCallback(CpuContext ctx)
+    {
+        var callback = ctx[CpuRegister.Rdi];
+        var userData = ctx[CpuRegister.Rsi];
+        lock (ManagerGate)
+        {
+            if (_managerAllocatorAddress == 0)
+            {
+                return SetReturn(ctx, NpErrorNotInitialized);
+            }
+
+            if (callback == 0)
+            {
+                return SetReturn(ctx, NpErrorInvalidArgument);
+            }
+
+            if (_reachabilityStateCallback != 0)
+            {
+                return SetReturn(ctx, NpErrorCallbackAlreadyRegistered);
+            }
+
+            _reachabilityStateCallback = callback;
+            _reachabilityStateCallbackUserData = userData;
+        }
+
+        // The provider returns the event backend's current reachability state
+        // after installing its slot. SharpEmu models NP as offline/unavailable,
+        // whose provider value is zero.
+        TraceNp($"register_reachability_state_callback callback=0x{callback:X} userdata=0x{userData:X}");
         return SetReturn(ctx, 0);
     }
 
@@ -611,12 +653,76 @@ public static class NpManagerExports
         return invoked;
     }
 
+    internal static bool TryDispatchNpReachabilityState(
+        CpuContext ctx,
+        ulong userId,
+        ulong state,
+        out string? error)
+    {
+        ulong callback;
+        ulong userData;
+        lock (ManagerGate)
+        {
+            if (_managerAllocatorAddress == 0)
+            {
+                error = "NP manager is not initialized";
+                return false;
+            }
+
+            callback = _reachabilityStateCallback;
+            userData = _reachabilityStateCallbackUserData;
+            if (callback == 0)
+            {
+                error = "NP reachability-state callback is not registered";
+                return false;
+            }
+        }
+
+        // Provider callback 0x16490 copies the pair under its mutex, unlocks,
+        // then calls callback(userId, state, userData).
+        var scheduler = GuestThreadExecution.Scheduler;
+        if (scheduler is null)
+        {
+            error = "guest scheduler is unavailable";
+            return false;
+        }
+
+        var invoked = scheduler.TryCallGuestFunction(
+            ctx,
+            callback,
+            userId,
+            state,
+            userData,
+            0,
+            0,
+            $"np_reachability_state_{userId}_{state}",
+            out _,
+            out error);
+        if (invoked)
+        {
+            TraceNp(
+                $"reachability_state callback=0x{callback:X} user={userId} state={state} userdata=0x{userData:X}");
+        }
+
+        return invoked;
+    }
+
     internal static bool TryGetPremiumEventCallbackForTests(out ulong callback, out ulong userData)
     {
         lock (ManagerGate)
         {
             callback = _premiumEventCallback;
             userData = _premiumEventCallbackUserData;
+            return callback != 0;
+        }
+    }
+
+    internal static bool TryGetReachabilityStateCallbackForTests(out ulong callback, out ulong userData)
+    {
+        lock (ManagerGate)
+        {
+            callback = _reachabilityStateCallback;
+            userData = _reachabilityStateCallbackUserData;
             return callback != 0;
         }
     }
@@ -631,6 +737,7 @@ public static class NpManagerExports
             allocatorAddress = _managerAllocatorAddress;
             _managerAllocatorAddress = 0;
             ClearPremiumEventCallbackUnderLock();
+            ClearReachabilityStateCallbackUnderLock();
         }
 
         NpCommonExports.ReleaseHleAllocator(allocatorAddress);
@@ -641,6 +748,12 @@ public static class NpManagerExports
     {
         _premiumEventCallback = 0;
         _premiumEventCallbackUserData = 0;
+    }
+
+    private static void ClearReachabilityStateCallbackUnderLock()
+    {
+        _reachabilityStateCallback = 0;
+        _reachabilityStateCallbackUserData = 0;
     }
 
     private static int SetReturn(CpuContext ctx, int result)

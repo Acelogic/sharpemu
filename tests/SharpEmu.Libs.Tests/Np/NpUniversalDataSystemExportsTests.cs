@@ -48,6 +48,48 @@ public sealed class NpUniversalDataSystemExportsTests
     }
 
     [Fact]
+    public void Terminate_RegistersExactGen5DispatchIdentity()
+    {
+        var gen5Manager = new ModuleManager();
+        gen5Manager.RegisterExports(
+            SharpEmu.Generated.SysAbiExportRegistry.CreateExports(Generation.Gen5));
+        var gen4Manager = new ModuleManager();
+        gen4Manager.RegisterExports(
+            SharpEmu.Generated.SysAbiExportRegistry.CreateExports(Generation.Gen4));
+
+        Assert.True(gen5Manager.TryGetExport("47UAEuQl+iI", out var export));
+        Assert.Equal("sceNpUniversalDataSystemTerminate", export.Name);
+        Assert.Equal("libSceNpUniversalDataSystem", export.LibraryName);
+        Assert.True(export.PreferLle);
+        Assert.Equal(typeof(NpUniversalDataSystemExports), export.Function.Method.DeclaringType);
+        Assert.False(gen4Manager.TryGetExport("47UAEuQl+iI", out _));
+    }
+
+    [Fact]
+    public void Terminate_RequiresInitializationAndClearsRuntimeState()
+    {
+        const int notInitialized = unchecked((int)0x80553117);
+
+        Assert.Equal(notInitialized, NpUniversalDataSystemExports.NpUniversalDataSystemTerminate(_ctx));
+        Assert.Equal(unchecked((ulong)(long)notInitialized), _ctx[CpuRegister.Rax]);
+
+        Initialize();
+        WriteEmptyArray();
+        _memory.WriteCString(StringAddress, "transient");
+        _ctx[CpuRegister.Rdi] = ArrayAddress;
+        _ctx[CpuRegister.Rsi] = StringAddress;
+        Assert.Equal(0, NpUniversalDataSystemExports.NpUniversalDataSystemEventPropertyArraySetString(_ctx));
+        Assert.True(NpUniversalDataSystemExports.TryGetEventPropertyArrayStringsForTests(ArrayAddress, out _));
+
+        Assert.Equal(0, NpUniversalDataSystemExports.NpUniversalDataSystemTerminate(_ctx));
+        Assert.Equal(0UL, _ctx[CpuRegister.Rax]);
+        Assert.False(NpUniversalDataSystemExports.TryGetEventPropertyArrayStringsForTests(ArrayAddress, out _));
+
+        Assert.Equal(notInitialized, NpUniversalDataSystemExports.NpUniversalDataSystemTerminate(_ctx));
+        Assert.Equal(unchecked((ulong)(long)notInitialized), _ctx[CpuRegister.Rax]);
+    }
+
+    [Fact]
     public void CreateEvent_WritesIdToLibcBackedPointer()
     {
         var eventIdAddress = AllocateTracked(_ctx, sizeof(int));

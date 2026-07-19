@@ -41,13 +41,6 @@ public static class NpManagerLleExports
         Target = Generation.Gen5,
         LibraryName = "libSceNpManager",
         PreferLle = true)]
-    // Ghidra entry 000163a0; body addresses 232.
-    [SysAbiExport(
-        Nid = "hw5KNqAAels",
-        ExportName = "sceNpRegisterNpReachabilityStateCallback",
-        Target = Generation.Gen5,
-        LibraryName = "libSceNpManager",
-        PreferLle = true)]
     public static int MissingGuestProvider(CpuContext ctx)
     {
         if (string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORTS"), "1", StringComparison.Ordinal))

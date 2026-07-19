@@ -13,13 +13,6 @@ namespace SharpEmu.Libs.Lle;
 
 public static class NpUniversalDataSystemLleExports
 {
-    // Ghidra entry 00001d00; body addresses 69.
-    [SysAbiExport(
-        Nid = "47UAEuQl+iI",
-        ExportName = "sceNpUniversalDataSystemTerminate",
-        Target = Generation.Gen5,
-        LibraryName = "libSceNpUniversalDataSystem",
-        PreferLle = true)]
     // Ghidra entry 00002400; body addresses 108.
     [SysAbiExport(
         Nid = "JmgwKm96Lq4",
