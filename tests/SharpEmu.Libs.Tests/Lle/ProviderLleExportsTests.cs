@@ -10,6 +10,13 @@ namespace SharpEmu.Libs.Tests.Lle;
 public sealed class ProviderLleExportsTests
 {
     private const string SemanticHsOffchipNid = "MM4IZSEYytQ";
+    private const string SemanticBatchInitializeNid = "MmpF1XsQiHw";
+    private static readonly HashSet<string> ForcedHleProviderNids =
+        new(StringComparer.Ordinal)
+        {
+            "Ikfdt-rIqCE",
+            "w4-d0n60hdo",
+        };
 
     private static readonly IReadOnlyDictionary<string, (string ExportName, string LibraryName)> Provider23Expected =
         new Dictionary<string, (string ExportName, string LibraryName)>(StringComparer.Ordinal)
@@ -92,10 +99,10 @@ public sealed class ProviderLleExportsTests
         };
 
     [Fact]
-    public void GtaProviderCatalogs_RegisterAll401ExactGen5NidsAsLlePreferred()
+    public void GtaProviderCatalogs_RegisterAll401ExactGen5NidsWithExpectedPreference()
     {
         var exports = SharpEmu.Generated.SysAbiExportRegistry.CreateExports(Generation.Gen5)
-            .Where(IsGeneratedProviderExport)
+            .Where(IsProviderCatalogExport)
             .ToArray();
 
         Assert.Equal(401, exports.Length);
@@ -103,7 +110,7 @@ public sealed class ProviderLleExportsTests
         Assert.All(exports, export =>
         {
             Assert.Equal(Generation.Gen5, export.Target);
-            Assert.True(export.PreferLle);
+            Assert.Equal(!ForcedHleProviderNids.Contains(export.Nid), export.PreferLle);
         });
 
         foreach (var expected in ExpectedCounts)
@@ -145,7 +152,7 @@ public sealed class ProviderLleExportsTests
     public void GtaProviderCatalogs_DoNotProjectRegistrationsToGen4()
     {
         var exports = SharpEmu.Generated.SysAbiExportRegistry.CreateExports(Generation.Gen4)
-            .Where(IsGeneratedProviderExport)
+            .Where(IsProviderCatalogExport)
             .ToArray();
 
         Assert.Empty(exports);
@@ -240,10 +247,11 @@ public sealed class ProviderLleExportsTests
         }
     }
 
-    private static bool IsGeneratedProviderExport(ExportedFunction export) =>
+    private static bool IsProviderCatalogExport(ExportedFunction export) =>
         ExpectedCounts.ContainsKey(export.LibraryName) &&
-        export.PreferLle &&
-        export.Nid != SemanticHsOffchipNid;
+        export.Nid != SemanticHsOffchipNid &&
+        export.Nid != SemanticBatchInitializeNid &&
+        (export.PreferLle || ForcedHleProviderNids.Contains(export.Nid));
 
     private sealed class NullMemory : ICpuMemory
     {

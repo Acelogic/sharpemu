@@ -13,20 +13,6 @@ namespace SharpEmu.Libs.Lle;
 
 public static class AjmNativeLleExports
 {
-    // Ghidra entry 00001a10; body addresses 213.
-    [SysAbiExport(
-        Nid = "39WxhR-ePew",
-        ExportName = "sceAjmBatchJobDecode",
-        Target = Generation.Gen5,
-        LibraryName = "libSceAjm",
-        PreferLle = true)]
-    // Ghidra entry 00000e10; body addresses 445.
-    [SysAbiExport(
-        Nid = "5tOfnaClcqM",
-        ExportName = "sceAjmBatchStart",
-        Target = Generation.Gen5,
-        LibraryName = "libSceAjm",
-        PreferLle = true)]
     public static int MissingGuestProvider(CpuContext ctx)
     {
         if (string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORTS"), "1", StringComparison.Ordinal))

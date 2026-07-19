@@ -1416,6 +1416,9 @@ public sealed partial class DirectExecutionBackend
 		var expectedSemaphoreTrywaitAgain =
 			string.Equals(nid, "H2a+IN9TP0E", StringComparison.Ordinal) &&
 			result == OrbisGen2Result.ORBIS_GEN2_ERROR_TRY_AGAIN;
+		var expectedSemaphorePollBusy =
+			string.Equals(nid, "12wOHk8ywb0", StringComparison.Ordinal) &&
+			result == OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY;
 		var expectedNetAcceptWouldBlock =
 			string.Equals(nid, "PIWqhn9oSxc", StringComparison.Ordinal) &&
 			resultValue == unchecked((int)0x80410123);
@@ -1430,6 +1433,7 @@ public sealed partial class DirectExecutionBackend
 			!expectedEqueueTimeout &&
 			!expectedMutexTrylockBusy &&
 			!expectedSemaphoreTrywaitAgain &&
+			!expectedSemaphorePollBusy &&
 			!expectedNetAcceptWouldBlock &&
 			!expectedUserServiceNoEvent &&
 			!expectedPrivacyInvalidParameter)

@@ -13,13 +13,6 @@ namespace SharpEmu.Libs.Lle;
 
 public static class AjmLleExports
 {
-    // Ghidra entry 00000880; body addresses 183.
-    [SysAbiExport(
-        Nid = "-qLsfDAywIY",
-        ExportName = "sceAjmBatchWait",
-        Target = Generation.Gen5,
-        LibraryName = "libSceAjm",
-        PreferLle = true)]
     public static int MissingGuestProvider(CpuContext ctx)
     {
         if (string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORTS"), "1", StringComparison.Ordinal))
