@@ -62,13 +62,6 @@ public static class Json2LleExports
         Target = Generation.Gen5,
         LibraryName = "libSceJson2",
         PreferLle = true)]
-    // Ghidra entry 00000950; body addresses 1072.
-    [SysAbiExport(
-        Nid = "PR5k1penBLM",
-        ExportName = "_ZN3sce4Json11Initializer9terminateEv",
-        Target = Generation.Gen5,
-        LibraryName = "libSceJson2",
-        PreferLle = true)]
     // Ghidra entry 000038d0; body addresses 143.
     [SysAbiExport(
         Nid = "R7FDWtcN6f8",

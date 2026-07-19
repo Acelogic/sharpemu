@@ -227,14 +227,13 @@ public sealed class ProviderLleExportsTests
             NpTrophy2LleExports.MissingGuestProvider,
             PadLleExports.MissingGuestProvider,
             PlayerSelectionDialogLleExports.MissingGuestProvider,
-            RandomLleExports.MissingGuestProvider,
             RazorCpuLleExports.MissingGuestProvider,
             SysmoduleLleExports.MissingGuestProvider,
             UlObjMgrLleExports.MissingGuestProvider,
             VideoOutLleExports.MissingGuestProvider,
         };
 
-        Assert.Equal(15, fallbacks.Length);
+        Assert.Equal(14, fallbacks.Length);
         foreach (var fallback in fallbacks)
         {
             var context = new CpuContext(new NullMemory(), Generation.Gen5);

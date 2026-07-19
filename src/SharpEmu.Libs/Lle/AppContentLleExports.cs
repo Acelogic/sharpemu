@@ -13,13 +13,6 @@ namespace SharpEmu.Libs.Lle;
 
 public static class AppContentLleExports
 {
-    // Ghidra entry 00001740; body addresses 20.
-    [SysAbiExport(
-        Nid = "Gl6w5i0JokY",
-        ExportName = "sceAppContentDownloadDataGetAvailableSpaceKb",
-        Target = Generation.Gen5,
-        LibraryName = "libSceAppContent",
-        PreferLle = true)]
     public static int MissingGuestProvider(CpuContext ctx)
     {
         if (string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORTS"), "1", StringComparison.Ordinal))

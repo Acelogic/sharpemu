@@ -85,7 +85,8 @@ public static class GtaVKernelContractExports
         Target = Generation.Gen5,
         LibraryName = "libkernel",
         PreferLle = false)]
-    public static int AprResolveFilepathsWithPrefixToIdsAndFileSizes(CpuContext ctx) => Deferred(ctx);
+    public static int AprResolveFilepathsWithPrefixToIdsAndFileSizes(CpuContext ctx) =>
+        KernelMemoryCompatExports.KernelAprResolveFilepathsWithPrefixToIdsAndFileSizes(ctx);
 
     [SysAbiExport(
         Nid = "C+Khtbbx2g8",

@@ -15094,6 +15094,14 @@ internal static unsafe class VulkanVideoPresenter
         private static readonly bool _tracePresentedGuestImagesEnabled =
             _traceGuestImagesEnabled ||
             string.Equals(_traceGuestImagesMode, "present", StringComparison.OrdinalIgnoreCase);
+        // Frame readback can be requested without enabling the extremely
+        // verbose per-work-item guest-image trace. This keeps unattended GTA
+        // captures useful without making every render submission synchronous
+        // with console logging.
+        private static readonly bool _capturePresentedGuestImagesEnabled =
+            _tracePresentedGuestImagesEnabled ||
+            !string.IsNullOrWhiteSpace(
+                Environment.GetEnvironmentVariable("SHARPEMU_GUEST_IMAGE_DUMP_DIR"));
         private static readonly bool _traceVulkanResourcesEnabled =
             string.Equals(
                 Environment.GetEnvironmentVariable("SHARPEMU_LOG_VK_RESOURCES"),
@@ -15352,6 +15360,9 @@ internal static unsafe class VulkanVideoPresenter
 
         private static bool ShouldTracePresentedGuestImageContentsForDiagnostics() =>
             _tracePresentedGuestImagesEnabled;
+
+        private static bool ShouldCapturePresentedGuestImageForDiagnostics() =>
+            _capturePresentedGuestImagesEnabled;
 
         private bool ShouldTraceAddressedPresentedGuestImage(GuestImageResource image)
         {
@@ -15734,7 +15745,7 @@ internal static unsafe class VulkanVideoPresenter
             var presentedCount = Interlocked.Increment(ref _presentedSwapchainCount);
             var periodicDumpInterval = SwapchainDumpInterval();
             var traceDestination =
-                ShouldTracePresentedGuestImageContentsForDiagnostics() &&
+                ShouldCapturePresentedGuestImageForDiagnostics() &&
                 (!_tracedPresentedSwapchain ||
                  periodicDumpInterval > 0 && presentedCount % periodicDumpInterval == 0);
             _tracedPresentedSwapchain |= traceDestination;

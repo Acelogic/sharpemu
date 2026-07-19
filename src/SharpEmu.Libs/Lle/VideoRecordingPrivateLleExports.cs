@@ -20,13 +20,6 @@ public static class VideoRecordingPrivateLleExports
         Target = Generation.Gen5,
         LibraryName = "libSceVideoRecordingP",
         PreferLle = true)]
-    // Ghidra entry 0000b1b0; body addresses 406.
-    [SysAbiExport(
-        Nid = "Fc8qxlKINYQ",
-        ExportName = "sceVideoRecordingSetInfo",
-        Target = Generation.Gen5,
-        LibraryName = "libSceVideoRecordingP",
-        PreferLle = true)]
     // Ghidra entry 0000c090; body addresses 163.
     [SysAbiExport(
         Nid = "KHvkPQJDMLk",

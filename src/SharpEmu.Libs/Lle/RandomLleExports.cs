@@ -4,8 +4,9 @@
 //
 // Ghidra 12.1.2_PUBLIC_20260605 program: libSceRandom.sprx
 // Analyzed provider SHA-256: 4af0ac1f1dc40c45a267a13f623e87080bf11cdedc210c1062e474d59b98b8fd
-// Each registration prefers the loaded guest export. The shared HLE handler
-// is deliberately fail-closed and never claims provider behavior.
+// The semantic fallback for the provider export is implemented by
+// SharpEmu.Libs.Random.RandomExports. Keep this helper unregistered so there
+// is exactly one Gen5 owner for PI7jIZj4pcE.
 
 using SharpEmu.HLE;
 
@@ -13,13 +14,6 @@ namespace SharpEmu.Libs.Lle;
 
 public static class RandomLleExports
 {
-    // Ghidra entry 000000d0; body addresses 434.
-    [SysAbiExport(
-        Nid = "PI7jIZj4pcE",
-        ExportName = "sceRandomGetRandomNumber",
-        Target = Generation.Gen5,
-        LibraryName = "libSceRandom",
-        PreferLle = true)]
     public static int MissingGuestProvider(CpuContext ctx)
     {
         if (string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORTS"), "1", StringComparison.Ordinal))

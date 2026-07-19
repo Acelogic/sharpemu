@@ -41,13 +41,6 @@ public static class WebBrowserDialogLleExports
         Target = Generation.Gen5,
         LibraryName = "libSceWebBrowserDialog",
         PreferLle = true)]
-    // Ghidra entry 00002a90; body addresses 337.
-    [SysAbiExport(
-        Nid = "ocHtyBwHfys",
-        ExportName = "sceWebBrowserDialogTerminate",
-        Target = Generation.Gen5,
-        LibraryName = "libSceWebBrowserDialog",
-        PreferLle = true)]
     // Ghidra entry 000027a0; body addresses 546.
     [SysAbiExport(
         Nid = "vCaW0fgVQmc",

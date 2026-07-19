@@ -27,13 +27,6 @@ public static class SystemServiceLleExports
         Target = Generation.Gen5,
         LibraryName = "libSceSystemService",
         PreferLle = true)]
-    // Ghidra entry 00003ab0; body addresses 37.
-    [SysAbiExport(
-        Nid = "Q3utJvma4Mo",
-        ExportName = "sceSystemServiceSetNoticeScreenSkipFlag",
-        Target = Generation.Gen5,
-        LibraryName = "libSceSystemService",
-        PreferLle = true)]
     // Ghidra entry 00002ec0; body addresses 29.
     [SysAbiExport(
         Nid = "m5CYKX20wfg",

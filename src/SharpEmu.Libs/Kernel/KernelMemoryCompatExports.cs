@@ -71,6 +71,7 @@ public static partial class KernelMemoryCompatExports
     private const int Enomem = 12;
     private const int Eacces = 13;
     private const int Efault = 14;
+    private const int OrbisKernelErrorEfault = unchecked((int)0x8002000E);
     private const int Einval = 22;
     private const int Erange = 34;
     private const int Struncate = 80;
@@ -2926,6 +2927,103 @@ public static partial class KernelMemoryCompatExports
 
             var fileId = AmprFileRegistry.Register(guestPath, hostPath);
             LogIoTrace("apr_resolve", guestPath, $"host='{hostPath}' index={i} count={count} id=0x{fileId:X8} size={fileSize}");
+
+            if (idsAddress != 0 &&
+                !TryWriteUInt32Compat(ctx, idsAddress + (i * sizeof(uint)), fileId))
+            {
+                KernelRuntimeCompatExports.TrySetErrno(ctx, Efault);
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            }
+
+            if (!TryWriteUInt64Compat(ctx, sizesAddress + (i * sizeof(ulong)), fileSize))
+            {
+                KernelRuntimeCompatExports.TrySetErrno(ctx, Efault);
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            }
+        }
+
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    // Gen5 syscall 0x2bd wrapper ABI, recovered from firmware 12.70 libkernel
+    // and GTA V's callsite at 0x80002a378:
+    //   (prefix, paths, uint32 count, uint32 ids[], uint64 sizes[]).
+    // The wrapper zero-extends EDX before syscall 0x2bd. GTA also supplies an
+    // R9 scratch dword that its caller never reads; its kernel-side meaning is
+    // not recoverable from the userland wrapper, so this HLE leaves it alone.
+    // GTA immediately passes each returned id to sceKernelAprGetFileStat; a
+    // fail-closed result leaves 0xffffffff in that slot and stalls AMPR asset
+    // streaming.  Reuse the same registry and per-file miss contract as the
+    // no-prefix sibling above.
+    internal static int KernelAprResolveFilepathsWithPrefixToIdsAndFileSizes(CpuContext ctx)
+    {
+        var prefixAddress = ctx[CpuRegister.Rdi];
+        var pathListAddress = ctx[CpuRegister.Rsi];
+        var count = (uint)ctx[CpuRegister.Rdx];
+        var idsAddress = ctx[CpuRegister.Rcx];
+        var sizesAddress = ctx[CpuRegister.R8];
+        if (prefixAddress == 0 ||
+            pathListAddress == 0 ||
+            sizesAddress == 0)
+        {
+            KernelRuntimeCompatExports.TrySetErrno(ctx, Efault);
+            return OrbisKernelErrorEfault;
+        }
+
+        if (count == 0 || count > 1024)
+        {
+            KernelRuntimeCompatExports.TrySetErrno(ctx, Einval);
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
+        if (!TryReadNullTerminatedUtf8(
+                ctx,
+                prefixAddress,
+                MaxGuestStringLength,
+                out var prefix))
+        {
+            KernelRuntimeCompatExports.TrySetErrno(ctx, Efault);
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        for (ulong i = 0; i < count; i++)
+        {
+            if (idsAddress != 0 &&
+                !TryWriteUInt32Compat(ctx, idsAddress + (i * sizeof(uint)), uint.MaxValue))
+            {
+                KernelRuntimeCompatExports.TrySetErrno(ctx, Efault);
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            }
+
+            if (!TryResolveAprFilepath(ctx, pathListAddress, i, out var relativeGuestPath))
+            {
+                KernelRuntimeCompatExports.TrySetErrno(ctx, Efault);
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            }
+
+            var guestPath = CombineAprPathPrefix(prefix, relativeGuestPath);
+            var hostPath = ResolveGuestPath(guestPath);
+            if (!TryGetAprFileSize(hostPath, out var fileSize))
+            {
+                LogIoTrace(
+                    "apr_resolve_prefix",
+                    guestPath,
+                    $"host='{hostPath}' index={i} count={count} result=not_found");
+                if (!TryWriteUInt64Compat(ctx, sizesAddress + (i * sizeof(ulong)), 0))
+                {
+                    KernelRuntimeCompatExports.TrySetErrno(ctx, Efault);
+                    return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+                }
+
+                continue;
+            }
+
+            var fileId = AmprFileRegistry.Register(guestPath, hostPath);
+            LogIoTrace(
+                "apr_resolve_prefix",
+                guestPath,
+                $"host='{hostPath}' index={i} count={count} id=0x{fileId:X8} size={fileSize}");
 
             if (idsAddress != 0 &&
                 !TryWriteUInt32Compat(ctx, idsAddress + (i * sizeof(uint)), fileId))
@@ -6589,6 +6687,27 @@ public static partial class KernelMemoryCompatExports
         }
 
         return false;
+    }
+
+    private static string CombineAprPathPrefix(string prefix, string path)
+    {
+        if (prefix.Length == 0)
+        {
+            return path;
+        }
+
+        if (path.Length == 0)
+        {
+            return prefix;
+        }
+
+        if (prefix.EndsWith('/') || prefix.EndsWith('\\') ||
+            path.StartsWith('/') || path.StartsWith('\\'))
+        {
+            return prefix + path;
+        }
+
+        return prefix + '/' + path;
     }
 
     private static bool TryReadAprPathPointer(CpuContext ctx, ulong pointerAddress, out string guestPath)

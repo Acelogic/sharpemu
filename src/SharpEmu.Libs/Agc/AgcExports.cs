@@ -108,6 +108,7 @@ public static partial class AgcExports
     private const uint ComputeNumThreadZ = 0x209;
     private const uint SpiPsInputCntl0 = 0x191;
     private const uint VgtPrimitiveType = 0x242;
+    private const uint VgtGsOutPrimType = 0x29B;
     private const uint VgtShaderStagesEn = 0x2D5;
     private const uint GeCntl = 0x25B;
     private const uint GeUserVgpr1 = 0x25C;
@@ -1399,29 +1400,156 @@ public static partial class AgcExports
         var geometryShaderAddress = ctx[CpuRegister.Rcx];
         var primitiveType = (uint)ctx[CpuRegister.R8];
 
-        if (cxRegistersAddress == 0 || ucRegistersAddress == 0 || hullShaderAddress != 0 || geometryShaderAddress == 0)
+        // Firmware 12.70 libSceAgc.sprx SHA-256
+        // 110df81f759ae3dffcc9b5e3fa062c74058518631847641b8e08a54f6b8b6e2d:
+        // D9sr1xGUriE at 0x10c60 accepts an optional hull shader and optional
+        // CX/UC output arrays.  In particular, the hull+geometry path used by
+        // GTA V is a normal merge path rather than an invalid argument.
+        if (cxRegistersAddress == 0 && ucRegistersAddress == 0)
         {
-            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
-        if (!TryReadByte(ctx, geometryShaderAddress + ShaderTypeOffset, out var shaderType) || !IsEsGeometryShaderType(shaderType) ||
-            !TryReadUInt64(ctx, geometryShaderAddress + ShaderSpecialsOffset, out var specialsAddress) ||
-            specialsAddress == 0)
+        if (!TryReadUInt64(
+                ctx,
+                geometryShaderAddress + ShaderSpecialsOffset,
+                out var geometrySpecialsAddress))
         {
-            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+            // The native provider would fault on an inaccessible descriptor.
+            // Convert that guest fault into SharpEmu's recoverable memory error.
+            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
 
-        if (!CopyShaderRegister(ctx, specialsAddress + ShaderSpecialVgtShaderStagesEnOffset, cxRegistersAddress) ||
-            !CopyShaderRegister(ctx, specialsAddress + ShaderSpecialVgtGsOutPrimTypeOffset, cxRegistersAddress + 8) ||
-            !CopyShaderRegister(ctx, specialsAddress + ShaderSpecialGeCntlOffset, ucRegistersAddress) ||
-            !CopyShaderRegister(ctx, specialsAddress + ShaderSpecialGeUserVgprEnOffset, ucRegistersAddress + 8) ||
-            !TryWriteUInt32(ctx, ucRegistersAddress + 16, VgtPrimitiveType) ||
-            !TryWriteUInt32(ctx, ucRegistersAddress + 20, primitiveType))
+        var hullSpecialsAddress = 0UL;
+        if (hullShaderAddress != 0 &&
+            !TryReadUInt64(
+                ctx,
+                hullShaderAddress + ShaderSpecialsOffset,
+                out hullSpecialsAddress))
         {
             return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
 
-        TraceAgc($"agc.create_prim_state cx=0x{cxRegistersAddress:X16} uc=0x{ucRegistersAddress:X16} gs=0x{geometryShaderAddress:X16} type={shaderType} prim=0x{primitiveType:X8}");
+        if (cxRegistersAddress != 0)
+        {
+            if (!TryReadUInt32(
+                    ctx,
+                    geometrySpecialsAddress + ShaderSpecialVgtShaderStagesEnOffset,
+                    out var stagesRegister) ||
+                !TryReadUInt32(
+                    ctx,
+                    geometrySpecialsAddress + ShaderSpecialVgtShaderStagesEnOffset + sizeof(uint),
+                    out var stagesValue) ||
+                !TryReadUInt32(
+                    ctx,
+                    geometrySpecialsAddress + ShaderSpecialVgtGsOutPrimTypeOffset,
+                    out var outputPrimitiveRegister) ||
+                !TryReadUInt32(
+                    ctx,
+                    geometrySpecialsAddress + ShaderSpecialVgtGsOutPrimTypeOffset + sizeof(uint),
+                    out var outputPrimitiveValue))
+            {
+                return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            if ((stagesValue & 0x20) == 0)
+            {
+                // The provider's Vsh register-default table selects
+                // { VGT_GS_OUT_PRIM_TYPE (0x29b), 2 } and replaces its low
+                // three value bits with this API's primitive mapping.
+                outputPrimitiveRegister = VgtGsOutPrimType;
+                outputPrimitiveValue = MapPrimStateOutputPrimitive(primitiveType);
+            }
+
+            if (hullShaderAddress != 0)
+            {
+                if (!TryReadUInt32(
+                        ctx,
+                        hullSpecialsAddress + ShaderSpecialVgtShaderStagesEnOffset + sizeof(uint),
+                        out var hullStagesValue))
+                {
+                    return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+                }
+
+                stagesValue |= hullStagesValue;
+                if ((stagesValue & 0x20) == 0 &&
+                    (!TryReadUInt32(
+                         ctx,
+                         hullSpecialsAddress + ShaderSpecialVgtGsOutPrimTypeOffset,
+                         out outputPrimitiveRegister) ||
+                     !TryReadUInt32(
+                         ctx,
+                         hullSpecialsAddress + ShaderSpecialVgtGsOutPrimTypeOffset + sizeof(uint),
+                         out outputPrimitiveValue)))
+                {
+                    return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+                }
+            }
+
+            Span<byte> cxRegisters = stackalloc byte[0x10];
+            BinaryPrimitives.WriteUInt32LittleEndian(cxRegisters, stagesRegister);
+            BinaryPrimitives.WriteUInt32LittleEndian(cxRegisters[4..], stagesValue);
+            BinaryPrimitives.WriteUInt32LittleEndian(cxRegisters[8..], outputPrimitiveRegister);
+            BinaryPrimitives.WriteUInt32LittleEndian(cxRegisters[12..], outputPrimitiveValue);
+            if (!ctx.Memory.TryWrite(cxRegistersAddress, cxRegisters))
+            {
+                return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+        }
+
+        if (ucRegistersAddress != 0)
+        {
+            if (!TryReadUInt32(
+                    ctx,
+                    geometrySpecialsAddress + ShaderSpecialGeCntlOffset,
+                    out var geControlRegister) ||
+                !TryReadUInt32(
+                    ctx,
+                    geometrySpecialsAddress + ShaderSpecialGeCntlOffset + sizeof(uint),
+                    out var geControlValue) ||
+                !TryReadUInt32(
+                    ctx,
+                    geometrySpecialsAddress + ShaderSpecialGeUserVgprEnOffset,
+                    out var userVgprRegister) ||
+                !TryReadUInt32(
+                    ctx,
+                    geometrySpecialsAddress + ShaderSpecialGeUserVgprEnOffset + sizeof(uint),
+                    out var userVgprValue))
+            {
+                return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            if (hullShaderAddress != 0 &&
+                (!TryReadUInt32(
+                     ctx,
+                     hullSpecialsAddress + ShaderSpecialGeUserVgprEnOffset,
+                     out userVgprRegister) ||
+                 !TryReadUInt32(
+                     ctx,
+                     hullSpecialsAddress + ShaderSpecialGeUserVgprEnOffset + sizeof(uint),
+                     out userVgprValue)))
+            {
+                return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            Span<byte> ucRegisters = stackalloc byte[0x18];
+            BinaryPrimitives.WriteUInt32LittleEndian(ucRegisters, geControlRegister);
+            BinaryPrimitives.WriteUInt32LittleEndian(ucRegisters[4..], geControlValue);
+            BinaryPrimitives.WriteUInt32LittleEndian(ucRegisters[8..], userVgprRegister);
+            BinaryPrimitives.WriteUInt32LittleEndian(ucRegisters[12..], userVgprValue);
+            BinaryPrimitives.WriteUInt32LittleEndian(ucRegisters[16..], VgtPrimitiveType);
+            BinaryPrimitives.WriteUInt32LittleEndian(ucRegisters[20..], primitiveType);
+            if (!ctx.Memory.TryWrite(ucRegistersAddress, ucRegisters))
+            {
+                return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+        }
+
+        TraceAgc(
+            $"agc.create_prim_state cx=0x{cxRegistersAddress:X16} " +
+            $"uc=0x{ucRegistersAddress:X16} hs=0x{hullShaderAddress:X16} " +
+            $"gs=0x{geometryShaderAddress:X16} prim=0x{primitiveType:X8}");
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
@@ -13133,6 +13261,21 @@ public static partial class AgcExports
 
     private static bool IsEsGeometryShaderType(byte shaderType) =>
         shaderType is 2 or 6;
+
+    private static uint MapPrimStateOutputPrimitive(uint primitiveType) =>
+        primitiveType switch
+        {
+            1 => 0,
+            2 or 3 => 1,
+            4 or 5 or 6 => 2,
+            7 => 3,
+            8 or 9 => 2,
+            10 or 11 => 1,
+            12 or 13 or 14 or 15 or 16 => 2,
+            17 => 4,
+            18 => 1,
+            _ => 2,
+        };
 
     private static int SetIndirectPatchAddress(CpuContext ctx, string registerSpace)
     {

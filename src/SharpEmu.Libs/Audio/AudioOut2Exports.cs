@@ -16,6 +16,9 @@ public static class AudioOut2Exports
     // following the 0x40-byte parameter block.
     private const int AudioOut2ContextParamSize = 0x40;
     private const int AudioOut2ErrorInvalidArgument = unchecked((int)0x80268001);
+    private const int SpeakerArrayDescriptorSize = 0x28;
+    private const int SpeakerArrayFooterSize = 0x18;
+    private const uint MaximumSpeakerArrayCount = 0x20;
     private static long _nextContextHandle = 1;
     private static long _nextUserHandle = 1;
     private static int _nextPortId;
@@ -24,6 +27,40 @@ public static class AudioOut2Exports
     // Per-context audio parameters captured at ContextCreate so ContextAdvance
     // can pace to the real playback cadence (grain samples at the sample rate).
     private static readonly ConcurrentDictionary<ulong, ContextState> Contexts = new();
+    private static readonly ConcurrentDictionary<ulong, SpeakerArrayState> SpeakerArrays = new();
+
+    private sealed class SpeakerArrayState
+    {
+        public SpeakerArrayState(
+            ulong workspaceAddress,
+            ulong workspaceSize,
+            uint speakerCount,
+            byte layout,
+            int mode,
+            uint coefficientConfiguration,
+            bool coefficientFeature,
+            byte[] positions)
+        {
+            WorkspaceAddress = workspaceAddress;
+            WorkspaceSize = workspaceSize;
+            SpeakerCount = speakerCount;
+            Layout = layout;
+            Mode = mode;
+            CoefficientConfiguration = coefficientConfiguration;
+            CoefficientFeature = coefficientFeature;
+            Positions = positions;
+        }
+
+        public ulong WorkspaceAddress { get; }
+        public ulong WorkspaceSize { get; }
+        public uint SpeakerCount { get; }
+        public byte Layout { get; }
+        public int Mode { get; }
+        public uint CoefficientConfiguration { get; }
+        public bool CoefficientFeature { get; }
+        public byte[] Positions { get; }
+        public bool HasCoefficients => CoefficientConfiguration < 2;
+    }
 
     private sealed class ContextState
     {
@@ -101,6 +138,179 @@ public static class AudioOut2Exports
             $"coefficients={includeCoefficients} size=0x{size:X}");
         ctx[CpuRegister.Rax] = size;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    // Firmware 12.70 libSceAudioOut.sprx SHA-256
+    // 948dfdc30b9c974c5447d9078853beb1555a2e548de6093b05a114e99445ab33:
+    // +k91hoTuoA8 at 0x4ec60 delegates to FUN_0004efd0. The public ABI is
+    // (outHandle, descriptor, auxiliary); the wrapper replaces RCX with a
+    // provider-private feature byte, so callers such as GTA may leave RCX stale.
+    [SysAbiExport(
+        Nid = "+k91hoTuoA8",
+        ExportName = "sceAudioOut2SpeakerArrayCreate",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAudioOut2",
+        PreferLle = true)]
+    public static int AudioOut2SpeakerArrayCreate(CpuContext ctx)
+    {
+        var outHandleAddress = ctx[CpuRegister.Rdi];
+        var descriptorAddress = ctx[CpuRegister.Rsi];
+        var auxiliaryAddress = ctx[CpuRegister.Rdx];
+        if (outHandleAddress == 0 || descriptorAddress == 0)
+        {
+            return SetReturn(ctx, AudioOut2ErrorInvalidArgument);
+        }
+
+        Span<byte> descriptor = stackalloc byte[SpeakerArrayDescriptorSize];
+        if (!ctx.Memory.TryRead(descriptorAddress, descriptor))
+        {
+            return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        var positionsAddress = BinaryPrimitives.ReadUInt64LittleEndian(descriptor[0x00..]);
+        var speakerCount = BinaryPrimitives.ReadUInt32LittleEndian(descriptor[0x08..]);
+        var layout = descriptor[0x0C];
+        var workspaceAddress = BinaryPrimitives.ReadUInt64LittleEndian(descriptor[0x10..]);
+        var workspaceSize = BinaryPrimitives.ReadUInt64LittleEndian(descriptor[0x18..]);
+        var mode = BinaryPrimitives.ReadInt32LittleEndian(descriptor[0x20..]);
+        var modeParameter = BitConverter.Int32BitsToSingle(
+            BinaryPrimitives.ReadInt32LittleEndian(descriptor[0x24..]));
+
+        if (positionsAddress == 0 ||
+            workspaceAddress == 0 ||
+            workspaceSize == 0 ||
+            speakerCount > MaximumSpeakerArrayCount ||
+            (mode == 1 && (!float.IsFinite(modeParameter) || modeParameter < 0.0f)))
+        {
+            return SetReturn(ctx, AudioOut2ErrorInvalidArgument);
+        }
+
+        var coefficientConfiguration = uint.MaxValue;
+        var coefficientFeature = false;
+        if (auxiliaryAddress != 0)
+        {
+            Span<byte> auxiliaryConfiguration = stackalloc byte[sizeof(uint)];
+            if (!ctx.Memory.TryRead(auxiliaryAddress, auxiliaryConfiguration))
+            {
+                return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            coefficientConfiguration = BinaryPrimitives.ReadUInt32LittleEndian(auxiliaryConfiguration);
+            if (coefficientConfiguration < 2)
+            {
+                // Firmware 12.70's SDK gate is active, so coefficient creation
+                // also consumes the feature byte at auxiliary +4.
+                Span<byte> feature = stackalloc byte[1];
+                if (auxiliaryAddress > ulong.MaxValue - sizeof(uint) ||
+                    !ctx.Memory.TryRead(auxiliaryAddress + sizeof(uint), feature))
+                {
+                    return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+                }
+
+                coefficientFeature = feature[0] != 0;
+            }
+        }
+
+        var includeCoefficients = coefficientConfiguration < 2;
+        var requiredSize = GetSpeakerArrayMemorySize(speakerCount, layout != 0, includeCoefficients);
+        if (workspaceSize < requiredSize ||
+            workspaceSize < SpeakerArrayFooterSize ||
+            workspaceAddress > ulong.MaxValue - (workspaceSize - SpeakerArrayFooterSize))
+        {
+            return SetReturn(ctx, AudioOut2ErrorInvalidArgument);
+        }
+
+        var positionsSize = checked((int)(speakerCount * 3U * sizeof(float)));
+        var positions = new byte[positionsSize];
+        if (positions.Length != 0 && !ctx.Memory.TryRead(positionsAddress, positions))
+        {
+            return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        var handle = workspaceAddress + workspaceSize - SpeakerArrayFooterSize;
+        Span<byte> footer = stackalloc byte[SpeakerArrayFooterSize];
+        footer.Clear();
+        // The provider stores opaque primary/secondary implementation pointers
+        // in the first two qwords. HLE owns equivalent host state instead, so it
+        // leaves those pointers null while preserving the proven mode/layout ABI.
+        BinaryPrimitives.WriteInt32LittleEndian(footer[0x10..], mode);
+        footer[0x14] = layout;
+
+        if (!ctx.Memory.TryWrite(handle, footer) || !TryWriteUInt64(ctx, outHandleAddress, handle))
+        {
+            return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        SpeakerArrays[handle] = new SpeakerArrayState(
+            workspaceAddress,
+            workspaceSize,
+            speakerCount,
+            layout,
+            mode,
+            coefficientConfiguration,
+            coefficientFeature,
+            positions);
+        TraceAudioOut2(
+            $"speaker-array-create handle=0x{handle:X} speakers={speakerCount} layout={layout} " +
+            $"mode={mode} coefficients={includeCoefficients} workspace=0x{workspaceAddress:X}+0x{workspaceSize:X}");
+        return SetReturn(ctx, 0);
+    }
+
+    // Firmware wrapper 28QqMnuuJ9Y at 0x4ee10 delegates to FUN_0004f540.
+    // GTA's mode-zero speaker array requests all 36 fifth-order rows as indices
+    // 64..99, with two floats per row. Exact decoder synthesis remains provider
+    // work; zero-initializing every requested row is a deterministic progression
+    // fallback and avoids exposing stale guest stack data as audio coefficients.
+    [SysAbiExport(
+        Nid = "28QqMnuuJ9Y",
+        ExportName = "sceAudioOut2GetSpeakerArrayAmbisonicsCoefficients",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAudioOut2",
+        PreferLle = true)]
+    public static int AudioOut2GetSpeakerArrayAmbisonicsCoefficients(CpuContext ctx)
+    {
+        var handle = ctx[CpuRegister.Rdi];
+        var coefficientIndex = unchecked((uint)ctx[CpuRegister.Rsi]);
+        var outputAddress = ctx[CpuRegister.Rdx];
+        var speakerCount = unchecked((uint)ctx[CpuRegister.Rcx]);
+        if (handle == 0 ||
+            outputAddress == 0 ||
+            !SpeakerArrays.TryGetValue(handle, out var state) ||
+            !state.HasCoefficients ||
+            state.SpeakerCount != speakerCount ||
+            !IsValidAmbisonicsCoefficientIndex(state.Mode, coefficientIndex))
+        {
+            return SetReturn(ctx, AudioOut2ErrorInvalidArgument);
+        }
+
+        Span<byte> coefficients = stackalloc byte[checked((int)speakerCount * sizeof(float))];
+        coefficients.Clear();
+        if (!ctx.Memory.TryWrite(outputAddress, coefficients))
+        {
+            return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        return SetReturn(ctx, 0);
+    }
+
+    // Firmware wrapper erCWQR5eKiQ at 0x4ecf0 delegates to FUN_0004f3b0,
+    // which rejects null and tears down both the primary and optional decoder.
+    [SysAbiExport(
+        Nid = "erCWQR5eKiQ",
+        ExportName = "sceAudioOut2SpeakerArrayDestroy",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAudioOut2",
+        PreferLle = true)]
+    public static int AudioOut2SpeakerArrayDestroy(CpuContext ctx)
+    {
+        var handle = ctx[CpuRegister.Rdi];
+        if (handle == 0 || !SpeakerArrays.TryRemove(handle, out _))
+        {
+            return SetReturn(ctx, AudioOut2ErrorInvalidArgument);
+        }
+
+        TraceAudioOut2($"speaker-array-destroy handle=0x{handle:X}");
+        return SetReturn(ctx, 0);
     }
 
     [SysAbiExport(
@@ -543,6 +753,18 @@ public static class AudioOut2Exports
         return ((ulong)stride * alignedSpeakers +
                 ((ulong)alignedStride + alignedSpeakers) * coefficientCount) * 4UL;
     }
+
+    private static bool IsValidAmbisonicsCoefficientIndex(int mode, uint coefficientIndex) =>
+        mode switch
+        {
+            0 => coefficientIndex is >= 0x40 and <= 0x63,
+            1 => coefficientIndex < 0x10,
+            _ => coefficientIndex < 0x10 || coefficientIndex is >= 0x40 and <= 0x63,
+        };
+
+    internal static void ResetSpeakerArraysForTests() => SpeakerArrays.Clear();
+
+    internal static int SpeakerArrayCountForTests => SpeakerArrays.Count;
 
     // Firmware 12.70 FUN_0000dc90 at 0xdc90.
     private static ulong GetAudioOut2DescriptorSize(uint count) =>
