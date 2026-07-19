@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Buffers.Binary;
 using System.Text;
 using SharpEmu.HLE;
+using SharpEmu.Libs.Bink;
 using SharpEmu.Libs.Kernel;
 using Xunit;
 
@@ -29,16 +30,77 @@ public sealed class KernelFileCompatExportsTests : IDisposable
         _ctx = new CpuContext(_memory, Generation.Gen5);
         _root = Path.Combine(Path.GetTempPath(), $"sharpemu-kernel-file-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_root);
+        Bink2MovieBridge.ResetForTests();
         KernelMemoryCompatExports.ClearGuestPathMounts();
         KernelMemoryCompatExports.RegisterGuestPathMount("/savedata0", _root);
     }
 
     public void Dispose()
     {
+        Bink2MovieBridge.ResetForTests();
         KernelMemoryCompatExports.ClearGuestPathMounts();
         if (Directory.Exists(_root))
         {
             Directory.Delete(_root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void KernelPread_ObservesValidatedEmbeddedBinkRangeWithoutChangingIo()
+    {
+        const int movieOffset = 64;
+        const int movieLength = 256;
+        const ulong bufferAddress = Base + 0x1000;
+        var previousMode = Environment.GetEnvironmentVariable("SHARPEMU_BINK_MODE");
+        var archivePath = Path.Combine(_root, "prosperoa.rpf");
+        var archive = new byte[512];
+        CreateBinkHeader(movieLength).CopyTo(archive, movieOffset);
+        File.WriteAllBytes(archivePath, archive);
+        Assert.True(_memory.TryWrite(PathAddress, "/savedata0/prosperoa.rpf\0"u8));
+        var fd = -1;
+
+        try
+        {
+            Environment.SetEnvironmentVariable("SHARPEMU_BINK_MODE", "skip");
+            _ctx[CpuRegister.Rdi] = PathAddress;
+            _ctx[CpuRegister.Rsi] = 0;
+            Assert.Equal(0, KernelMemoryCompatExports.KernelOpenUnderscore(_ctx));
+            fd = unchecked((int)_ctx[CpuRegister.Rax]);
+
+            _ctx[CpuRegister.Rdi] = unchecked((ulong)fd);
+            _ctx[CpuRegister.Rsi] = bufferAddress;
+            _ctx[CpuRegister.Rdx] = movieLength;
+            _ctx[CpuRegister.Rcx] = movieOffset;
+            _ctx.Rip = 0x80283A98C;
+            Assert.Equal(0, KernelMemoryCompatExports.KernelPread(_ctx));
+            Assert.Equal((ulong)movieLength, _ctx[CpuRegister.Rax]);
+
+            var guestBytes = new byte[movieLength];
+            Assert.True(_memory.TryRead(bufferAddress, guestBytes));
+            Assert.Equal(archive.AsSpan(movieOffset, movieLength).ToArray(), guestBytes);
+
+            var observed = Bink2MovieBridge.LastObservedMovieRange;
+            Assert.True(observed.HasValue);
+            Assert.Equal(BinkMovieMode.Skip, observed.Value.Mode);
+            Assert.Equal(BinkMovieRangeAttachment.None, observed.Value.Attachment);
+            Assert.Equal(fd, observed.Value.FileDescriptor);
+            Assert.Equal(movieOffset, observed.Value.FileOffset);
+            Assert.Equal(movieLength, observed.Value.Header.ByteLength);
+            Assert.Equal(bufferAddress, observed.Value.GuestDestination);
+            Assert.Equal(0x80283A98CUL, observed.Value.GuestRip);
+
+            Assert.Equal(archive, File.ReadAllBytes(archivePath));
+            Assert.Equal([archivePath], Directory.GetFiles(_root));
+        }
+        finally
+        {
+            if (fd > 2)
+            {
+                Close(fd);
+            }
+
+            Environment.SetEnvironmentVariable("SHARPEMU_BINK_MODE", previousMode);
+            Bink2MovieBridge.ResetForTests();
         }
     }
 
@@ -214,6 +276,20 @@ public sealed class KernelFileCompatExportsTests : IDisposable
         Assert.Equal(0, KernelMemoryCompatExports.Malloc(_ctx));
         Assert.NotEqual(0UL, _ctx[CpuRegister.Rax]);
         return _ctx[CpuRegister.Rax];
+    }
+
+    private static byte[] CreateBinkHeader(int byteLength)
+    {
+        var header = new byte[0x24];
+        "KB2j"u8.CopyTo(header);
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(0x04, 4), checked((uint)byteLength - 8));
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(0x08, 4), 3);
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(0x0C, 4), 64);
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(0x14, 4), 16);
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(0x18, 4), 16);
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(0x1C, 4), 30);
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(0x20, 4), 1);
+        return header;
     }
 
     private void FreeTracked(ulong address)

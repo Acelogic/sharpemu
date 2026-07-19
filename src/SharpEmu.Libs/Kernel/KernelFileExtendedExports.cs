@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using SharpEmu.HLE;
+using SharpEmu.Libs.Bink;
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Threading;
@@ -104,6 +105,31 @@ public static partial class KernelMemoryCompatExports
                 $"fd={fd} offset={offset} req={requested} read={read} " +
                 $"guest=0x{bufferAddress:X16} result=memory_fault");
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        if (read > 0)
+        {
+            try
+            {
+                // Detection is observational: pread still returns the exact host
+                // bytes/count. A validated result exposes Skip/Dummy/Native policy
+                // for a later caller-contract A/B without changing this syscall.
+                _ = Bink2MovieBridge.ObserveGuestMovieRange(
+                    stream.Name,
+                    stream.Length,
+                    fd,
+                    offset,
+                    requested,
+                    read,
+                    bufferAddress,
+                    ctx.Rip,
+                    buffer.AsSpan(0, read));
+            }
+            catch (Exception ex) when (ex is IOException or NotSupportedException or ObjectDisposedException)
+            {
+                // The file read and guest write already succeeded. Diagnostics
+                // must never change positional-I/O behavior.
+            }
         }
 
         ctx[CpuRegister.Rax] = unchecked((ulong)read);
