@@ -30,12 +30,8 @@ public static class GtaVKernelContractExports
         PreferLle = false)]
     public static int IsSignalReturn(CpuContext ctx) => Deferred(ctx);
 
-    [SysAbiExport(
-        Nid = "NhpspxdjEKU",
-        ExportName = "_nanosleep",
-        Target = Generation.Gen5,
-        LibraryName = "libkernel",
-        PreferLle = false)]
+    // Compatibility entry point retained for branch-local callers. The NID is
+    // registered by KernelRuntimeCompatExports after the upstream merge.
     public static int Nanosleep(CpuContext ctx) => KernelRuntimeCompatExports.PosixNanosleep(ctx);
 
     [SysAbiExport(
@@ -227,20 +223,12 @@ public static class GtaVKernelContractExports
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
-    [SysAbiExport(
-        Nid = "6O8EwYOgH9Y",
-        ExportName = "getsockopt",
-        Target = Generation.Gen5,
-        LibraryName = "libScePosix",
-        PreferLle = false)]
+    // Compatibility entry point retained for branch-local callers. The NID is
+    // registered by Network.NetExports after the upstream merge.
     public static int Getsockopt(CpuContext ctx) => Deferred(ctx);
 
-    [SysAbiExport(
-        Nid = "5jRCs2axtr4",
-        ExportName = "inet_ntop",
-        Target = Generation.Gen5,
-        LibraryName = "libScePosix",
-        PreferLle = false)]
+    // Compatibility entry point retained for branch-local callers. The NID is
+    // registered by Network.NetExports after the upstream merge.
     public static int InetNtop(CpuContext ctx)
     {
         var addressFamily = unchecked((int)ctx[CpuRegister.Rdi]);
@@ -344,12 +332,8 @@ public static class GtaVKernelContractExports
         PreferLle = false)]
     public static int Recvfrom(CpuContext ctx) => Deferred(ctx);
 
-    [SysAbiExport(
-        Nid = "fZOeZIOEmLw",
-        ExportName = "send",
-        Target = Generation.Gen5,
-        LibraryName = "libScePosix",
-        PreferLle = false)]
+    // Compatibility entry point retained for branch-local callers. The NID is
+    // registered by Network.NetExports after the upstream merge.
     public static int Send(CpuContext ctx)
     {
         var fd = unchecked((int)ctx[CpuRegister.Rdi]);
@@ -400,12 +384,8 @@ public static class GtaVKernelContractExports
         PreferLle = false)]
     public static int Sendto(CpuContext ctx) => Deferred(ctx);
 
-    [SysAbiExport(
-        Nid = "fFxGkxF2bVo",
-        ExportName = "setsockopt",
-        Target = Generation.Gen5,
-        LibraryName = "libScePosix",
-        PreferLle = false)]
+    // Compatibility entry point retained for branch-local callers. The NID is
+    // registered by Network.NetExports after the upstream merge.
     public static int Setsockopt(CpuContext ctx) => Deferred(ctx);
 
     [SysAbiExport(

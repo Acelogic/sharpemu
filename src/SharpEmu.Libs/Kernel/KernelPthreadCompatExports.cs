@@ -130,6 +130,13 @@ public static class KernelPthreadCompatExports
     }
 
     [SysAbiExport(
+        Nid = "B5GmVDKwpn0",
+        ExportName = "pthread_yield",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadYield(CpuContext ctx) => PthreadYield(ctx);
+
+    [SysAbiExport(
         Nid = "9vyP6Z7bqzc",
         ExportName = "pthread_rename_np",
         Target = Generation.Gen4 | Generation.Gen5,
@@ -646,6 +653,13 @@ public static class KernelPthreadCompatExports
         return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_OK);
     }
 
+    [SysAbiExport(
+        Nid = "Z4QosVuAsA0",
+        ExportName = "pthread_once",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PthreadOncePOSIX(CpuContext ctx) => PthreadOnce(ctx);
+
     private static int PthreadMutexInitCore(CpuContext ctx, ulong mutexAddress, ulong attrAddress)
     {
         var currentThreadId = KernelPthreadState.GetCurrentThreadHandle();
@@ -756,6 +770,13 @@ public static class KernelPthreadCompatExports
                     return (int)OrbisGen2Result.ORBIS_GEN2_OK;
                 }
 
+                if (!tryOnly && state.Type == MutexTypeAdaptiveNp &&
+                    IsGuestTrackedSelfLock(ctx, mutexAddress, currentThreadId))
+                {
+                    TracePthreadMutex(ctx, "lock", mutexAddress, resolvedAddress, state, currentThreadId, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_DEADLOCK);
+                    return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_DEADLOCK;
+                }
+
                 if (state.Type is MutexTypeNormal or MutexTypeAdaptiveNp)
                 {
                     if (tryOnly)
@@ -788,7 +809,7 @@ public static class KernelPthreadCompatExports
             // uncontended mutex. Reserving it for the queue head prevents the
             // releasing thread (or a newcomer) from repeatedly barging ahead
             // before a pulsed waiter can reacquire the host monitor.
-            if (state.OwnerThreadId == 0 && state.WaiterCount == 0)
+            if (state.OwnerThreadId == 0 && (tryOnly || state.WaiterCount == 0))
             {
                 state.OwnerThreadId = currentThreadId;
                 state.RecursionCount = 1;
@@ -1533,6 +1554,10 @@ public static class KernelPthreadCompatExports
             return gate;
         }
     }
+
+    private static bool IsGuestTrackedSelfLock(CpuContext ctx, ulong mutexAddress, ulong currentThreadId) =>
+        KernelMemoryCompatExports.TryReadUInt64Compat(ctx, mutexAddress + 8, out var guestOwner) &&
+        guestOwner == currentThreadId;
 
     private static int SetReturn(CpuContext ctx, OrbisGen2Result result)
     {

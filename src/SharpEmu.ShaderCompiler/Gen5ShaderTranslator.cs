@@ -85,6 +85,7 @@ public static class Gen5ShaderTranslator
     private const uint MaximumHeaderlessShaderBytes = 64 * 1024;
     private const ulong ShaderSizeOffset = 0x44;
     private const uint MaximumShaderSizeBytes = 1024 * 1024;
+    private const int MaxInstructions = 16384;
     private const uint PsUserDataRegister = 0x0C;
     private const uint VsUserDataRegister = 0x4C;
     private const uint GsUserDataRegister = 0x8C;
@@ -1311,8 +1312,10 @@ public static class Gen5ShaderTranslator
 
         // Opcode numbers taken from LLVM's AMDGPU VOP3PInstructions.td and the
         // gfx9/gfx10 MC test encodings; they are unchanged across gfx9 and gfx10.
-        // Unhandled packed opcodes (integer, fma_mix, ...) stay opaque here and
-        // fail loudly at emission rather than being silently mis-emitted.
+        // The mix ops (0x20/0x21/0x22) are V_MAD_MIX_* on gfx9 and V_FMA_MIX_*
+        // (fused) on the gfx10 the PS5 targets; both share these opcodes. Any
+        // remaining packed opcode (integer, ...) stays opaque here and fails
+        // loudly at emission rather than being silently mis-emitted.
         name = opcode switch
         {
             0x0E => "VPkFmaF16",
@@ -1320,6 +1323,9 @@ public static class Gen5ShaderTranslator
             0x10 => "VPkMulF16",
             0x11 => "VPkMinF16",
             0x12 => "VPkMaxF16",
+            0x20 => "VFmaMixF32",
+            0x21 => "VFmaMixloF16",
+            0x22 => "VFmaMixhiF16",
             _ => $"Vop3pRaw{opcode:X2}",
         };
 
@@ -1739,6 +1745,11 @@ public static class Gen5ShaderTranslator
             IsStorageImageOperation(candidate.Opcode) &&
             binding.ResourceDescriptor.SequenceEqual(candidate.ResourceDescriptor));
     }
+
+    public static bool IsArrayedImageBinding(Gen5ImageBinding binding) =>
+        binding.Control.IsArray &&
+        (binding.Opcode.StartsWith("ImageSample", StringComparison.Ordinal) ||
+         binding.Opcode.StartsWith("ImageGather4", StringComparison.Ordinal));
 
     public static bool IsDataShareAtomic(string name) => name switch
     {

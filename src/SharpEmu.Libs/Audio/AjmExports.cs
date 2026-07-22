@@ -23,7 +23,7 @@ public static class AjmExports
     private const int AjmDecodeDescriptorSize = 0x40;
     private const uint MaxCompatDecodeOutputSize = 16 * 1024 * 1024;
     private const uint MaxCompatDecodeSidebandSize = 64 * 1024;
-    private const uint MaxCodecType = 23;
+    private const uint MaxCodecType = 25;
     private const int MaxInstanceIndex = 0x2FFF;
     private static readonly ConcurrentDictionary<uint, AjmContextState> Contexts = new();
     private static int _nextContextId;

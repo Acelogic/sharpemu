@@ -986,6 +986,15 @@ public static partial class Gen5SpirvTranslator
                     }
 
                     break;
+                case "VFmaMixF32":
+                case "VFmaMixloF16":
+                case "VFmaMixhiF16":
+                    if (!TryEmitFmaMix(instruction, destination, out result, out error))
+                    {
+                        return false;
+                    }
+
+                    break;
                 default:
                     error = $"unsupported vector opcode {instruction.Opcode}";
                     return false;
@@ -1041,12 +1050,6 @@ public static partial class Gen5SpirvTranslator
                 return false;
             }
 
-            if (control.Clamp)
-            {
-                error = $"unsupported vop3p modifiers (clamp) for {instruction.Opcode}";
-                return false;
-            }
-
             var sourceCount = instruction.Opcode == "VPkFmaF16" ? 3 : 2;
             for (var index = 0; index < sourceCount; index++)
             {
@@ -1065,7 +1068,112 @@ public static partial class Gen5SpirvTranslator
             return true;
         }
 
+        // V_FMA_MIX_F32 / _MIXLO_F16 / _MIXHI_F16 (VOP3P opcodes 0x20 / 0x21 /
+        // 0x22). Unlike the packed v_pk_* ops these compute a single f32
+        // fma(a, b, c): each of the three sources is *independently* read as
+        // either a full f32 register/constant or one f16 half widened to f32,
+        // selected per operand by op_sel_hi (read as f16 when set) and op_sel
+        // (which half feeds the f32). For the mix ops the VOP3P neg_hi field is
+        // the absolute-value modifier and neg negates, applied abs-then-neg to
+        // match the hardware and shadPS4's GetSrcMix. _MIXLO / _MIXHI round the
+        // f32 result back to f16 and write it into the low / high 16 bits of
+        // vdst, leaving the other half intact.
+        private bool TryEmitFmaMix(
+            Gen5ShaderInstruction instruction,
+            uint destination,
+            out uint result,
+            out string error)
+        {
+            result = 0;
+            error = string.Empty;
+            if (instruction.Control is not Gen5Vop3pControl control)
+            {
+                error = $"missing vop3p control for {instruction.Opcode}";
+                return false;
+            }
+
+            var product = Bitcast(
+                _uintType,
+                Ext(
+                    50,
+                    _floatType,
+                    EmitFmaMixOperand(instruction, control, 0),
+                    EmitFmaMixOperand(instruction, control, 1),
+                    EmitFmaMixOperand(instruction, control, 2)));
+            if (control.Clamp)
+            {
+                product = EmitClampToUnitInterval(product);
+            }
+
+            if (instruction.Opcode == "VFmaMixF32")
+            {
+                result = product;
+                return true;
+            }
+
+            // _MIXLO / _MIXHI: narrow to f16 and merge into one half of vdst.
+            var half = EmitFloatToHalf(product);
+            var existing = LoadV(destination);
+            result = instruction.Opcode == "VFmaMixloF16"
+                ? BitwiseOr(BitwiseAnd(existing, UInt(0xFFFF_0000)), half)
+                : BitwiseOr(
+                    BitwiseAnd(existing, UInt(0x0000_FFFF)),
+                    ShiftLeftLogical(half, UInt(16)));
+            return true;
+        }
+
+        // Reads one V_FMA_MIX source as an f32. op_sel_hi selects whether a
+        // register operand is taken as an f16 (the half picked by op_sel, widened
+        // exactly to f32) or as a full f32; inline constants are always f32. The
+        // per-operand neg_hi bit takes the absolute value and neg negates, in that
+        // order (abs-then-neg), reusing the VOP3P modifier fields the way the mix
+        // ops define them rather than the packed low/high-lane meaning.
+        private uint EmitFmaMixOperand(
+            Gen5ShaderInstruction instruction,
+            Gen5Vop3pControl control,
+            int index)
+        {
+            var source = instruction.Sources[index];
+            var readAsHalf =
+                ((control.OpSelHiMask >> index) & 1) != 0 &&
+                source.Kind is Gen5OperandKind.VectorRegister or Gen5OperandKind.ScalarRegister;
+
+            uint value;
+            if (readAsHalf)
+            {
+                var raw = GetRawSource(instruction, index);
+                var half = ((control.OpSelMask >> index) & 1) != 0
+                    ? ShiftRightLogical(raw, UInt(16))
+                    : raw;
+                value = Bitcast(_floatType, EmitHalfToFloat(half));
+            }
+            else
+            {
+                value = GetFloatSource(instruction, index);
+            }
+
+            if (((control.NegHiMask >> index) & 1) != 0)
+            {
+                value = Ext(4, _floatType, value);
+            }
+
+            if (((control.NegLoMask >> index) & 1) != 0)
+            {
+                value = _module.AddInstruction(SpirvOp.FNegate, _floatType, value);
+            }
+
+            return value;
+        }
+
         // Computes one result lane (low or high) as a packed 16-bit f16 value.
+        // The op runs in f32 and its result is narrowed back to f16 exactly (see
+        // EmitFloatToHalf). When the clamp modifier is set the pre-narrowing f32
+        // value is saturated to [0, 1] first; because 0.0 and 1.0 are exact in both
+        // f32 and f16 and the clamp is monotonic, clamping before the narrowing
+        // gives the same f16 the hardware produces by clamping the f16 result. For
+        // the fused multiply-add the pre-narrowing value is the round-to-odd f32
+        // from EmitPackedF16FusedMultiplyAdd, and round-to-odd preserves that
+        // equivalence through the final round-to-nearest-even.
         private uint EmitPackedF16Lane(
             Gen5ShaderInstruction instruction,
             Gen5Vop3pControl control,
@@ -1073,21 +1181,44 @@ public static partial class Gen5SpirvTranslator
         {
             var left = EmitPackedF16Operand(instruction, control, 0, highLane);
             var right = EmitPackedF16Operand(instruction, control, 1, highLane);
+            uint value;
             if (instruction.Opcode == "VPkFmaF16")
             {
                 var addend = EmitPackedF16Operand(instruction, control, 2, highLane);
-                return EmitFloatToHalf(EmitPackedF16FusedMultiplyAdd(left, right, addend));
+                value = EmitPackedF16FusedMultiplyAdd(left, right, addend);
+            }
+            else
+            {
+                value = Bitcast(_uintType, instruction.Opcode switch
+                {
+                    "VPkAddF16" => _module.AddInstruction(SpirvOp.FAdd, _floatType, left, right),
+                    "VPkMulF16" => _module.AddInstruction(SpirvOp.FMul, _floatType, left, right),
+                    "VPkMinF16" => EmitPackedF16MinMax(left, right, isMax: false),
+                    "VPkMaxF16" => EmitPackedF16MinMax(left, right, isMax: true),
+                    _ => left,
+                });
             }
 
-            var value = instruction.Opcode switch
+            if (control.Clamp)
             {
-                "VPkAddF16" => _module.AddInstruction(SpirvOp.FAdd, _floatType, left, right),
-                "VPkMulF16" => _module.AddInstruction(SpirvOp.FMul, _floatType, left, right),
-                "VPkMinF16" => EmitPackedF16MinMax(left, right, isMax: false),
-                "VPkMaxF16" => EmitPackedF16MinMax(left, right, isMax: true),
-                _ => left,
-            };
-            return EmitFloatToHalf(Bitcast(_uintType, value));
+                value = EmitClampToUnitInterval(value);
+            }
+
+            return EmitFloatToHalf(value);
+        }
+
+        // Saturates an f32 bit pattern to [0, 1] the way the VOP3P clamp modifier
+        // does: below 0 (and NaN, since the ordered compare is false for it) becomes
+        // 0, above 1 becomes 1. Ordered compares match the hardware's NaN-to-zero
+        // behaviour without a separate IsNan test.
+        private uint EmitClampToUnitInterval(uint valueBits)
+        {
+            var value = Bitcast(_floatType, valueBits);
+            var aboveZero = _module.AddInstruction(SpirvOp.FOrdGreaterThan, _boolType, value, Float(0));
+            var lowerBounded = _module.AddInstruction(SpirvOp.Select, _floatType, aboveZero, value, Float(0));
+            var belowOne = _module.AddInstruction(SpirvOp.FOrdLessThan, _boolType, lowerBounded, Float(1));
+            var clamped = _module.AddInstruction(SpirvOp.Select, _floatType, belowOne, lowerBounded, Float(1));
+            return Bitcast(_uintType, clamped);
         }
 
         // Fused f16 multiply-add with a single rounding, emulated in f32 without the

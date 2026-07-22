@@ -12,9 +12,12 @@ namespace SharpEmu.Libs.Tests.Bink;
 public sealed class Bink2MovieBridgeTests : IDisposable
 {
     private readonly string? _previousMode;
+    private readonly string _tempDirectory;
 
     public Bink2MovieBridgeTests()
     {
+        _tempDirectory = Path.Combine(Path.GetTempPath(), $"sharpemu-bink-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(_tempDirectory);
         _previousMode = Environment.GetEnvironmentVariable("SHARPEMU_BINK_MODE");
         Environment.SetEnvironmentVariable("SHARPEMU_BINK_MODE", "skip");
         Bink2MovieBridge.ResetForTests();
@@ -24,6 +27,41 @@ public sealed class Bink2MovieBridgeTests : IDisposable
     {
         Bink2MovieBridge.ResetForTests();
         Environment.SetEnvironmentVariable("SHARPEMU_BINK_MODE", _previousMode);
+        Directory.Delete(_tempDirectory, recursive: true);
+    }
+
+    [Theory]
+    [InlineData("KB2j")]
+    public void HeaderAcceptsBink2Revisions(string signature)
+    {
+        var path = WriteHeader(
+            Encoding.ASCII.GetBytes(signature),
+            1920,
+            1080,
+            60,
+            1);
+
+        Assert.True(Bink2MovieBridge.TryReadBinkInfo(path, out _));
+    }
+
+    [Fact]
+    public void HeaderPreservesFractionalFrameRate()
+    {
+        var path = WriteHeader("KB2j"u8, 3840, 2160, 30_000, 1_001);
+
+        Assert.True(Bink2MovieBridge.TryReadBinkInfo(path, out var info));
+        Assert.Equal(3840u, info.Width);
+        Assert.Equal(2160u, info.Height);
+        Assert.Equal(30_000u, info.FramesPerSecondNumerator);
+        Assert.Equal(1_001u, info.FramesPerSecondDenominator);
+    }
+
+    [Fact]
+    public void HeaderRejectsMissingFrameRateDenominator()
+    {
+        var path = WriteHeader("KB2j"u8, 1920, 1080, 60, 0);
+
+        Assert.False(Bink2MovieBridge.TryReadBinkInfo(path, out _));
     }
 
     [Fact]
@@ -134,6 +172,24 @@ public sealed class Bink2MovieBridgeTests : IDisposable
         var header = (byte[])source.Clone();
         BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(fieldOffset, sizeof(uint)), value);
         Assert.False(Bink2MovieBridge.TryParseMovieRangeHeader(header, 0, 256, out _));
+    }
+
+    private string WriteHeader(
+        ReadOnlySpan<byte> signature,
+        uint width,
+        uint height,
+        uint fpsNumerator,
+        uint fpsDenominator)
+    {
+        var header = new byte[36];
+        signature.CopyTo(header);
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(0x14), width);
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(0x18), height);
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(0x1C), fpsNumerator);
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(0x20), fpsDenominator);
+        var path = Path.Combine(_tempDirectory, $"{Guid.NewGuid():N}.bk2");
+        File.WriteAllBytes(path, header);
+        return path;
     }
 
     private static byte[] CreateHeader(

@@ -145,6 +145,10 @@ public sealed class KernelSystemSoftwareCompatExportsTests
             return true;
         }
 
+        public bool TryBackFixedRange(ulong address, ulong size, bool executable) =>
+            size <= int.MaxValue &&
+            (TryResolve(address, (int)size, out _, out _) || TryAllocateExact(address, size));
+
         public bool TryProtect(ulong address, ulong size, GuestPageProtection protection) =>
             size <= int.MaxValue && TryResolve(address, (int)size, out _, out _);
 

@@ -19,7 +19,9 @@ public static class AvPlayerExports
     private const int FrameBufferCount = 3;
     private const int FrameInfoSize = 40;
     private const int FrameInfoExSize = 104;
-    private const int StreamInfoSize = 40;
+    // This structure is 32 bytes. A larger write can damage the guest stack.
+    private const int StreamInfoSize = 32;
+    private const int StreamInfoExSize = 32;
     private const int MaxGuestPathLength = 4096;
     private const int VideoPitchAlignment = 256;
     private static readonly object StateGate = new();
@@ -467,7 +469,8 @@ public static class AvPlayerExports
         ExportName = "sceAvPlayerGetStreamInfoEx",
         Target = Generation.Gen5,
         LibraryName = "libSceAvPlayer")]
-    public static int AvPlayerSetDecoderMode(CpuContext ctx) => ValidatePlayer(ctx);
+    public static int AvPlayerGetStreamInfoEx(CpuContext ctx) =>
+        GetStreamInfoCore(ctx, StreamInfoExSize);
 
     [SysAbiExport(
         Nid = "XC9wM+xULz8",
@@ -624,12 +627,48 @@ public static class AvPlayerExports
         }
     }
 
+    internal static void RegisterPlayerForTest(
+        ulong handle,
+        int width,
+        int height,
+        ulong durationMilliseconds)
+    {
+        PlayerState? previous;
+        lock (StateGate)
+        {
+            Players.Remove(handle, out previous);
+            Players[handle] = new PlayerState
+            {
+                Handle = handle,
+                Width = width,
+                Height = height,
+                DurationMilliseconds = durationMilliseconds,
+            };
+        }
+
+        previous?.Dispose();
+    }
+
+    internal static void RemovePlayerForTest(ulong handle)
+    {
+        PlayerState? player;
+        lock (StateGate)
+        {
+            Players.Remove(handle, out player);
+        }
+
+        player?.Dispose();
+    }
+
     [SysAbiExport(
         Nid = "d8FcbzfAdQw",
         ExportName = "sceAvPlayerGetStreamInfo",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libSceAvPlayer")]
-    public static int AvPlayerGetStreamInfo(CpuContext ctx)
+    public static int AvPlayerGetStreamInfo(CpuContext ctx) =>
+        GetStreamInfoCore(ctx, StreamInfoSize);
+
+    private static int GetStreamInfoCore(CpuContext ctx, int infoSize)
     {
         var streamIndex = unchecked((uint)ctx[CpuRegister.Rsi]);
         var infoAddress = ctx[CpuRegister.Rdx];
@@ -641,7 +680,7 @@ public static class AvPlayerExports
                 return SetReturn(ctx, InvalidParameters);
             }
 
-            Span<byte> info = stackalloc byte[StreamInfoSize];
+            Span<byte> info = stackalloc byte[infoSize];
             info.Clear();
             BinaryPrimitives.WriteUInt32LittleEndian(info[0..], streamIndex); // 0=video, 1=audio
             if (streamIndex == 0)
@@ -1144,7 +1183,7 @@ public static class AvPlayerExports
         {
             return false;
         }
-        var ffprobe = Path.Combine(Path.GetDirectoryName(ffmpeg) ?? string.Empty, "ffprobe");
+        var ffprobe = GetFfprobePath(ffmpeg, OperatingSystem.IsWindows());
         if (!File.Exists(ffprobe))
         {
             return false;
@@ -1227,13 +1266,50 @@ public static class AvPlayerExports
         }
     }
 
-    private static string? FindFfmpeg()
+    internal static string? FindFfmpeg() =>
+        FindFfmpeg(
+            Environment.GetEnvironmentVariable("SHARPEMU_FFMPEG_PATH"),
+            Environment.GetEnvironmentVariable("PATH"),
+            OperatingSystem.IsWindows(),
+            AppContext.BaseDirectory);
+
+    internal static string? FindFfmpeg(
+        string? configured,
+        string? searchPath,
+        bool isWindows,
+        string? baseDirectory = null)
     {
-        var configured = Environment.GetEnvironmentVariable("SHARPEMU_FFMPEG_PATH");
         if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured))
         {
             return configured;
         }
+
+        var executable = isWindows ? "ffmpeg.exe" : "ffmpeg";
+        if (!string.IsNullOrWhiteSpace(baseDirectory))
+        {
+            foreach (var candidate in new[]
+                     {
+                         Path.Combine(baseDirectory, executable),
+                         Path.Combine(baseDirectory, "ffmpeg", executable),
+                     })
+            {
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+        }
+
+        foreach (var directory in (searchPath ?? string.Empty)
+                     .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var candidate = Path.Combine(RemovePathQuotes(directory), executable);
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
         foreach (var candidate in new[] { "/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg" })
         {
             if (File.Exists(candidate))
@@ -1244,6 +1320,16 @@ public static class AvPlayerExports
         return null;
     }
 
+    internal static string GetFfprobePath(string ffmpeg, bool isWindows) =>
+        Path.Combine(
+            Path.GetDirectoryName(ffmpeg) ?? string.Empty,
+            isWindows ? "ffprobe.exe" : "ffprobe");
+
+    private static string RemovePathQuotes(string directory) =>
+        directory.Length >= 2 && directory[0] == '"' && directory[^1] == '"'
+            ? directory[1..^1]
+            : directory;
+
     internal static string? ResolveGuestPath(string guestPath)
     {
         if (string.IsNullOrWhiteSpace(guestPath))
@@ -1253,7 +1339,9 @@ public static class AvPlayerExports
 
         var normalized = guestPath.Replace('\\', '/');
         var fileReference = normalized.StartsWith("file:", StringComparison.OrdinalIgnoreCase);
-        var unrealProjectRelative = false;
+        var unrealProjectRelative =
+            normalized.StartsWith("../", StringComparison.Ordinal) ||
+            normalized.StartsWith("./", StringComparison.Ordinal);
         if (normalized.StartsWith("file://", StringComparison.OrdinalIgnoreCase) &&
             Uri.TryCreate(normalized, UriKind.Absolute, out var uri) &&
             uri.IsFile)
@@ -1284,7 +1372,10 @@ public static class AvPlayerExports
 
         if (unrealProjectRelative)
         {
-            normalized = RemoveUnrealLeadingDotSegments(normalized);
+            if (!TryRemoveUnrealLeadingDotSegments(normalized, out normalized))
+            {
+                return null;
+            }
         }
 
         var app0 = Environment.GetEnvironmentVariable("SHARPEMU_APP0_DIR");
@@ -1368,15 +1459,20 @@ public static class AvPlayerExports
         }
     }
 
-    private static string RemoveUnrealLeadingDotSegments(string guestPath)
+    private static bool TryRemoveUnrealLeadingDotSegments(
+        string guestPath,
+        out string normalized)
     {
+        var removedParent = false;
         while (guestPath.StartsWith("../", StringComparison.Ordinal) ||
                guestPath.StartsWith("./", StringComparison.Ordinal))
         {
+            removedParent |= guestPath.StartsWith("../", StringComparison.Ordinal);
             guestPath = guestPath[(guestPath.IndexOf('/') + 1)..];
         }
 
-        return guestPath;
+        normalized = guestPath;
+        return !removedParent || guestPath.Contains('/');
     }
 
     private static bool TryDecodeFileReference(string encoded, out string decoded)

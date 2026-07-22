@@ -19,7 +19,7 @@ public static class AcmExports
     [SysAbiExport(
         Nid = "ZIXln2K3XMk",
         ExportName = "sceAcmContextCreate",
-        Target = Generation.Gen5,
+        Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libSceAcm")]
     public static int ContextCreate(CpuContext ctx)
     {
@@ -90,5 +90,16 @@ public static class AcmExports
             _nextDescriptor = 1;
             _openDeviceForTests = null;
         }
+    }
+
+    [SysAbiExport(
+        Nid = "jBgBjAj02R8",
+        ExportName = "sceAcmContextDestroy",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceAcm")]
+    public static int AcmContextDestroy(CpuContext ctx)
+    {
+        _ = ctx;
+        return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
     }
 }

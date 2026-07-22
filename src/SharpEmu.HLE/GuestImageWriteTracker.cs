@@ -60,6 +60,7 @@ public static unsafe class GuestImageWriteTracker
         public int Armed;
         public int FirstCpuWriteSeen;
         public int PendingFirstCpuWrite;
+        public long WriteGeneration;
         public bool TraceLifetime;
         public long SourceSequence;
         public long FirstCpuWriteTraceSequence;
@@ -230,10 +231,21 @@ public static unsafe class GuestImageWriteTracker
             {
                 // Never resize an object that is still reachable from the
                 // signal handler's lock-free snapshot. Retire it and publish
-                // a fresh immutable range.
+                // a fresh immutable range, carrying the write generation so
+                // resizes do not hide guest CPU rewrites from cache owners.
+                var writeGeneration = Volatile.Read(ref range.WriteGeneration);
                 DisarmLocked(range, "replace-range");
                 _rangesByAddress.Remove(address);
-                range = null;
+                range = new TrackedRange
+                {
+                    Address = address,
+                    ByteCount = byteCount,
+                    Start = start,
+                    End = start + length,
+                    WriteGeneration = writeGeneration,
+                };
+                _rangesByAddress[address] = range;
+                RebuildSnapshotLocked();
             }
 
             if (range is null)
@@ -389,6 +401,31 @@ public static unsafe class GuestImageWriteTracker
             {
                 ArmLocked(range, "rearm");
             }
+        }
+    }
+
+    /// <summary>
+    /// Returns the monotonic first-write generation for a tracked allocation.
+    /// Unlike the consuming dirty flag, this remains changed after another
+    /// cache owner consumes and re-arms the range.
+    /// </summary>
+    public static bool TryGetWriteGeneration(ulong address, out long generation)
+    {
+        generation = 0;
+        if (!_enabled)
+        {
+            return false;
+        }
+
+        lock (_gate)
+        {
+            if (!_rangesByAddress.TryGetValue(address, out var range))
+            {
+                return false;
+            }
+
+            generation = Volatile.Read(ref range.WriteGeneration);
+            return true;
         }
     }
 
@@ -553,8 +590,13 @@ public static unsafe class GuestImageWriteTracker
                 continue;
             }
 
-            _ = Interlocked.Exchange(ref range.Armed, 0);
-            if (Interlocked.CompareExchange(ref range.FirstCpuWriteSeen, 1, 0) == 0)
+            var wasArmed = Interlocked.Exchange(ref range.Armed, 0) != 0;
+            if (wasArmed)
+            {
+                Interlocked.Increment(ref range.WriteGeneration);
+            }
+            if (wasArmed &&
+                Interlocked.CompareExchange(ref range.FirstCpuWriteSeen, 1, 0) == 0)
             {
                 // Signal context: capture preallocated scalar fields only.
                 // Formatting and I/O are deferred to a locked safe path. The

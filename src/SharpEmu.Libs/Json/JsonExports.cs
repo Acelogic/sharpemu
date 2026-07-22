@@ -196,6 +196,10 @@ public static class JsonExports
         return SetReturn(ctx, 0);
     }
 
+    // Catalog alias NID for the same callback setter.
+    #pragma warning disable SHEM004
+    #pragma warning restore SHEM004
+
     [SysAbiExport(
         Nid = "00oCq0RwSAY",
         ExportName = "_ZN3sce4Json11Initializer27setGlobalNullAccessCallBackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_",

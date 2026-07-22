@@ -19,6 +19,9 @@ public static class ShareExports
     private static int _initialized;
     private static int _contentEventServiceAvailable;
     private static string _contentParam = string.Empty;
+    private static readonly object _callbackGate = new();
+    private static ulong _contentEventCallback;
+    private static ulong _contentEventCallbackArgument;
 
     private sealed record ContentEventRegistration(ulong Callback, ulong UserData);
 
@@ -164,6 +167,32 @@ public static class ShareExports
         }
 
         TraceShare($"set_content_param len={contentParam.Length} preview='{FormatTraceString(contentParam)}'");
+        return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    [SysAbiExport(
+        Nid = "KnsfHKmZqFA",
+        ExportName = "sceShareUnregisterContentEventCallback",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceShareUtility")]
+    public static int ShareUnregisterContentEventCallback(CpuContext ctx)
+    {
+        var callback = ctx[CpuRegister.Rdi];
+        if (callback == 0)
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        lock (_callbackGate)
+        {
+            if (_contentEventCallback == callback)
+            {
+                _contentEventCallback = 0;
+                _contentEventCallbackArgument = 0;
+            }
+        }
+
+        TraceShare($"unregister_content_event_callback fn=0x{callback:X16}");
         return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
     }
 

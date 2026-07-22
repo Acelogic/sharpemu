@@ -460,6 +460,10 @@ public static class NpManagerExports
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
+    /// <summary>
+    /// Accepts the reachability callback and never invokes it. Reachability
+    /// transitions only ever fire on a real PSN connection, which an offline
+    /// session does not have, so registering successfully and staying silent is
     [SysAbiExport(
         Nid = "qQJfO8HAiaY",
         ExportName = "sceNpRegisterStateCallbackA",

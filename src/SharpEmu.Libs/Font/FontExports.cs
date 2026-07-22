@@ -331,8 +331,31 @@ public static class FontExports
         ExportName = "sceFontGetVerticalLayout",
         Target = Generation.Gen5,
         LibraryName = "libSceFont")]
-    public static int GetVerticalLayout(CpuContext ctx) =>
-        WriteFallbackLayout(ctx, vertical: true);
+    public static int GetVerticalLayout(CpuContext ctx)
+    {
+        var layoutAddress = ctx[CpuRegister.Rsi];
+        if (layoutAddress == 0)
+        {
+            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        // Baseline (horizontal offset), line advance, decoration extent.
+        // Mirrors the same three-float layout as GetHorizontalLayout, but
+        // interpreted for vertical writing (e.g. CJK text rendered top-to-bottom).
+        var values = new[] { 8.0f, 16.0f, 0.0f };
+        for (var index = 0; index < values.Length; index++)
+        {
+            if (!TryWriteUInt32(
+                    ctx,
+                    layoutAddress + (ulong)(index * sizeof(float)),
+                    BitConverter.SingleToUInt32Bits(values[index])))
+            {
+                return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+        }
+
+        return SetSuccess(ctx);
+    }
 
     [SysAbiExport(
         Nid = "cKYtVmeSTcw",

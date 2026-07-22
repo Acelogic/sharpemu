@@ -137,6 +137,11 @@ public sealed partial class DirectExecutionBackend
 			{
 				return -1;
 			}
+			if (exceptionCode == StatusIllegalInstruction &&
+				TryRecoverAmdCompatInstruction(contextRecord, rip))
+			{
+				return -1;
+			}
 			if (IsBenignHostDebugException(exceptionCode))
 			{
 				return -1;
@@ -482,7 +487,7 @@ public sealed partial class DirectExecutionBackend
 		if (count <= 16 || count % 65536 == 0)
 		{
 			Console.Error.WriteLine(
-				$"[LOADER][WARN] Ignored guest int 0x41 trap #{count} at 0x{rip:X16} (SHARPEMU_IGNORE_INT41=1)");
+				$"[LOADER][WARN] Ignored guest int 0x41 trap #{count} at 0x{rip:X16} (default-on; set SHARPEMU_IGNORE_INT41=0 to disable)");
 			Console.Error.Flush();
 		}
 		return true;

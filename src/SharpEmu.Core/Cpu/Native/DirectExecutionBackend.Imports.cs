@@ -530,9 +530,12 @@ public sealed partial class DirectExecutionBackend
 			{
 				GuestThreadExecution.RestoreImportCallFrame(previousImportCallFrame);
 			}
-			DeliverPendingGuestExceptionAtSafePoint(
-				cpuContext,
-				CaptureImportBoundaryContinuation(cpuContext, argPackPtr, num7));
+			if (Volatile.Read(ref _pendingGuestExceptionCount) != 0)
+			{
+				DeliverPendingGuestExceptionAtSafePoint(
+					cpuContext,
+					CaptureImportBoundaryContinuation(cpuContext, argPackPtr, num7));
+			}
 			StoreImportVectorReturn(cpuContext, argPackPtr);
 			if (dispatchResolved &&
 				orbisGen2Result == OrbisGen2Result.ORBIS_GEN2_OK &&
@@ -1323,9 +1326,12 @@ public sealed partial class DirectExecutionBackend
 				GuestThreadExecution.RestoreImportCallFrame(previousImportCallFrame);
 			}
 		}
-		DeliverPendingGuestExceptionAtSafePoint(
-			cpuContext,
-			CaptureImportBoundaryContinuation(cpuContext, argPackPtr, returnRip));
+		if (Volatile.Read(ref _pendingGuestExceptionCount) != 0)
+		{
+			DeliverPendingGuestExceptionAtSafePoint(
+				cpuContext,
+				CaptureImportBoundaryContinuation(cpuContext, argPackPtr, returnRip));
+		}
 		StoreImportVectorReturn(cpuContext, argPackPtr);
 
 		if (returnValue != (int)OrbisGen2Result.ORBIS_GEN2_OK)
@@ -1373,11 +1379,13 @@ public sealed partial class DirectExecutionBackend
 			"vWU-odnS+fU" or // sceAmprMeasureCommandSizeReadFile
 			"sSAUCCU1dv4" or // sceAmprMeasureCommandSizeWriteKernelEventQueue_04_00
 			"C+IEj+BsAFM" or // sceAmprMeasureCommandSizeWriteAddressOnCompletion
+            "4fgtGfXDrFc" or // sceAmprMeasureCommandSizeWriteAddress_04_00
 			"tZDDEo2tE5k" or // sceAmprCommandBufferGetSize
 			"GnxKOHEawhk" or // sceAmprCommandBufferGetCurrentOffset
 			"gzndltBEzWc" or // sceAmprCommandBufferGetNumCommands
 			"H896Pt-yB4I" or // sceAmprCommandBufferWriteKernelEventQueue_04_00
 			"sJXyWHjP-F8" or // sceAmprCommandBufferWriteAddressOnCompletion
+            "j0+3uJMxYJY" or // sceAmprCommandBufferWriteAddress_04_00
 			"mPpPxv5CZt4" or // sceSystemServiceGetHdrToneMapLuminance
 			"1FZBKy8HeNU" or // sceVideoOutGetVblankStatus
 			"ASoW5WE-UPo" or // sceKernelAprSubmitCommandBufferAndGetResult
@@ -1541,11 +1549,13 @@ public sealed partial class DirectExecutionBackend
 			"vWU-odnS+fU" or
 			"sSAUCCU1dv4" or
 			"C+IEj+BsAFM" or
+            "4fgtGfXDrFc" or
 			"tZDDEo2tE5k" or
 			"GnxKOHEawhk" or
 			"gzndltBEzWc" or
 			"H896Pt-yB4I" or
 			"sJXyWHjP-F8" or
+            "j0+3uJMxYJY" or
 			"mPpPxv5CZt4" or
 			"1FZBKy8HeNU" or
 			"ASoW5WE-UPo" or

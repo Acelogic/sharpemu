@@ -20,6 +20,11 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
     private readonly Dictionary<(ulong DesiredAddress, ulong Alignment, bool Executable), ulong> _allocationSearchHints = new();
     private readonly Dictionary<ulong, ProgramHeaderFlags> _pageProtections = new();
     private bool _disposed;
+
+    [ThreadStatic]
+    private static CommittedRangeCache? _committedRangeCache;
+
+    private long _mappingGeneration;
     private const ulong PageSize = 0x1000;
     private const ulong GuestAllocationArenaAddress = 0x00006000_0000_0000;
     private const ulong GuestAllocationArenaSize = 0x0100_0000;
@@ -28,6 +33,77 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
     private const ulong FullCommitRegionLimit = 4UL << 30;
     private const ulong DefaultLazyReservePrimeBytes = 0x0400_0000UL; // 64 MiB
     private const ulong LazyReservePrimeChunkBytes = 0x0200_0000UL; // 32 MiB
+    private const int CommittedRangeCacheCapacity = 4;
+
+    private sealed class CommittedRangeCache
+    {
+        private readonly CommittedRange[] _ranges = new CommittedRange[CommittedRangeCacheCapacity];
+        private PhysicalVirtualMemory? _owner;
+        private long _generation;
+        private int _count;
+        private int _nextReplacement;
+
+        public bool Contains(
+            PhysicalVirtualMemory owner,
+            long generation,
+            ulong start,
+            ulong end)
+        {
+            if (!ReferenceEquals(_owner, owner) || _generation != generation)
+            {
+                return false;
+            }
+
+            for (var index = 0; index < _count; index++)
+            {
+                var range = _ranges[index];
+                if (start >= range.Start && end <= range.End)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        public void Add(
+            PhysicalVirtualMemory owner,
+            long generation,
+            ulong start,
+            ulong end)
+        {
+            if (!ReferenceEquals(_owner, owner) || _generation != generation)
+            {
+                _owner = owner;
+                _generation = generation;
+                _count = 0;
+                _nextReplacement = 0;
+            }
+
+            for (var index = 0; index < _count; index++)
+            {
+                var range = _ranges[index];
+                if (start <= range.End && end >= range.Start)
+                {
+                    _ranges[index] = new CommittedRange(
+                        Math.Min(start, range.Start),
+                        Math.Max(end, range.End));
+                    return;
+                }
+            }
+
+            if (_count < _ranges.Length)
+            {
+                _ranges[_count++] = new CommittedRange(start, end);
+                return;
+            }
+
+            _ranges[_nextReplacement] = new CommittedRange(start, end);
+            _nextReplacement = (_nextReplacement + 1) % _ranges.Length;
+        }
+    }
+
+    private readonly record struct CommittedRange(ulong Start, ulong End);
 
     // Raw Windows PAGE_* values retained for the internal region/protection
     // bookkeeping: regions and saved old-protection values always carry the raw
@@ -349,6 +425,111 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         return actualAddress;
     }
 
+    public bool TryBackFixedRange(ulong address, ulong size, bool executable)
+    {
+        if (size == 0)
+        {
+            return false;
+        }
+
+        var start = AlignDown(address, PageSize);
+        var end = AlignUp(address + size, PageSize);
+        if (end <= start)
+        {
+            return false;
+        }
+
+        var hostProtection = executable ? HostPageProtection.ReadWriteExecute : HostPageProtection.ReadWrite;
+
+        // Walk the range page-run by page-run. VirtualQuery reports the largest run
+        // of same-state pages from the queried address, so a single query advances
+        // us over whole free or occupied stretches. Only free stretches get backed;
+        // stretches already reserved or committed by another allocation are left as
+        // they are, which is exactly what a fixed mapping does on hardware.
+        //
+        // Because backing may span several disjoint free runs, allocations are
+        // staged: host pages are reserved/committed first, and the corresponding
+        // MemoryRegions are inserted only once every gap in the range has been
+        // backed. If any gap fails to back, every earlier host allocation is freed
+        // and no region is inserted, so the address space is left untouched.
+        var stagedAllocations = new List<(ulong Address, ulong Size)>();
+
+        var cursor = start;
+        while (cursor < end)
+        {
+            if (!_hostMemory.Query(cursor, out var info))
+            {
+                goto Rollback;
+            }
+
+            var queriedEnd = info.RegionSize > ulong.MaxValue - info.BaseAddress
+                ? ulong.MaxValue
+                : info.BaseAddress + info.RegionSize;
+            var runEnd = Math.Min(end, queriedEnd);
+            if (runEnd <= cursor)
+            {
+                goto Rollback;
+            }
+
+            if (info.State == HostRegionState.Free)
+            {
+                var runSize = runEnd - cursor;
+                var allocated = _hostMemory.Allocate(cursor, runSize, hostProtection);
+                if (allocated != cursor)
+                {
+                    if (allocated != 0)
+                    {
+                        _hostMemory.Free(allocated);
+                    }
+
+                    goto Rollback;
+                }
+
+                stagedAllocations.Add((cursor, runSize));
+                TraceVmem($"Backed fixed range gap: 0x{cursor:X16} - 0x{runEnd:X16} ({runSize} bytes)");
+            }
+
+            cursor = runEnd;
+        }
+
+        if (stagedAllocations.Count == 0)
+        {
+            return false;
+        }
+
+        // All gaps backed successfully — insert regions in one batch.
+        var protection = executable ? PAGE_EXECUTE_READWRITE : PAGE_READWRITE;
+        _gate.EnterWriteLock();
+        try
+        {
+            foreach (var (gapAddress, gapSize) in stagedAllocations)
+            {
+                InsertRegionSorted(new MemoryRegion
+                {
+                    VirtualAddress = gapAddress,
+                    Size = gapSize,
+                    IsExecutable = executable,
+                    IsReservedOnly = false,
+                    Protection = protection
+                });
+            }
+        }
+        finally
+        {
+            _gate.ExitWriteLock();
+        }
+
+        return true;
+
+    Rollback:
+        foreach (var (gapAddress, _) in stagedAllocations)
+        {
+            _hostMemory.Free(gapAddress);
+        }
+
+        return false;
+    }
+
     public bool TryAllocateAtOrAbove(
         ulong desiredAddress,
         ulong size,
@@ -440,6 +621,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
             _gate.ExitWriteLock();
         }
 
+        Interlocked.Increment(ref _mappingGeneration);
         _hostMemory.Free(address);
     }
 
@@ -611,6 +793,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
                 {
                     _allocationSearchHints.Clear();
                 }
+                Interlocked.Increment(ref _mappingGeneration);
             }
             finally
             {
@@ -919,6 +1102,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
                         Buffer.MemoryCopy(srcPtr, destPtr, (nuint)source.Length, (nuint)source.Length);
                     }
 
+                    NotifyGuestWriteWatch(virtualAddress, source);
                     return true;
                 }
             }
@@ -941,6 +1125,68 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         finally
         {
             _gate.ExitWriteLock();
+        }
+    }
+
+    private static void NotifyGuestWriteWatch(ulong virtualAddress, ReadOnlySpan<byte> source)
+    {
+        if (GuestWriteWatch.Armed)
+        {
+            GuestWriteWatch.Check(virtualAddress, source);
+        }
+    }
+
+    public bool TryCopy(ulong destinationAddress, ulong sourceAddress, ulong length)
+    {
+        if (length == 0)
+        {
+            return true;
+        }
+        if (length > int.MaxValue)
+        {
+            return false;
+        }
+
+        // Match TryWrite's managed-write notification before touching an
+        // identity-mapped guest page protected by the image tracker.
+        GuestImageWriteTracker.NotifyManagedWrite(destinationAddress, length);
+
+        _gate.EnterReadLock();
+        try
+        {
+            var sourceRegion = FindRegion(sourceAddress, length);
+            var destinationRegion = FindRegion(destinationAddress, length);
+            if (sourceRegion is null || destinationRegion is null ||
+                !TryResolveRegionOffset(sourceAddress, length, sourceRegion, out var sourceOffset) ||
+                !TryResolveRegionOffset(destinationAddress, length, destinationRegion, out var destinationOffset))
+            {
+                return false;
+            }
+
+            var sourcePointer = sourceRegion.VirtualAddress + sourceOffset;
+            var destinationPointer = destinationRegion.VirtualAddress + destinationOffset;
+            if ((sourceRegion.IsReservedOnly &&
+                 !EnsureRangeCommitted(sourcePointer, length, sourceRegion)) ||
+                (destinationRegion.IsReservedOnly &&
+                 !EnsureRangeCommitted(destinationPointer, length, destinationRegion)) ||
+                !CanReadWithoutProtectionChange(sourcePointer, length, sourceRegion) ||
+                !CanWriteWithoutProtectionChange(destinationPointer, length, destinationRegion))
+            {
+                return false;
+            }
+
+            // Span.CopyTo has memmove overlap semantics, so this allocation-free
+            // path safely serves both libc memcpy and libc memmove.
+            new ReadOnlySpan<byte>((void*)sourcePointer, checked((int)length)).CopyTo(
+                new Span<byte>((void*)destinationPointer, checked((int)length)));
+            NotifyGuestWriteWatch(
+                destinationAddress,
+                new ReadOnlySpan<byte>((void*)destinationPointer, checked((int)length)));
+            return true;
+        }
+        finally
+        {
+            _gate.ExitReadLock();
         }
     }
 
@@ -1016,6 +1262,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
                     Buffer.MemoryCopy(srcPtr, destPtr, (nuint)source.Length, (nuint)source.Length);
                 }
 
+                NotifyGuestWriteWatch(virtualAddress, source);
                 return true;
             }
 
@@ -1040,6 +1287,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
                 }
             }
 
+            NotifyGuestWriteWatch(virtualAddress, source);
             return true;
         }
 
@@ -1281,6 +1529,12 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
         var startPage = AlignDown(address, PageSize);
         var endPage = AlignUp(address + size, PageSize);
+        var mappingGeneration = Volatile.Read(ref _mappingGeneration);
+        var committedRangeCache = _committedRangeCache ??= new CommittedRangeCache();
+        if (committedRangeCache.Contains(this, mappingGeneration, startPage, endPage))
+        {
+            return true;
+        }
         var commitProtection = GetCommitProtection(region);
 
         var pageAddress = startPage;
@@ -1302,6 +1556,9 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
             if (info.State == HostRegionState.Committed)
             {
+                // The host query proved this whole range is committed. Retain
+                // that result instead of caching only the caller's small span.
+                CacheCommittedRange(info.BaseAddress, queriedEnd, mappingGeneration);
                 pageAddress = rangeEnd;
                 continue;
             }
@@ -1317,10 +1574,21 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
                 return false;
             }
 
+            CacheCommittedRange(pageAddress, rangeEnd, mappingGeneration);
             pageAddress = rangeEnd;
         }
 
+        CacheCommittedRange(startPage, endPage, mappingGeneration);
         return true;
+    }
+
+    private void CacheCommittedRange(ulong startPage, ulong endPage, long mappingGeneration)
+    {
+        (_committedRangeCache ??= new CommittedRangeCache()).Add(
+            this,
+            mappingGeneration,
+            startPage,
+            endPage);
     }
 
     private bool TryTemporarilyProtectForRead(

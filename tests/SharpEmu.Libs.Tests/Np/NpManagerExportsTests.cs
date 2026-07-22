@@ -407,6 +407,24 @@ public sealed class NpManagerExportsTests : IDisposable
             }
         }
 
+        public bool TryBackFixedRange(ulong address, ulong size, bool executable)
+        {
+            lock (_gate)
+            {
+                if (size == 0 || size > int.MaxValue || ulong.MaxValue - address < size)
+                {
+                    return false;
+                }
+
+                if (TryResolve(address, (int)size, out _, out _))
+                {
+                    return true;
+                }
+
+                return TryAddRegion(address, size, out _);
+            }
+        }
+
         public bool TryAllocateGuestMemory(ulong size, ulong alignment, out ulong address) =>
             TryAllocateAtOrAbove(BaseAddress + 0x10_0000, size, false, alignment, out address);
 

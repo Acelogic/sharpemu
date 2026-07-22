@@ -445,20 +445,7 @@ public static class KernelExports
         ExportName = "open",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int Open(CpuContext ctx)
-    {
-        var result = KernelMemoryCompatExports.KernelOpenUnderscore(ctx);
-        if (result == (int)OrbisGen2Result.ORBIS_GEN2_OK)
-        {
-            return result;
-        }
-
-        // POSIX open reports failures as -1 (and sets errno on the real
-        // platform). Do not expose an Orbis error value as a file descriptor:
-        // ShellCore only checks for -1 before passing the result to read.
-        ctx[CpuRegister.Rax] = ulong.MaxValue;
-        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
-    }
+    public static int Open(CpuContext ctx) => KernelMemoryCompatExports.PosixOpen(ctx);
 
     [SysAbiExport(
         Nid = "1G3lF1Gg1k8",
@@ -472,7 +459,7 @@ public static class KernelExports
         ExportName = "fstat",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libc")]
-    public static int Fstat(CpuContext ctx) => KernelMemoryCompatExports.KernelFstat(ctx);
+    public static int Fstat(CpuContext ctx) => KernelMemoryCompatExports.PosixFstat(ctx);
 
     [SysAbiExport(
         Nid = "hcuQgD53UxM",

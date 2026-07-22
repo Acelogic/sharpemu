@@ -43,3 +43,4 @@ ehthumbs.db
 .vs/
 .idea/
 packages.lock.json
+.vscode/
