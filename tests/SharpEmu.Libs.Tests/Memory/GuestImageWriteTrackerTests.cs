@@ -18,9 +18,34 @@ public sealed unsafe class GuestImageWriteTrackerTests
 {
     private const nuint PageSize = 4096;
     private const nuint HostPageAlignment = 16384;
+    private const uint MemCommit = 0x1000;
+    private const uint MemReserve = 0x2000;
+    private const uint MemRelease = 0x8000;
+    private const uint PageReadWrite = 0x04;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern nint VirtualAlloc(
+        nint lpAddress,
+        nuint dwSize,
+        uint flAllocationType,
+        uint flProtect);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern int VirtualFree(nint lpAddress, nuint dwSize, uint dwFreeType);
 
     private static byte* AllocateTrackedPages()
     {
+        if (OperatingSystem.IsWindows())
+        {
+            var windowsAllocation = VirtualAlloc(
+                0,
+                2 * HostPageAlignment,
+                MemCommit | MemReserve,
+                PageReadWrite);
+            Assert.NotEqual(nint.Zero, windowsAllocation);
+            return (byte*)windowsAllocation;
+        }
+
         // The tracker uses 4 KiB guest pages, while mprotect uses the host page
         // size (16 KiB on Apple Silicon). Keep kernel rounding inside memory
         // owned by this test process.
@@ -60,7 +85,7 @@ public sealed unsafe class GuestImageWriteTrackerTests
         finally
         {
             GuestImageWriteTracker.Untrack(address);
-            NativeMemory.AlignedFree(page);
+            FreeTrackedPages(page);
         }
     }
 
@@ -91,7 +116,7 @@ public sealed unsafe class GuestImageWriteTrackerTests
         {
             GuestImageWriteTracker.Untrack(firstAddress);
             GuestImageWriteTracker.Untrack(secondAddress);
-            NativeMemory.AlignedFree(page);
+            FreeTrackedPages(page);
         }
     }
 
@@ -138,8 +163,19 @@ public sealed unsafe class GuestImageWriteTrackerTests
         finally
         {
             GuestImageWriteTracker.Untrack(address);
-            NativeMemory.AlignedFree(page);
+            FreeTrackedPages(page);
         }
+    }
+
+    private static void FreeTrackedPages(void* allocation)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            _ = VirtualFree((nint)allocation, 0, MemRelease);
+            return;
+        }
+
+        NativeMemory.Free(allocation);
     }
 
     [Fact]
@@ -167,7 +203,7 @@ public sealed unsafe class GuestImageWriteTrackerTests
         finally
         {
             GuestImageWriteTracker.Untrack(address);
-            NativeMemory.AlignedFree(allocation);
+            FreeTrackedPages(allocation);
         }
     }
 
@@ -198,7 +234,7 @@ public sealed unsafe class GuestImageWriteTrackerTests
         finally
         {
             GuestImageWriteTracker.Untrack(address);
-            NativeMemory.AlignedFree(allocation);
+            FreeTrackedPages(allocation);
         }
     }
 
@@ -225,7 +261,7 @@ public sealed unsafe class GuestImageWriteTrackerTests
         finally
         {
             GuestImageWriteTracker.Untrack(address);
-            NativeMemory.AlignedFree(allocation);
+            FreeTrackedPages(allocation);
         }
     }
 

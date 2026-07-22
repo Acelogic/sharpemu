@@ -52,6 +52,7 @@ public sealed partial class DirectExecutionBackend
 		}
 		_exceptionHandler = (nint)AddVectoredExceptionHandler(1u, _exceptionHandlerStub);
 		Console.Error.WriteLine($"[LOADER][INFO] Exception handler installed: 0x{_exceptionHandler:X16}");
+		SharpEmu.HLE.GuestImageWriteTracker.WarmUp();
 
 		_unhandledFilterDelegate = UnhandledExceptionFilter;
 		_unhandledFilterHandle = GCHandle.Alloc(_unhandledFilterDelegate);
@@ -115,6 +116,13 @@ public sealed partial class DirectExecutionBackend
 				return -1;
 			}
 			if (TryRecoverGuestInt41(exceptionCode, contextRecord, rip))
+			{
+				return -1;
+			}
+			if (exceptionCode == 3221225477u &&
+				exceptionRecord->NumberParameters >= 2 &&
+				SharpEmu.HLE.GuestImageWriteTracker.TryHandleWriteFault(
+					exceptionRecord->ExceptionInformation[1]))
 			{
 				return -1;
 			}
