@@ -25,22 +25,6 @@ public static partial class KernelMemoryCompatExports
         return ctx.SetReturn(ConvertGuestErrno(errno), typeof(long));
     }
 
-    [SysAbiExport(
-        Nid = "n1-v6FgU7MQ",
-        ExportName = "sceKernelConfiguredFlexibleMemorySize",
-        Target = Generation.Gen5,
-        LibraryName = "libKernel")]
-    public static int KernelConfiguredFlexibleMemorySize(CpuContext ctx)
-    {
-        var outSizeAddress = ctx[CpuRegister.Rdi];
-        if (!ctx.TryWriteUInt64(outSizeAddress, FlexibleMemorySizeBytes))
-        {
-            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, typeof(long));
-        }
-
-        return ctx.SetReturn(0, typeof(long));
-    }
-
     internal static bool TryGetVirtualRangeNameForTests(ulong address, out string name)
     {
         lock (_memoryGate)

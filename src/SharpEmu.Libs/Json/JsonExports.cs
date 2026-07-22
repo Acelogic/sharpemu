@@ -196,11 +196,19 @@ public static class JsonExports
         return SetReturn(ctx, 0);
     }
 
+    // Catalog alias NID for the same callback setter.
+    #pragma warning disable SHEM004
     [SysAbiExport(
         Nid = "00oCq0RwSAY",
-        ExportName = "_ZN3sce4Json11Initializer27setGlobalNullAccessCallBackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_",
-        Target = Generation.Gen5,
-        LibraryName = "libSceJson2")]
+        ExportName = "_ZN3sce4Json11Initializer27setGlobalNullAccessCallbackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceJson")]
+    public static int InitializerSetGlobalNullAccessCallbackAlt(CpuContext ctx) =>
+        InitializerSetGlobalNullAccessCallback(ctx);
+    #pragma warning restore SHEM004
+
+    // Kept as a direct helper for tests and JSON2 lifecycle emulation. The
+    // shared NID is exported once by the catalog-backed libSceJson alias above.
     public static int InitializerSetGlobalNullAccessCallBack(CpuContext ctx)
     {
         var thisAddress = ctx[CpuRegister.Rdi];

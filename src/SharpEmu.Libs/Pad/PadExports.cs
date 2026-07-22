@@ -64,11 +64,8 @@ public static class PadExports
         return ctx.SetReturn(0);
     }
 
-    [SysAbiExport(
-        Nid = "znaWI0gpuo8",
-        ExportName = "scePadGetTriggerEffectState",
-        Target = Generation.Gen5,
-        LibraryName = "libScePad")]
+    // The title-captured value collides with the catalogued UserService name;
+    // retain the helper for direct callers without publishing a duplicate NID.
     public static int PadGetTriggerEffectState(CpuContext ctx)
     {
         var handle = unchecked((int)ctx[CpuRegister.Rdi]);

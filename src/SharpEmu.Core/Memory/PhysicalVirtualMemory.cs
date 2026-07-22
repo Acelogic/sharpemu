@@ -425,6 +425,111 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         return actualAddress;
     }
 
+    public bool TryBackFixedRange(ulong address, ulong size, bool executable)
+    {
+        if (size == 0)
+        {
+            return false;
+        }
+
+        var start = AlignDown(address, PageSize);
+        var end = AlignUp(address + size, PageSize);
+        if (end <= start)
+        {
+            return false;
+        }
+
+        var hostProtection = executable ? HostPageProtection.ReadWriteExecute : HostPageProtection.ReadWrite;
+
+        // Walk the range page-run by page-run. VirtualQuery reports the largest run
+        // of same-state pages from the queried address, so a single query advances
+        // us over whole free or occupied stretches. Only free stretches get backed;
+        // stretches already reserved or committed by another allocation are left as
+        // they are, which is exactly what a fixed mapping does on hardware.
+        //
+        // Because backing may span several disjoint free runs, allocations are
+        // staged: host pages are reserved/committed first, and the corresponding
+        // MemoryRegions are inserted only once every gap in the range has been
+        // backed. If any gap fails to back, every earlier host allocation is freed
+        // and no region is inserted, so the address space is left untouched.
+        var stagedAllocations = new List<(ulong Address, ulong Size)>();
+
+        var cursor = start;
+        while (cursor < end)
+        {
+            if (!_hostMemory.Query(cursor, out var info))
+            {
+                goto Rollback;
+            }
+
+            var queriedEnd = info.RegionSize > ulong.MaxValue - info.BaseAddress
+                ? ulong.MaxValue
+                : info.BaseAddress + info.RegionSize;
+            var runEnd = Math.Min(end, queriedEnd);
+            if (runEnd <= cursor)
+            {
+                goto Rollback;
+            }
+
+            if (info.State == HostRegionState.Free)
+            {
+                var runSize = runEnd - cursor;
+                var allocated = _hostMemory.Allocate(cursor, runSize, hostProtection);
+                if (allocated != cursor)
+                {
+                    if (allocated != 0)
+                    {
+                        _hostMemory.Free(allocated);
+                    }
+
+                    goto Rollback;
+                }
+
+                stagedAllocations.Add((cursor, runSize));
+                TraceVmem($"Backed fixed range gap: 0x{cursor:X16} - 0x{runEnd:X16} ({runSize} bytes)");
+            }
+
+            cursor = runEnd;
+        }
+
+        if (stagedAllocations.Count == 0)
+        {
+            return false;
+        }
+
+        // All gaps backed successfully — insert regions in one batch.
+        var protection = executable ? PAGE_EXECUTE_READWRITE : PAGE_READWRITE;
+        _gate.EnterWriteLock();
+        try
+        {
+            foreach (var (gapAddress, gapSize) in stagedAllocations)
+            {
+                InsertRegionSorted(new MemoryRegion
+                {
+                    VirtualAddress = gapAddress,
+                    Size = gapSize,
+                    IsExecutable = executable,
+                    IsReservedOnly = false,
+                    Protection = protection
+                });
+            }
+        }
+        finally
+        {
+            _gate.ExitWriteLock();
+        }
+
+        return true;
+
+    Rollback:
+        foreach (var (gapAddress, _) in stagedAllocations)
+        {
+            _hostMemory.Free(gapAddress);
+        }
+
+        return false;
+    }
+
     public bool TryAllocateAtOrAbove(
         ulong desiredAddress,
         ulong size,

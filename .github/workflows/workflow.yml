@@ -89,7 +89,6 @@ jobs:
       DOTNET_NOLOGO: true
       NUGET_PACKAGES: ${{ github.workspace }}\.nuget\packages
       PUBLISH_DIR: ${{ github.workspace }}\artifacts\publish\win-x64
-      RELEASE_DIR: ${{ github.workspace }}\artifacts\release
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -121,24 +120,13 @@ jobs:
       - name: Publish win-x64 CLI
         run: dotnet publish src/SharpEmu.CLI/SharpEmu.CLI.csproj -c Release -r win-x64 --self-contained true --no-restore -p:PublishDir="${env:PUBLISH_DIR}"
 
-      - name: Create release archive
-        run: |
-          New-Item -ItemType Directory -Path $env:RELEASE_DIR -Force | Out-Null
-
-          $archiveName = "sharpemu-${{ needs.init.outputs.version }}-win-x64.zip"
-          $archivePath = Join-Path $env:RELEASE_DIR $archiveName
-          if (Test-Path $archivePath) {
-            Remove-Item $archivePath -Force
-          }
-
-          Compress-Archive -Path (Join-Path $env:PUBLISH_DIR '*') -DestinationPath $archivePath -CompressionLevel Optimal
-
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
         with:
           name: sharpemu-win-x64-${{ needs.init.outputs.short-sha }}
-          path: ${{ env.RELEASE_DIR }}\sharpemu-${{ needs.init.outputs.version }}-win-x64.zip
+          path: ${{ env.PUBLISH_DIR }}
           if-no-files-found: error
+          include-hidden-files: true
 
   build-posix:
     name: Build ${{ matrix.rid }}
@@ -158,7 +146,6 @@ jobs:
       DOTNET_NOLOGO: true
       NUGET_PACKAGES: ${{ github.workspace }}/.nuget/packages
       PUBLISH_DIR: ${{ github.workspace }}/artifacts/publish/${{ matrix.rid }}
-      RELEASE_DIR: ${{ github.workspace }}/artifacts/release
       SPIRV_HEADERS_COMMIT: ad9184e76a66b1001c29db9b0a3e87f646c64de0
       # SpirvModuleBuilder emits SPIR-V 1.5 and VulkanVideoPresenter requests Vulkan 1.2.
       SPIRV_TARGET_ENV: vulkan1.2
@@ -223,19 +210,13 @@ jobs:
         if: matrix.rid == 'osx-x64'
         run: scripts/fetch-macos-moltenvk.sh "$PUBLISH_DIR"
 
-      - name: Create release archive
-        run: |
-          mkdir -p "$RELEASE_DIR"
-          # tar keeps the executable bit, which zip would drop.
-          tar -czf "$RELEASE_DIR/sharpemu-${{ needs.init.outputs.version }}-${{ matrix.rid }}.tar.gz" \
-            -C "$PUBLISH_DIR" .
-
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
         with:
           name: sharpemu-${{ matrix.rid }}-${{ needs.init.outputs.short-sha }}
-          path: ${{ env.RELEASE_DIR }}/sharpemu-${{ needs.init.outputs.version }}-${{ matrix.rid }}.tar.gz
+          path: ${{ env.PUBLISH_DIR }}
           if-no-files-found: error
+          include-hidden-files: true
 
   release:
     name: Publish GitHub Release
@@ -255,6 +236,28 @@ jobs:
         with:
           path: release
 
+      - name: Package release assets
+        shell: bash
+        env:
+          SHORT_SHA: ${{ needs.init.outputs.short-sha }}
+          VERSION: ${{ needs.init.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          win_dir="release/sharpemu-win-x64-${SHORT_SHA}"
+          linux_dir="release/sharpemu-linux-x64-${SHORT_SHA}"
+          macos_dir="release/sharpemu-osx-x64-${SHORT_SHA}"
+          for package_dir in "${win_dir}" "${linux_dir}" "${macos_dir}"; do
+            test -d "${package_dir}"
+          done
+
+          mkdir -p release-assets
+          (cd "${win_dir}" && zip -q -r "../../release-assets/sharpemu-${VERSION}-win-x64.zip" .)
+
+          chmod +x "${linux_dir}/SharpEmu" "${macos_dir}/SharpEmu"
+          tar -czf "release-assets/sharpemu-${VERSION}-linux-x64.tar.gz" -C "${linux_dir}" .
+          tar -czf "release-assets/sharpemu-${VERSION}-osx-x64.tar.gz" -C "${macos_dir}" .
+
       - name: Create release
         shell: bash
         env:
@@ -264,9 +267,9 @@ jobs:
           RELEASE_TAG: ${{ needs.init.outputs.release-tag }}
           VERSION: ${{ needs.init.outputs.version }}
         run: |
-          mapfile -t assets < <(find release -type f \( -name '*.zip' -o -name '*.tar.gz' \) | sort)
-          if [ "${#assets[@]}" -eq 0 ]; then
-            echo "No release assets found." >&2
+          mapfile -t assets < <(find release-assets -maxdepth 1 -type f \( -name '*.zip' -o -name '*.tar.gz' \) | sort)
+          if [ "${#assets[@]}" -ne 3 ]; then
+            echo "Expected 3 release assets, found ${#assets[@]}." >&2
             exit 1
           fi
 

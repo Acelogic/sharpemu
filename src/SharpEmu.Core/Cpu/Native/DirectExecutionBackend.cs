@@ -1115,7 +1115,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		_logStrlenBursts = _logStrlenImports ||
 			string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_STRLEN_BURSTS"), "1", StringComparison.Ordinal);
 		_logGuestContext = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_CONTEXT"), "1", StringComparison.Ordinal);
-		_ignoreGuestInt41 = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_IGNORE_INT41"), "1", StringComparison.Ordinal);
+		var ignoreGuestInt41Env = Environment.GetEnvironmentVariable("SHARPEMU_IGNORE_INT41");
+		_ignoreGuestInt41 = !string.Equals(ignoreGuestInt41Env, "0", StringComparison.Ordinal) &&
+			!string.Equals(ignoreGuestInt41Env, "false", StringComparison.OrdinalIgnoreCase);
 		_ignoredGuestInt41Count = 0;
 		_logGuestThreads = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_GUEST_THREADS"), "1", StringComparison.Ordinal);
 		_logUsleep = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_USLEEP"), "1", StringComparison.Ordinal);

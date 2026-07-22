@@ -426,7 +426,8 @@ public static partial class Gen5SpirvTranslator
             uint VectorType,
             ImageComponentKind ComponentKind,
             bool IsScaled,
-            bool IsStorage);
+            bool IsStorage,
+            bool Arrayed);
 
         private readonly record struct SpirvVertexInput(
             uint Variable,
@@ -1167,11 +1168,13 @@ public static partial class Gen5SpirvTranslator
                         SpirvCapability.StorageImageExtendedFormats);
                 }
 
+                var isArrayed = !isStorage &&
+                    Gen5ShaderTranslator.IsArrayedImageBinding(binding);
                 var imageType = _module.TypeImage(
                     componentType,
                     SpirvImageDim.Dim2D,
                     depth: false,
-                    arrayed: false,
+                    arrayed: isArrayed,
                     multisampled: false,
                     sampled: isStorage ? 2u : 1u,
                     isStorage ? format : SpirvImageFormat.Unknown);
@@ -1199,7 +1202,8 @@ public static partial class Gen5SpirvTranslator
                         _module.TypeVector(componentType, 4),
                         componentKind,
                         isScaled,
-                        isStorage));
+                        isStorage,
+                        isArrayed));
                 _interfaces.Add(variable);
             }
         }
@@ -4444,12 +4448,16 @@ public static partial class Gen5SpirvTranslator
                     addressCursor += 4;
                 }
 
-                var coordinates = BuildFloatCoordinates(image, addressCursor);
+                var coordinates = resource.Arrayed
+                    ? BuildFloatArrayCoordinates(image, addressCursor)
+                    : BuildFloatCoordinates(image, addressCursor);
                 var explicitLod = hasGradients || hasZeroLod || hasLod;
                 var lod = hasZeroLod
                     ? Float(0)
                     : hasLod
-                        ? LoadImageFloatAddress(image, addressCursor + 2)
+                        ? LoadImageFloatAddress(
+                            image,
+                            addressCursor + (resource.Arrayed ? 3 : 2))
                         : lodOrBias;
                 if (hasOffset)
                 {
@@ -4534,7 +4542,9 @@ public static partial class Gen5SpirvTranslator
                     addressCursor += ImageFullAddressSlots(image);
                 }
 
-                var coordinates = BuildFloatCoordinates(image, addressCursor);
+                var coordinates = resource.Arrayed
+                    ? BuildFloatArrayCoordinates(image, addressCursor)
+                    : BuildFloatCoordinates(image, addressCursor);
                 var operands = new List<uint>
                 {
                     imageObject,
@@ -4732,6 +4742,19 @@ public static partial class Gen5SpirvTranslator
                 _vec2Type,
                 x,
                 y);
+        }
+
+        private uint BuildFloatArrayCoordinates(Gen5ImageControl image, int start)
+        {
+            var x = LoadImageFloatAddress(image, start);
+            var y = LoadImageFloatAddress(image, start + 1);
+            var slice = LoadImageFloatAddress(image, start + 2);
+            return _module.AddInstruction(
+                SpirvOp.CompositeConstruct,
+                _vec3Type,
+                x,
+                y,
+                slice);
         }
 
         private static int ImageAddressRegister(
@@ -5141,9 +5164,20 @@ public static partial class Gen5SpirvTranslator
                 signedLod);
             var size = _module.AddInstruction(
                 SpirvOp.ImageQuerySizeLod,
-                ivec2,
+                resource.Arrayed ? _module.TypeVector(_intType, 3) : ivec2,
                 image,
                 clampedLod);
+            if (resource.Arrayed)
+            {
+                size = _module.AddInstruction(
+                    SpirvOp.VectorShuffle,
+                    ivec2,
+                    size,
+                    size,
+                    0u,
+                    1u);
+            }
+
             var sizeFloat = _module.AddInstruction(
                 SpirvOp.ConvertSToF,
                 _vec2Type,
@@ -5157,11 +5191,34 @@ public static partial class Gen5SpirvTranslator
                 _vec2Type,
                 offsetFloat,
                 sizeFloat);
+            if (!resource.Arrayed)
+            {
+                return _module.AddInstruction(
+                    SpirvOp.FAdd,
+                    _vec2Type,
+                    coordinates,
+                    normalizedOffset);
+            }
+
+            var offsetVec3 = _module.AddInstruction(
+                SpirvOp.CompositeConstruct,
+                _vec3Type,
+                _module.AddInstruction(
+                    SpirvOp.CompositeExtract,
+                    _floatType,
+                    normalizedOffset,
+                    0u),
+                _module.AddInstruction(
+                    SpirvOp.CompositeExtract,
+                    _floatType,
+                    normalizedOffset,
+                    1u),
+                Float(0));
             return _module.AddInstruction(
                 SpirvOp.FAdd,
-                _vec2Type,
+                _vec3Type,
                 coordinates,
-                normalizedOffset);
+                offsetVec3);
         }
 
         private bool TryEmitExport(
@@ -6912,6 +6969,18 @@ public static partial class Gen5SpirvTranslator
                 UInt(0x108));
         }
 
+        // A wave-mask SGPR (VCC/EXEC) consumed as a per-lane predicate — the
+        // condition of VCndmask, a VCC/EXEC branch, or the derived _vcc/_exec
+        // bool — must be tested at the CURRENT lane's bit, exactly as the
+        // hardware does, not as "the 64-bit value is non-zero". The two coincide
+        // for comparison results (only the lane's own bit is ever set), so the
+        // single-lane path historically used a cheaper whole-word non-zero test.
+        // But bitwise-complement wave-mask idioms (S_NOT/S_ORN2/S_ANDN2/S_NAND/
+        // S_NOR on a 64-bit mask) set the unused upper 63 bits; a whole-word test
+        // then reports "lane active" even when this lane's bit is clear. Unity's
+        // PostProcessing NaN killer does exactly this (`anyNaN | ~allFinite`),
+        // which made every valid pixel read as NaN and get replaced with 0 —
+        // zeroing the whole scene before tonemap. Extract the lane bit always.
         private uint IsWaveMaskActive(uint mask) =>
             IsCurrentLaneSet(mask);
 

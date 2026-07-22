@@ -4,6 +4,7 @@
 using System.Collections.Concurrent;
 using SharpEmu.HLE;
 using SharpEmu.Libs.AvPlayer;
+using SharpEmu.Libs.Bink;
 using SharpEmu.Libs.Gpu;
 using SharpEmu.ShaderCompiler;
 using SharpEmu.ShaderCompiler.Vulkan;
@@ -54,6 +55,7 @@ public static partial class AgcExports
     private const uint ItWriteData = 0x37;
     private const uint ItDispatchDirect = 0x15;
     private const uint ItDispatchIndirect = 0x16;
+    private const uint ItSetPredication = 0x20;
     private const uint ItWaitRegMem = 0x3C;
     private const uint ItIndirectBuffer = 0x3F;
     private const uint ItCopyData = 0x40;
@@ -166,6 +168,10 @@ public static partial class AgcExports
     private const uint Gen5TextureFormatR16G16B16A16Float = 12;
     private const uint Gen5TextureType1D = 8;
     private const uint Gen5TextureType2D = 9;
+    private const uint Gen5TextureType3D = 10;
+    private const uint Gen5TextureTypeCube = 11;
+    private const uint Gen5TextureType1DArray = 12;
+    private const uint Gen5TextureType2DArray = 13;
     private const ulong MaxPresentedTextureBytes = 128UL * 1024UL * 1024UL;
     private const ulong VideoOutPixelFormatA8R8G8B8Srgb = 0x80000000;
     private const ulong VideoOutPixelFormatA8B8G8R8Srgb = 0x80002200;
@@ -296,6 +302,7 @@ public static partial class AgcExports
         object,
         ConcurrentDictionary<(ulong Code, ulong Header), byte>>
         _embeddedCombinedShaderScanAttempts = new();
+    private static readonly ConcurrentDictionary<ulong, byte> _arrayUploadUnsupported = new();
     private static readonly bool _traceAgc = string.Equals(
         Environment.GetEnvironmentVariable("SHARPEMU_LOG_AGC"),
         "1",
@@ -470,7 +477,7 @@ public static partial class AgcExports
     private static long _labelProducerSequence;
     private static readonly object _labelProducerGate = new();
     private static readonly List<LabelProducerTrace> _labelProducers = [];
-    private static readonly HashSet<(object Memory, ulong Address, ulong SubmissionId)>
+    private static readonly HashSet<(object Memory, ulong Address)>
         _tracedProducerlessWaits = new();
     private static long _shaderTranslationMissTraceCount;
     private static long _translatedDrawTraceCount;
@@ -645,7 +652,8 @@ public static partial class AgcExports
         bool IsStorage,
         bool WritesImage,
         uint MipLevel,
-        IReadOnlyList<uint> SamplerDescriptor);
+        IReadOnlyList<uint> SamplerDescriptor,
+        bool IsArrayed = false);
 
     private readonly record struct RenderTargetWriter(
         ulong Sequence,
@@ -744,6 +752,7 @@ public static partial class AgcExports
         public uint IndexSize { get; set; }
         public uint InstanceCount { get; set; } = 1;
         public uint DrawIndexOffset { get; set; }
+        public bool PredicateSkip { get; set; }
         public string QueueName { get; set; } = "graphics";
         public ulong ActiveSubmissionId { get; set; }
         public Queue<PendingSubmission> PendingSubmissions { get; } = new();
@@ -2310,12 +2319,12 @@ public static partial class AgcExports
             return ReturnPointer(ctx, 0);
         }
 
-        var packetDwords = size == 0 ? 6u : 9u;
+        var packetDwords = size == 0 ? 7u : 9u;
         var packetRegister = size == 0 ? RWaitMem32 : RWaitMem64;
         if (!TryAllocateCommandDwords(ctx, commandBufferAddress, packetDwords, out var commandAddress) ||
             !TryWriteUInt32(ctx, commandAddress, Pm4(packetDwords, ItNop, packetRegister)) ||
-            !TryWriteUInt32(ctx, commandAddress + 4, (uint)address) ||
-            !TryWriteUInt32(ctx, commandAddress + 8, (uint)(address >> 32)) ||
+            !TryWriteUInt32(ctx, commandAddress + 4, (uint)address & (size == 0 ? ~0x3u : ~0x7u)) ||
+            !TryWriteUInt32(ctx, commandAddress + 8, (uint)(address >> 32) & 0x3FFFFu) ||
             !TryWriteUInt32(ctx, commandAddress + 12, (uint)mask))
         {
             return ReturnPointer(ctx, 0);
@@ -2323,8 +2332,9 @@ public static partial class AgcExports
 
         if (size == 0)
         {
-            if (!TryWriteUInt32(ctx, commandAddress + 16, compareFunction) ||
-                !TryWriteUInt32(ctx, commandAddress + 20, (uint)reference))
+            if (!TryWriteUInt32(ctx, commandAddress + 16, (uint)reference) ||
+                !TryWriteUInt32(ctx, commandAddress + 20, EncodeWaitRegMem32Control(compareFunction, 0, cachePolicy)) ||
+                !TryWriteUInt32(ctx, commandAddress + 24, EncodeWaitRegMemPoll(pollCycles)))
             {
                 return ReturnPointer(ctx, 0);
             }
@@ -2332,8 +2342,8 @@ public static partial class AgcExports
         else if (!TryWriteUInt32(ctx, commandAddress + 16, (uint)(mask >> 32)) ||
                  !TryWriteUInt32(ctx, commandAddress + 20, (uint)reference) ||
                  !TryWriteUInt32(ctx, commandAddress + 24, (uint)(reference >> 32)) ||
-                 !TryWriteUInt32(ctx, commandAddress + 28, compareFunction) ||
-                 !TryWriteUInt32(ctx, commandAddress + 32, pollCycles / 40))
+                 !TryWriteUInt32(ctx, commandAddress + 28, EncodeWaitRegMem64Control(compareFunction, 0, cachePolicy)) ||
+                 !TryWriteUInt32(ctx, commandAddress + 32, EncodeWaitRegMemPoll(pollCycles)))
         {
             return ReturnPointer(ctx, 0);
         }
@@ -3057,38 +3067,21 @@ public static partial class AgcExports
             return ReturnPointer(ctx, 0);
         }
 
-        var standardWait = operation is 2 or 3;
-        var packetDwords = standardWait ? 7u : size == 0 ? 6u : 9u;
+        var packetDwords = size == 0 ? 7u : 9u;
         var packetRegister = size == 0 ? RWaitMem32 : RWaitMem64;
-        if (!TryAllocateCommandDwords(ctx, commandBufferAddress, packetDwords, out var commandAddress))
-        {
-            return ReturnPointer(ctx, 0);
-        }
-
-        if (standardWait)
-        {
-            if (!TryWriteUInt32(ctx, commandAddress, Pm4(packetDwords, ItWaitRegMem, 0)) ||
-                !TryWriteUInt32(ctx, commandAddress + 4, compareFunction | ((operation & 1) << 8)) ||
-                !TryWriteUInt32(ctx, commandAddress + 8, (uint)address) ||
-                !TryWriteUInt32(ctx, commandAddress + 12, (uint)(address >> 32)) ||
-                !TryWriteUInt32(ctx, commandAddress + 16, (uint)reference) ||
-                !TryWriteUInt32(ctx, commandAddress + 20, (uint)mask) ||
-                !TryWriteUInt32(ctx, commandAddress + 24, pollCycles / 40))
-            {
-                return ReturnPointer(ctx, 0);
-            }
-        }
-        else if (!TryWriteUInt32(ctx, commandAddress, Pm4(packetDwords, ItNop, packetRegister)) ||
-                 !TryWriteUInt32(ctx, commandAddress + 4, (uint)address) ||
-                 !TryWriteUInt32(ctx, commandAddress + 8, (uint)(address >> 32)) ||
+        if (!TryAllocateCommandDwords(ctx, commandBufferAddress, packetDwords, out var commandAddress) ||
+            !TryWriteUInt32(ctx, commandAddress, Pm4(packetDwords, ItNop, packetRegister)) ||
+                 !TryWriteUInt32(ctx, commandAddress + 4, (uint)address & (size == 0 ? ~0x3u : ~0x7u)) ||
+                 !TryWriteUInt32(ctx, commandAddress + 8, (uint)(address >> 32) & 0x3FFFFu) ||
                  !TryWriteUInt32(ctx, commandAddress + 12, (uint)mask))
         {
             return ReturnPointer(ctx, 0);
         }
         else if (size == 0)
         {
-            if (!TryWriteUInt32(ctx, commandAddress + 16, compareFunction | (operation << 8)) ||
-                !TryWriteUInt32(ctx, commandAddress + 20, (uint)reference))
+            if (!TryWriteUInt32(ctx, commandAddress + 16, (uint)reference) ||
+                !TryWriteUInt32(ctx, commandAddress + 20, EncodeWaitRegMem32Control(compareFunction, operation, cachePolicy)) ||
+                !TryWriteUInt32(ctx, commandAddress + 24, EncodeWaitRegMemPoll(pollCycles)))
             {
                 return ReturnPointer(ctx, 0);
             }
@@ -3096,8 +3089,8 @@ public static partial class AgcExports
         else if (!TryWriteUInt32(ctx, commandAddress + 16, (uint)(mask >> 32)) ||
                  !TryWriteUInt32(ctx, commandAddress + 20, (uint)reference) ||
                  !TryWriteUInt32(ctx, commandAddress + 24, (uint)(reference >> 32)) ||
-                 !TryWriteUInt32(ctx, commandAddress + 28, compareFunction | (operation << 8)) ||
-                 !TryWriteUInt32(ctx, commandAddress + 32, pollCycles / 40))
+                 !TryWriteUInt32(ctx, commandAddress + 28, EncodeWaitRegMem64Control(compareFunction, operation, cachePolicy)) ||
+                 !TryWriteUInt32(ctx, commandAddress + 32, EncodeWaitRegMemPoll(pollCycles)))
         {
             return ReturnPointer(ctx, 0);
         }
@@ -3536,7 +3529,14 @@ public static partial class AgcExports
             return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
 
-        return ctx.TryWriteUInt64(commandAddress + fieldOffset, address)
+        var wrote = op == ItNop && register is RWaitMem32 or RWaitMem64
+            ? TryWriteUInt32(
+                  ctx,
+                  commandAddress + fieldOffset,
+                  (uint)address & (register == RWaitMem32 ? ~0x3u : ~0x7u)) &&
+              TryWriteUInt32(ctx, commandAddress + fieldOffset + 4, (uint)(address >> 32) & 0x3FFFFu)
+            : ctx.TryWriteUInt64(commandAddress + fieldOffset, address);
+        return wrote
             ? SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_OK)
             : SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
     }
@@ -3559,7 +3559,7 @@ public static partial class AgcExports
         var fieldOffset = op == ItWaitRegMem
             ? 4UL
             : op == ItNop && register == RWaitMem32
-                ? 16UL
+                ? 20UL
                 : op == ItNop && register == RWaitMem64
                     ? 28UL
                     : 0;
@@ -3588,7 +3588,7 @@ public static partial class AgcExports
         var wrote = op == ItWaitRegMem
             ? TryWriteUInt32(ctx, commandAddress + 16, (uint)reference)
             : op == ItNop && register == RWaitMem32
-                ? TryWriteUInt32(ctx, commandAddress + 20, (uint)reference)
+                ? TryWriteUInt32(ctx, commandAddress + 16, (uint)reference)
                 : op == ItNop && register == RWaitMem64 &&
                   ctx.TryWriteUInt64(commandAddress + 20, reference);
         return wrote
@@ -4488,6 +4488,26 @@ public static partial class AgcExports
                 CountSubmittedOpcode(op, register);
             }
 
+            if ((header & 1u) != 0 && state.PredicateSkip)
+            {
+                if (tracePackets)
+                {
+                    TraceAgc(
+                        $"agc.dcb.predicated_skip queue={state.QueueName} " +
+                        $"packet=0x{currentAddress:X16} op=0x{op:X2} len={length}");
+                }
+
+                offset += length;
+                continue;
+            }
+
+            if (op == ItSetPredication)
+            {
+                ApplySubmittedPredication(ctx, state, currentAddress, length, tracePackets);
+                offset += length;
+                continue;
+            }
+
             if (op == ItNop &&
                 register is RDrawReset or RAcbReset &&
                 length >= 2)
@@ -5330,7 +5350,7 @@ public static partial class AgcExports
 
             if (!stale && producer is null &&
                 !_tracedProducerlessWaits.Add(
-                    (memory, waiter.WaitAddress, waiter.SubmissionId)))
+                    (memory, waiter.WaitAddress)))
             {
                 return;
             }
@@ -5524,6 +5544,111 @@ public static partial class AgcExports
         state.IndexSize = 0;
         state.InstanceCount = 1;
         state.DrawIndexOffset = 0;
+    }
+
+    private static void ApplySubmittedPredication(
+        CpuContext ctx,
+        SubmittedDcbState state,
+        ulong packetAddress,
+        uint packetLength,
+        bool tracePacket)
+    {
+        if (packetLength < 3 ||
+            !TryReadUInt32(ctx, packetAddress + 4, out var first) ||
+            !TryReadUInt32(ctx, packetAddress + 8, out var second))
+        {
+            return;
+        }
+
+        const uint flagsMask = 0x0007_1100u;
+        uint flags;
+        ulong predicateAddress;
+        if (packetLength >= 4 &&
+            (first & ~flagsMask) == 0 &&
+            TryReadUInt32(ctx, packetAddress + 12, out var third) &&
+            third <= 0xFFFFu)
+        {
+            flags = first;
+            predicateAddress = ((ulong)third << 32) | (second & 0xFFFF_FFF0u);
+        }
+        else
+        {
+            flags = second;
+            predicateAddress = (first & 0xFFFF_FFF0u) | ((ulong)(second & 0xFFu) << 32);
+        }
+
+        var operation = (flags >> 16) & 0x7u;
+        if (operation == 0)
+        {
+            state.PredicateSkip = false;
+            return;
+        }
+
+        if (operation != 3)
+        {
+            if (tracePacket)
+            {
+                TraceAgc(
+                    $"agc.dcb.predication_unsupported packet=0x{packetAddress:X16} " +
+                    $"op={operation} addr=0x{predicateAddress:X16}");
+            }
+
+            return;
+        }
+
+        var waitOperation = (flags >> 12) & 1u;
+        var value = 0UL;
+        var readSucceeded = false;
+        void ReadPredicate() =>
+            readSucceeded = ctx.TryReadUInt64(predicateAddress, out value);
+
+        if (waitOperation != 0)
+        {
+            var sequence = GuestGpu.Current.SubmitOrderedGuestAction(
+                ReadPredicate,
+                $"set_predication read 0x{predicateAddress:X16}");
+            if (sequence == 0)
+            {
+                ReadPredicate();
+            }
+            else if (!GuestGpu.Current.WaitForGuestWork(sequence))
+            {
+                if (tracePacket)
+                {
+                    TraceAgc(
+                        $"agc.dcb.predication_wait_failed packet=0x{packetAddress:X16} " +
+                        $"addr=0x{predicateAddress:X16} sequence={sequence}");
+                }
+
+                return;
+            }
+        }
+        else
+        {
+            ReadPredicate();
+        }
+
+        if (!readSucceeded)
+        {
+            if (tracePacket)
+            {
+                TraceAgc(
+                    $"agc.dcb.predication_read_failed packet=0x{packetAddress:X16} " +
+                    $"addr=0x{predicateAddress:X16}");
+            }
+
+            return;
+        }
+
+        var condition = (flags >> 8) & 1u;
+        state.PredicateSkip = condition == 0 ? value != 0 : value == 0;
+        if (tracePacket)
+        {
+            TraceAgc(
+                $"agc.dcb.predication packet=0x{packetAddress:X16} " +
+                $"addr=0x{predicateAddress:X16} value=0x{value:X16} " +
+                $"condition={condition} wait={waitOperation} skip={state.PredicateSkip}");
+        }
     }
 
     private static bool RangesOverlap(
@@ -6112,6 +6237,7 @@ public static partial class AgcExports
     private static bool TryParseSubmittedWait(
         CpuContext ctx,
         ulong packetAddress,
+        uint packetLength,
         bool is64Bit,
         bool isStandard,
         out ulong waitAddress,
@@ -6142,8 +6268,10 @@ public static partial class AgcExports
             return true;
         }
 
+        var legacyWait32 = !is64Bit && packetLength == 6;
+        var controlOffset = is64Bit ? 28u : legacyWait32 ? 16u : 20u;
         if (!TryReadUInt64(ctx, packetAddress + 4, out waitAddress) ||
-            !TryReadUInt32(ctx, packetAddress + (is64Bit ? 28u : 16u), out var control))
+            !TryReadUInt32(ctx, packetAddress + controlOffset, out var control))
         {
             return false;
         }
@@ -6156,8 +6284,9 @@ public static partial class AgcExports
                    TryReadUInt64(ctx, packetAddress + 20, out reference);
         }
 
+        var referenceOffset = legacyWait32 ? 20u : 16u;
         if (!TryReadUInt32(ctx, packetAddress + 12, out var mask32) ||
-            !TryReadUInt32(ctx, packetAddress + 20, out var reference32))
+            !TryReadUInt32(ctx, packetAddress + referenceOffset, out var reference32))
         {
             return false;
         }
@@ -6262,7 +6391,7 @@ public static partial class AgcExports
         bool tracePacket)
     {
         if (!TryParseSubmittedWait(
-                ctx, packetAddress, is64Bit, isStandard,
+                ctx, packetAddress, length, is64Bit, isStandard,
                 out var waitAddress, out var reference, out var mask, out var compareFunction,
                 out var controlValue))
         {
@@ -7646,7 +7775,8 @@ public static partial class AgcExports
                     exportEvaluation.ImageBindings),
                 Gen5ShaderTranslator.IsImageWriteOperation(binding.Opcode),
                 binding.MipLevel ?? 0,
-                binding.SamplerDescriptor));
+                binding.SamplerDescriptor,
+                Gen5ShaderTranslator.IsArrayedImageBinding(binding)));
         }
 
         IReadOnlyList<Gen5VertexInputBinding> vertexInputs =
@@ -9561,7 +9691,8 @@ public static partial class AgcExports
                     isStorage,
                     Gen5ShaderTranslator.IsImageWriteOperation(binding.Opcode),
                     binding.MipLevel ?? 0,
-                    binding.SamplerDescriptor));
+                    binding.SamplerDescriptor,
+                    Gen5ShaderTranslator.IsArrayedImageBinding(binding)));
         }
 
         error = string.Empty;
@@ -10690,6 +10821,7 @@ public static partial class AgcExports
                     binding.WritesImage,
                     binding.MipLevel,
                     binding.SamplerDescriptor,
+                    binding.IsArrayed,
                     out var texture))
             {
                 textures.Add(texture);
@@ -11255,11 +11387,16 @@ public static partial class AgcExports
         bool writesImage,
         uint mipLevel,
         IReadOnlyList<uint> samplerDescriptor,
+        bool isArrayed,
         out GuestDrawTexture texture)
     {
         texture = default!;
         if ((descriptor.Type != Gen5TextureType1D &&
-             descriptor.Type != Gen5TextureType2D) ||
+             descriptor.Type != Gen5TextureType2D &&
+             descriptor.Type != Gen5TextureType3D &&
+             descriptor.Type != Gen5TextureTypeCube &&
+             descriptor.Type != Gen5TextureType1DArray &&
+             descriptor.Type != Gen5TextureType2DArray) ||
             descriptor.Width == 0 ||
             descriptor.Height == 0 ||
             descriptor.Width > 8192 ||
@@ -11270,7 +11407,8 @@ public static partial class AgcExports
                 isStorage,
                 writesImage,
                 descriptor.Format,
-                descriptor.NumberType);
+                descriptor.NumberType,
+                isArrayed);
             return true;
         }
 
@@ -11295,13 +11433,18 @@ public static partial class AgcExports
                 isStorage,
                 writesImage,
                 descriptor.Format,
-                descriptor.NumberType);
+                descriptor.NumberType,
+                isArrayed);
             return true;
         }
 
         var physicalSourceByteCount = sourceByteCount;
         var guestAllocationByteCount = sourceByteCount;
         ulong sourceOffset = 0;
+        var resourceMipLevels = descriptor.HasExtendedDescriptor
+            ? descriptor.ResourceMipLevels
+            : 1u;
+        var chainSliceBytes = sourceByteCount;
         var sourceX = 0;
         var sourceY = 0;
         var elementsWide = 0;
@@ -11324,28 +11467,55 @@ public static partial class AgcExports
         {
             physicalSourceByteCount = tiledByteCount;
             guestAllocationByteCount = tiledByteCount;
+            chainSliceBytes = tiledByteCount;
         }
 
         // Thin 64 KiB standard mip chains reserve their first block for the
         // mip tail and store larger levels in reverse order. Standalone CPU
         // textures currently upload resource mip 0, so resolve its real byte
         // range instead of interpreting the tail and smaller levels as mip 0.
-        if (GnmTiling.NeedsDetile(descriptor.TileMode) &&
+        GnmTiling.TiledMipLayout tiledMipLayout = default;
+        var hasStandard64KMipLayout = GnmTiling.NeedsDetile(descriptor.TileMode) &&
             hasElementLayout &&
             GnmTiling.TryGetStandard64KMipLayout(
                 descriptor.TileMode,
                 elementsWide,
                 elementsHigh,
                 bytesPerElement,
-                descriptor.ResourceMipLevels,
+                resourceMipLevels,
                 mipLevel: 0,
-                out var tiledMipLayout))
+                out tiledMipLayout);
+        if (hasStandard64KMipLayout)
         {
             sourceOffset = tiledMipLayout.SourceOffset;
             physicalSourceByteCount = tiledMipLayout.SourceByteCount;
             guestAllocationByteCount = tiledMipLayout.AllocationByteCount;
+            chainSliceBytes = tiledMipLayout.AllocationByteCount;
             sourceX = tiledMipLayout.SourceX;
             sourceY = tiledMipLayout.SourceY;
+        }
+        else if (hasElementLayout &&
+                 resourceMipLevels > 1 &&
+                 GnmTiling.TryGetBaseMipPlacement(
+                     descriptor.TileMode,
+                     elementsWide,
+                     elementsHigh,
+                     bytesPerElement,
+                     resourceMipLevels,
+                     out var baseMipByteOffset,
+                     out var baseMipInTail,
+                     out var mipTailElementX,
+                     out var mipTailElementY,
+                     out var placedChainSliceBytes))
+        {
+            sourceOffset = baseMipByteOffset;
+            guestAllocationByteCount = placedChainSliceBytes;
+            chainSliceBytes = placedChainSliceBytes;
+            if (baseMipInTail)
+            {
+                sourceX = mipTailElementX;
+                sourceY = mipTailElementY;
+            }
         }
 
         if (physicalSourceByteCount > MaxPresentedTextureBytes ||
@@ -11356,7 +11526,8 @@ public static partial class AgcExports
                 isStorage,
                 writesImage,
                 descriptor.Format,
-                descriptor.NumberType);
+                descriptor.NumberType,
+                isArrayed);
             return true;
         }
 
@@ -11372,14 +11543,28 @@ public static partial class AgcExports
                 isStorage,
                 writesImage,
                 descriptor.Format,
-                descriptor.NumberType);
+                descriptor.NumberType,
+                isArrayed);
             return true;
         }
 
-        var guestImageAvailable =
+        var wantsArrayUpload = isArrayed &&
             !isStorage &&
             descriptor.Address != 0 &&
-            GuestGpu.Current.IsGpuGuestImageAvailable(
+            (descriptor.Type == Gen5TextureType2DArray ||
+             descriptor.Type == Gen5TextureType1DArray) &&
+            descriptor.Depth > 1 &&
+            !_arrayUploadUnsupported.ContainsKey(descriptor.Address);
+        var arrayUploadLayers = wantsArrayUpload ? descriptor.Depth : 1u;
+
+        // Upload-known (not plain availability): the presenter's answer goes
+        // generation-stale when the guest CPU rewrites a CPU-backed image
+        // (video planes, streamed font atlases), which routes this draw back
+        // through the texel copy below so the refresh path re-uploads.
+        var guestImageAvailable = !isStorage &&
+            !wantsArrayUpload &&
+            descriptor.Address != 0 &&
+            GuestGpu.Current.IsGuestImageUploadKnown(
                 descriptor.Address,
                 descriptor.Format,
                 descriptor.NumberType);
@@ -11413,7 +11598,9 @@ public static partial class AgcExports
                 SourceY: sourceY,
                 ElementsWide: elementsWide,
                 ElementsHigh: elementsHigh,
-                BytesPerElement: bytesPerElement);
+                BytesPerElement: bytesPerElement,
+                ArrayedView: isArrayed,
+                ArrayLayers: arrayUploadLayers);
             return true;
         }
 
@@ -11498,7 +11685,9 @@ public static partial class AgcExports
                     SourceY: sourceY,
                     ElementsWide: elementsWide,
                     ElementsHigh: elementsHigh,
-                    BytesPerElement: bytesPerElement);
+                    BytesPerElement: bytesPerElement,
+                    ArrayedView: isArrayed,
+                    ArrayLayers: 1);
                 return true;
             }
 
@@ -11511,6 +11700,30 @@ public static partial class AgcExports
             // (skipping would leave the draw with no pixels and a fallback
             // texture for the frame — visible flicker on animated textures).
             var sampler = ToGuestSampler(samplerDescriptor);
+            var trackedByteCount = guestAllocationByteCount;
+            if (wantsArrayUpload)
+            {
+                try
+                {
+                    trackedByteCount = checked(chainSliceBytes * arrayUploadLayers);
+                }
+                catch (OverflowException)
+                {
+                    trackedByteCount = guestAllocationByteCount;
+                }
+            }
+
+            if (descriptor.Address != 0)
+            {
+                GuestImageWriteTracker.Track(
+                    descriptor.Address,
+                    trackedByteCount,
+                    source: "agc.decoded-texture");
+            }
+
+            var hasWriteGeneration = GuestImageWriteTracker.TryGetWriteGeneration(
+                descriptor.Address,
+                out var writeGeneration);
             if (!dirtyGuestImageSnapshotClaimed &&
                 !_textureCopySkipDisabled &&
                 descriptor.Address != 0 &&
@@ -11526,7 +11739,9 @@ public static partial class AgcExports
                         descriptor.TileMode,
                         sourceWidth,
                         sourceOffset,
-                        sampler)))
+                        sampler,
+                        isArrayed,
+                        arrayUploadLayers)))
             {
                 texture = new GuestDrawTexture(
                     descriptor.Address,
@@ -11553,8 +11768,90 @@ public static partial class AgcExports
                     SourceY: sourceY,
                     ElementsWide: elementsWide,
                     ElementsHigh: elementsHigh,
-                    BytesPerElement: bytesPerElement);
+                    BytesPerElement: bytesPerElement,
+                    ArrayedView: isArrayed,
+                    ArrayLayers: arrayUploadLayers);
                 return true;
+            }
+
+            if (wantsArrayUpload)
+            {
+                var arrayLayers = arrayUploadLayers;
+                var layerBytes = checked((int)sourceByteCount);
+                var totalBytes = (long)layerBytes * arrayLayers;
+                if (totalBytes <= int.MaxValue)
+                {
+                    var layered = new byte[totalBytes];
+                    var uploadedLayers = 0u;
+                    for (var layer = 0u; layer < arrayLayers; layer++)
+                    {
+                        var sliceSource = new byte[(int)physicalSourceByteCount];
+                        ulong sliceAddress;
+                        try
+                        {
+                            sliceAddress = checked(
+                                descriptor.Address + layer * chainSliceBytes + sourceOffset);
+                        }
+                        catch (OverflowException)
+                        {
+                            break;
+                        }
+
+                        if (!ctx.Memory.TryRead(sliceAddress, sliceSource))
+                        {
+                            break;
+                        }
+
+                        var sliceLinear = TryDetileTextureSource(
+                            descriptor,
+                            sourceWidth,
+                            layerBytes,
+                            sliceSource,
+                            sourceX,
+                            sourceY) ?? sliceSource.AsSpan(0, layerBytes).ToArray();
+                        sliceLinear.AsSpan(0, layerBytes)
+                            .CopyTo(layered.AsSpan(checked((int)(layer * layerBytes))));
+                        uploadedLayers++;
+                    }
+
+                    if (uploadedLayers == arrayLayers)
+                    {
+                        texture = new GuestDrawTexture(
+                            descriptor.Address,
+                            descriptor.Width,
+                            descriptor.Height,
+                            descriptor.Format,
+                            descriptor.NumberType,
+                            layered,
+                            IsFallback: false,
+                            IsStorage: false,
+                            MipLevels: descriptor.MipLevels,
+                            MipLevel: mipLevel,
+                            BaseMipLevel: descriptor.ViewBaseLevel,
+                            ResourceMipLevels: descriptor.ResourceMipLevels,
+                            Pitch: sourceWidth,
+                            TileMode: descriptor.TileMode,
+                            DstSelect: descriptor.DstSelect,
+                            Sampler: sampler,
+                            WritesImage: writesImage,
+                            SourceOffset: sourceOffset,
+                            PhysicalSourceByteCount: physicalSourceByteCount,
+                            GuestAllocationByteCount: trackedByteCount,
+                            SourceX: sourceX,
+                            SourceY: sourceY,
+                            ElementsWide: elementsWide,
+                            ElementsHigh: elementsHigh,
+                            BytesPerElement: bytesPerElement,
+                            WriteGeneration: hasWriteGeneration ? writeGeneration : -1,
+                            ArrayedView: true,
+                            ArrayLayers: arrayLayers);
+                        dirtyGuestImageSnapshotSucceeded = true;
+                        return true;
+                    }
+                }
+
+                _arrayUploadUnsupported.TryAdd(descriptor.Address, 0);
+                arrayUploadLayers = 1;
             }
 
             var source = new byte[(int)physicalSourceByteCount];
@@ -11567,7 +11864,8 @@ public static partial class AgcExports
                     isStorage,
                     writesImage,
                     descriptor.Format,
-                    descriptor.NumberType);
+                    descriptor.NumberType,
+                    isArrayed);
                 return true;
             }
 
@@ -11629,7 +11927,10 @@ public static partial class AgcExports
                 SourceY: sourceY,
                 ElementsWide: elementsWide,
                 ElementsHigh: elementsHigh,
-                BytesPerElement: bytesPerElement);
+                BytesPerElement: bytesPerElement,
+                WriteGeneration: hasWriteGeneration ? writeGeneration : -1,
+                ArrayedView: isArrayed,
+                ArrayLayers: arrayUploadLayers);
             dirtyGuestImageSnapshotSucceeded = true;
             return true;
         }
@@ -11959,7 +12260,8 @@ public static partial class AgcExports
         bool isStorage,
         bool writesImage,
         uint format,
-        uint numberType)
+        uint numberType,
+        bool isArrayed = false)
     {
         var fallbackFormat = format == 0 ? 10u : format;
         var fallbackNumberType = numberType;
@@ -11974,7 +12276,8 @@ public static partial class AgcExports
             IsStorage: isStorage,
             MipLevels: 1,
             MipLevel: 0,
-            WritesImage: writesImage);
+            WritesImage: writesImage,
+            ArrayedView: isArrayed);
     }
 
     private static GuestSampler ToGuestSampler(IReadOnlyList<uint> descriptor) =>
@@ -12505,7 +12808,8 @@ public static partial class AgcExports
                     isStorage,
                     writesImage,
                     binding.MipLevel ?? 0,
-                    binding.SamplerDescriptor));
+                    binding.SamplerDescriptor,
+                    Gen5ShaderTranslator.IsArrayedImageBinding(binding)));
             hasStorageBinding |= isStorage;
 
             var descriptorState = descriptorValid ? string.Empty : "/invalid-desc";
@@ -14572,6 +14876,23 @@ public static partial class AgcExports
         ((op & 0xFFu) << 8) |
         ((register & 0x3Fu) << 2);
 
+    private static uint EncodeWaitRegMemPoll(uint pollCycles) =>
+        Math.Min(pollCycles >> 4, 0xFFFFu);
+
+    private static uint EncodeWaitRegMem32Control(uint compareFunction, uint operation, uint cachePolicy) =>
+        0x10u |
+        (compareFunction & 0x7u) |
+        ((operation & 0x3u) << 8) |
+        ((operation & 0xCu) << 4) |
+        ((cachePolicy & 0x3u) << 25);
+
+    private static uint EncodeWaitRegMem64Control(uint compareFunction, uint operation, uint cachePolicy) =>
+        0x10u |
+        (compareFunction & 0x7u) |
+        ((operation & 0x1u) << 8) |
+        ((operation & 0x6u) << 5) |
+        ((cachePolicy & 0x3u) << 25);
+
     private static uint Pm4Length(uint header) =>
         ((header >> 16) & 0x3FFFu) + 2u;
 
@@ -15248,16 +15569,21 @@ public static partial class AgcExports
     public static int DcbSetPredication(CpuContext ctx)
     {
         var dcb = ctx[CpuRegister.Rdi];
-        var address = ctx[CpuRegister.Rsi];
+        var condition = (uint)(ctx[CpuRegister.Rsi] & 1u);
+        var operation = (uint)(ctx[CpuRegister.Rdx] & 0x7u);
+        var waitOperation = (uint)(ctx[CpuRegister.Rcx] & 1u);
+        var address = ctx[CpuRegister.R8];
         if (dcb == 0)
         {
             return ReturnPointer(ctx, 0);
         }
 
-        if (!TryAllocateCommandDwords(ctx, dcb, 3, out var cmd) ||
-            !ctx.TryWriteUInt32(cmd, Pm4(3, ItNop, RZero)) ||
-            !ctx.TryWriteUInt32(cmd + 4, (uint)(address & 0xFFFF_FFFFUL)) ||
-            !ctx.TryWriteUInt32(cmd + 8, (uint)(address >> 32)))
+        var flags = (condition << 8) | (waitOperation << 12) | (operation << 16);
+        if (!TryAllocateCommandDwords(ctx, dcb, 4, out var cmd) ||
+            !ctx.TryWriteUInt32(cmd, Pm4(4, ItSetPredication, RZero)) ||
+            !ctx.TryWriteUInt32(cmd + 4, flags) ||
+            !ctx.TryWriteUInt32(cmd + 8, (uint)address & 0xFFFF_FFF0u) ||
+            !ctx.TryWriteUInt32(cmd + 12, (uint)(address >> 32)))
         {
             return ReturnPointer(ctx, 0);
         }
@@ -15272,9 +15598,17 @@ public static partial class AgcExports
         LibraryName = "libSceAgc")]
     public static int SetPacketPredication(CpuContext ctx)
     {
-        // Global predication toggle on a packet; a no-op is safe for rendering.
-        ctx[CpuRegister.Rax] = 0;
-        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        var packetAddress = ctx[CpuRegister.Rdi];
+        var predication = ctx[CpuRegister.Rsi];
+        if (packetAddress == 0 || !TryReadUInt32(ctx, packetAddress, out var header))
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        header = (header & ~1u) | (predication == 1 ? 1u : 0u);
+        return !ctx.TryWriteUInt32(packetAddress, header)
+            ? ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT)
+            : ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
     }
 
     // ABI (reversed from Quake): rdi = array of DCB base addresses (u64 each),
@@ -15448,7 +15782,7 @@ public static partial class AgcExports
         uint owner;
         lock (state.Gate)
         {
-            if (!state.ResourceRegistrationInitialized ||
+            if (state.ResourceRegistrationInitialized &&
                 state.ResourceRegistrationMaxOwners != 0 &&
                 state.ResourceOwners.Count >= state.ResourceRegistrationMaxOwners)
             {
@@ -15482,6 +15816,69 @@ public static partial class AgcExports
         TraceAgc(
             $"agc.driver_register_owner out=0x{ownerAddress:X16} owner={owner} " +
             $"name={System.Text.Encoding.UTF8.GetString(nameBytes)}");
+        return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    private static int RemoveResourcesForOwner(SubmittedGpuState state, uint owner)
+    {
+        var stale = new List<uint>();
+        foreach (var (handle, resource) in state.RegisteredResources)
+        {
+            if (resource.Owner == owner)
+            {
+                stale.Add(handle);
+            }
+        }
+
+        foreach (var handle in stale)
+        {
+            state.RegisteredResources.Remove(handle);
+        }
+
+        return stale.Count;
+    }
+
+    [SysAbiExport(
+        Nid = "ZLJk9r2+2Aw",
+        ExportName = "sceAgcDriverUnregisterOwnerAndResources",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int DriverUnregisterOwnerAndResources(CpuContext ctx)
+    {
+        var owner = (uint)ctx[CpuRegister.Rdi];
+        var state = _submittedGpuStates.GetValue(ctx.Memory, static _ => new SubmittedGpuState());
+        int resources;
+        lock (state.Gate)
+        {
+            if (!state.ResourceOwners.Remove(owner))
+            {
+                return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+            }
+
+            resources = RemoveResourcesForOwner(state, owner);
+            state.ComputeQueues.Remove(owner);
+        }
+
+        TraceAgc($"agc.driver_unregister_owner owner={owner} resources={resources}");
+        return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    [SysAbiExport(
+        Nid = "SCoAN5fYlUM",
+        ExportName = "sceAgcDriverUnregisterAllResourcesForOwner",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int DriverUnregisterAllResourcesForOwner(CpuContext ctx)
+    {
+        var owner = (uint)ctx[CpuRegister.Rdi];
+        var state = _submittedGpuStates.GetValue(ctx.Memory, static _ => new SubmittedGpuState());
+        int resources;
+        lock (state.Gate)
+        {
+            resources = RemoveResourcesForOwner(state, owner);
+        }
+
+        TraceAgc($"agc.driver_unregister_owner_resources owner={owner} resources={resources}");
         return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
     }
 

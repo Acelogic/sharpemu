@@ -115,6 +115,9 @@ public sealed class KernelSystemSoftwareCompatExportsTests
                     : 0;
         }
 
+        public bool TryBackFixedRange(ulong address, ulong size, bool executable) =>
+            AllocateAt(address, size, executable, allowAlternative: false) == address;
+
         public bool TryAllocateAtOrAbove(
             ulong desiredAddress,
             ulong size,

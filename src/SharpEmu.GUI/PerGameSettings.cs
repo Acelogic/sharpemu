@@ -49,7 +49,7 @@ public sealed class PerGameSettings
             var path = PathFor(titleId);
             if (File.Exists(path))
             {
-                return JsonSerializer.Deserialize<PerGameSettings>(File.ReadAllText(path), SerializerOptions);
+                return NormalizeFromJson(File.ReadAllText(path));
             }
         }
         catch (Exception)
@@ -57,6 +57,18 @@ public sealed class PerGameSettings
         }
 
         return null;
+    }
+
+    // A null list inherits global settings; only entries in a present list are sanitized.
+    internal static PerGameSettings? NormalizeFromJson(string json)
+    {
+        var settings = JsonSerializer.Deserialize<PerGameSettings>(json, SerializerOptions);
+        if (settings?.EnvironmentToggles is { } toggles)
+        {
+            settings.EnvironmentToggles = toggles.Where(entry => !string.IsNullOrEmpty(entry)).ToList();
+        }
+
+        return settings;
     }
 
     public void Save(string titleId)

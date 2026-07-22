@@ -86,6 +86,15 @@ public sealed unsafe partial class DirectExecutionBackend
 	[ThreadStatic]
 	private static bool _posixVectorContextAvailable;
 
+	// True while the current thread's in-flight POSIX fault carries the real
+	// XMM registers in the CONTEXT scratch buffer and writes to them will
+	// reach the mcontext on resume. Gates recovery paths (SSE4a EXTRQ/
+	// INSERTQ) that would otherwise compute results from a zeroed XMM area
+	// and silently discard what they "wrote". Darwin is not bridged yet, so
+	// the flag stays false there.
+	[ThreadStatic]
+	private static bool _posixXmmContextBridged;
+
 	private void SetupPosixExceptionHandler()
 	{
 		if (string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_DISABLE_POSIX_SIGNALS"), "1", StringComparison.Ordinal))
@@ -335,6 +344,8 @@ public sealed unsafe partial class DirectExecutionBackend
 		{
 			CopyXmmRegisterBlock(contextRecord + CTX_XMM0, xmmRegisters);
 		}
+
+		_posixXmmContextBridged = xmmRegisters != null;
 
 		EXCEPTION_RECORD record = default;
 		record.ExceptionAddress = (void*)ReadCtxU64(contextRecord, CTX_RIP);
