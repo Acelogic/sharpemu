@@ -20,7 +20,10 @@ public sealed class ProviderLleExportsTests
     private static readonly HashSet<string> CrossGenerationSemanticProviderNids =
         new(StringComparer.Ordinal)
         {
+            "-qLsfDAywIY",
+            "39WxhR-ePew",
             "4fU5yvOkVG4",
+            "5tOfnaClcqM",
             "MsaFhR+lPE4",
             "S1GkePI17zQ",
             "Z7z6HXWORJY",

@@ -303,19 +303,9 @@ internal static class Bink2MovieBridge
 
     private static void AttachNativeMovieLocked(string hostPath)
     {
-        var adapter = GetAdapterLocked();
-        if (adapter is null)
-        {
-            return;
-        }
-
-        CloseActiveLocked();
-        if (!adapter.TryOpen(
-                hostPath,
-                _presentationWidth,
-                _presentationHeight,
-                out var movie,
-                out var info))
+        if (!FfmpegNativeBinkFrameSource.TryOpen(
+                hostPath, _presentationWidth, _presentationHeight, out var source) ||
+            source is null)
         {
             Console.Error.WriteLine(
                 "[LOADER][WARN] Bink2 bridge could not open movie '" +
@@ -323,19 +313,18 @@ internal static class Bink2MovieBridge
             return;
         }
 
+        var info = new Bink2MovieInfo(
+            source.Width, source.Height, source.FramesPerSecondNumerator, source.FramesPerSecondDenominator);
         if (!IsValid(info))
         {
-            adapter.Close(movie);
+            source.Dispose();
             Console.Error.WriteLine(
                 "[LOADER][WARN] Bink2 bridge rejected invalid movie dimensions for '" +
                 Path.GetFileName(hostPath) + "'.");
             return;
         }
 
-        AttachPlaybackLocked(
-            hostPath,
-            info,
-            new NativeFrameDecoder(adapter, movie, info));
+        AttachPlaybackLocked(hostPath, info, source);
         Console.Error.WriteLine(
             "[LOADER][INFO] Bink2 bridge attached: " + Path.GetFileName(hostPath) + " " +
             info.Width + "x" + info.Height + " @ " +
@@ -370,12 +359,11 @@ internal static class Bink2MovieBridge
             return MovieMode.Ffmpeg;
         }
 
-        // Native is the default: the bridge ships embedded in the published
-        // single-file executable (see SharpEmu.CLI.csproj), so it isn't a
-        // loose file next to the exe to probe for with File.Exists here.
-        // GetAdapterLocked() degrades gracefully (falls back to the guest's
-        // own decode, logging one informational line) if it's genuinely
-        // unavailable, so defaulting to Native unconditionally is safe.
+        // Native is the default: FfmpegNativeBinkFrameSource.TryOpen degrades
+        // gracefully (falls back to the guest's own decode, logging one
+        // informational line) if the FFmpeg libraries SharpEmu.CLI.csproj
+        // downloads next to the executable are genuinely unavailable, so
+        // defaulting to Native unconditionally is safe.
         return MovieMode.Native;
     }
 
