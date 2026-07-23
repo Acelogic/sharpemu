@@ -2757,18 +2757,6 @@ public static partial class AgcExports
     }
 
     [SysAbiExport(
-        Nid = "aP1Ki9G3++4",
-        ExportName = "sceAgcDcbSetUcRegisterDirectGetSize",
-        Target = Generation.Gen5,
-        LibraryName = "libSceAgc")]
-    public static int DcbSetUcRegisterDirectGetSize(CpuContext ctx)
-    {
-        // SET_UCONFIG_REG header + offset + value.
-        ctx[CpuRegister.Rax] = 3u * sizeof(uint);
-        return (int)ctx[CpuRegister.Rax];
-    }
-
-    [SysAbiExport(
         Nid = "GIIW2J37e70",
         ExportName = "sceAgcDcbSetIndexSize",
         Target = Generation.Gen5,

@@ -12486,11 +12486,16 @@ internal static unsafe class VulkanVideoPresenter
                 SHA256.HashData(draw.VertexSpirv).AsSpan(0, 4));
             var pixelDigest = Convert.ToHexString(
                 SHA256.HashData(draw.PixelSpirv).AsSpan(0, 4));
-            var topology = GetPrimitiveTopology(draw.PrimitiveType);
+            var topology = GetPrimitiveTopology(
+                draw.PrimitiveType,
+                indexed: draw.IndexBuffer is not null,
+                vertexCount: draw.VertexCount,
+                hasVertexBuffers: draw.VertexBuffers.Count > 0);
             var effectiveVertexCount = GetDrawVertexCount(
                 draw.PrimitiveType,
                 draw.VertexCount,
-                draw.IndexBuffer);
+                draw.IndexBuffer,
+                draw.VertexBuffers.Count > 0);
             var indexElementBytes = draw.IndexBuffer is { Is32Bit: true }
                 ? sizeof(uint)
                 : sizeof(ushort);
