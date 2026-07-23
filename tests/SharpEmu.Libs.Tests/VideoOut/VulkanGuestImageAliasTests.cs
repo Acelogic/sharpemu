@@ -78,6 +78,76 @@ public sealed class VulkanGuestImageAliasTests
     }
 
     [Fact]
+    public void GpuDmaCopyAcceptsMatchingThreeDimensionalImages()
+    {
+        Assert.True(VulkanVideoPresenter.IsGuestImageCopyCompatible(
+            sourceWidth: 32,
+            sourceHeight: 16,
+            sourceDepth: 8,
+            sourceType: VulkanVideoPresenter.Gen5TextureType3D,
+            sourceFormat: Format.R8G8B8A8Unorm,
+            destinationWidth: 32,
+            destinationHeight: 16,
+            destinationDepth: 8,
+            destinationType: VulkanVideoPresenter.Gen5TextureType3D,
+            destinationFormat: Format.R8G8B8A8Unorm));
+    }
+
+    [Fact]
+    public void GpuDmaCopyRejectsTwoDimensionalAliasForThreeDimensionalImage()
+    {
+        Assert.False(VulkanVideoPresenter.IsGuestImageCopyCompatible(
+            sourceWidth: 32,
+            sourceHeight: 16,
+            sourceDepth: 1,
+            sourceType: VulkanVideoPresenter.Gen5TextureType2D,
+            sourceFormat: Format.R8G8B8A8Unorm,
+            destinationWidth: 32,
+            destinationHeight: 16,
+            destinationDepth: 1,
+            destinationType: VulkanVideoPresenter.Gen5TextureType3D,
+            destinationFormat: Format.R8G8B8A8Unorm));
+    }
+
+    [Fact]
+    public void ThreeDimensionalDescriptorsMapToVolumeImageAndViewTypes()
+    {
+        Assert.Equal(
+            ImageType.Type3D,
+            VulkanVideoPresenter.GetGuestTextureImageType(
+                VulkanVideoPresenter.Gen5TextureType3D));
+        Assert.Equal(
+            ImageViewType.Type3D,
+            VulkanVideoPresenter.GetGuestTextureViewType(
+                VulkanVideoPresenter.Gen5TextureType3D,
+                arrayedView: true));
+        Assert.Equal(
+            7u,
+            VulkanVideoPresenter.GetGuestTextureDepth(
+                VulkanVideoPresenter.Gen5TextureType3D,
+                7));
+    }
+
+    [Fact]
+    public void TwoDimensionalArraysKeepLayersSeparateFromImageDepth()
+    {
+        Assert.Equal(
+            ImageType.Type2D,
+            VulkanVideoPresenter.GetGuestTextureImageType(
+                VulkanVideoPresenter.Gen5TextureType2D));
+        Assert.Equal(
+            ImageViewType.Type2DArray,
+            VulkanVideoPresenter.GetGuestTextureViewType(
+                VulkanVideoPresenter.Gen5TextureType2D,
+                arrayedView: true));
+        Assert.Equal(
+            1u,
+            VulkanVideoPresenter.GetGuestTextureDepth(
+                VulkanVideoPresenter.Gen5TextureType2D,
+                7));
+    }
+
+    [Fact]
     public void GpuDmaCopyAcceptsInitializedGpuAuthoredSource()
     {
         Assert.True(VulkanVideoPresenter.ShouldMirrorGuestImageCopyOnGpu(
