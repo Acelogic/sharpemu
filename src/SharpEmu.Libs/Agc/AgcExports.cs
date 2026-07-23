@@ -267,6 +267,8 @@ public static partial class AgcExports
         _tracedAvPlayerComputeImageBindings = new();
     private static readonly HashSet<(int Handle, int Index, ulong Address, string Path)> _tracedDisplayBuffers = new();
     private static readonly HashSet<ulong> _tracedComputeShaders = new();
+    private static readonly HashSet<ulong> _tracedEmptySrtDrawRejects = new();
+    private static readonly HashSet<(ulong Es, ulong Ps)> _tracedFixedFullscreenClears = new();
     private static readonly HashSet<(ulong Address, uint X, uint Y, uint Z)>
         _tracedDispatchArguments = new();
     private static readonly HashSet<(ulong Address, uint Initiator, string Reason)>
@@ -650,7 +652,12 @@ public static partial class AgcExports
         IReadOnlyList<uint> PixelInitialScalars,
         IReadOnlyList<uint> VertexInitialScalars,
         bool UsesGds = false,
-        TranslatedNggDraw? Ngg = null);
+        TranslatedNggDraw? Ngg = null,
+        bool IsFullscreenColorClear = false,
+        float ClearRed = 0f,
+        float ClearGreen = 0f,
+        float ClearBlue = 0f,
+        float ClearAlpha = 1f);
 
     private sealed record TranslatedNggDraw(
         IGuestCompiledShader ComputeShader,
@@ -7823,36 +7830,49 @@ public static partial class AgcExports
                     }
                 }
 
-                SubmitNggComputePrepass(
-                    translatedDraw,
-                    sharedTextures,
-                    sharedGlobalMemoryBuffers);
-                GuestGpu.Current.SubmitOffscreenTranslatedDraw(
-                    translatedDraw.PixelShader,
-                    sharedTextures,
-                    sharedGlobalMemoryBuffers,
-                    translatedDraw.AttributeCount,
-                    translatedDraw.GuestTargets,
-                    translatedDraw.VertexShader,
-                    translatedDraw.Ngg is { } submittedNgg
-                        ? checked(submittedNgg.OutputLayout.MaximumPrimitiveCount * 3)
-                        : translatedDraw.VertexCount,
-                    translatedDraw.Ngg is null
-                        ? translatedDraw.InstanceCount
-                        : 1,
-                    translatedDraw.Ngg is null
-                        ? translatedDraw.PrimitiveType
-                        : 4,
-                    translatedDraw.Ngg is null
-                        ? translatedDraw.IndexBuffer
-                        : null,
-                    translatedDraw.Ngg is null
-                        ? sharedVertexBuffers
-                        : null,
-                    translatedDraw.RenderState,
-                    translatedDraw.DepthTarget,
-                    translatedDraw.PixelShaderAddress,
-                    translatedDraw.BaseVertex);
+                if (translatedDraw.IsFullscreenColorClear)
+                {
+                    VulkanVideoPresenter.SubmitOffscreenColorClear(
+                        translatedDraw.GuestTargets,
+                        translatedDraw.ClearRed,
+                        translatedDraw.ClearGreen,
+                        translatedDraw.ClearBlue,
+                        translatedDraw.ClearAlpha,
+                        translatedDraw.PixelShaderAddress);
+                }
+                else
+                {
+                    SubmitNggComputePrepass(
+                        translatedDraw,
+                        sharedTextures,
+                        sharedGlobalMemoryBuffers);
+                    GuestGpu.Current.SubmitOffscreenTranslatedDraw(
+                        translatedDraw.PixelShader,
+                        sharedTextures,
+                        sharedGlobalMemoryBuffers,
+                        translatedDraw.AttributeCount,
+                        translatedDraw.GuestTargets,
+                        translatedDraw.VertexShader,
+                        translatedDraw.Ngg is { } submittedNgg
+                            ? checked(submittedNgg.OutputLayout.MaximumPrimitiveCount * 3)
+                            : translatedDraw.VertexCount,
+                        translatedDraw.Ngg is null
+                            ? translatedDraw.InstanceCount
+                            : 1,
+                        translatedDraw.Ngg is null
+                            ? translatedDraw.PrimitiveType
+                            : 4,
+                        translatedDraw.Ngg is null
+                            ? translatedDraw.IndexBuffer
+                            : null,
+                        translatedDraw.Ngg is null
+                            ? sharedVertexBuffers
+                            : null,
+                        translatedDraw.RenderState,
+                        translatedDraw.DepthTarget,
+                        translatedDraw.PixelShaderAddress,
+                        translatedDraw.BaseVertex);
+                }
             }
             else
             {
@@ -8409,6 +8429,89 @@ public static partial class AgcExports
             pixelShaderAddress,
             pixelEvaluation);
 
+        // Empty SRT/EUD is fine for clears/passthroughs that bind nothing
+        // (Astro title PS 0x808E88000 is a procedural fullscreen clear).
+        // Reject only when evaluation produced image/global slots that
+        // collapsed to Address-0 — that layout mismatches SPIR-V and loses
+        // the device on QueueSubmit.
+        if (pixelState.Metadata is
+            {
+                ShaderResourceTableSizeDwords: 0,
+                ExtendedUserDataSizeDwords: 0,
+            } ||
+            Gen5ShaderScalarEvaluator.WasEmptySrtScalarPointerFallback(
+                pixelShaderAddress))
+        {
+            var hasAnyImageSlot = pixelEvaluation.ImageBindings.Count > 0;
+            var hasUsablePixelImage = false;
+            foreach (var binding in pixelEvaluation.ImageBindings)
+            {
+                if (TryDecodeTextureDescriptor(binding.ResourceDescriptor, out var texture) &&
+                    texture.Address != 0)
+                {
+                    hasUsablePixelImage = true;
+                    break;
+                }
+            }
+
+            var hasUsablePixelGlobal = pixelEvaluation.GlobalMemoryBindings.Any(
+                static binding => binding.BaseAddress != 0);
+            var hasPoisonImageSlots = hasAnyImageSlot && !hasUsablePixelImage;
+            if (hasPoisonImageSlots && !hasUsablePixelGlobal)
+            {
+                error = Gen5ShaderScalarEvaluator.WasEmptySrtScalarPointerFallback(
+                    pixelShaderAddress)
+                    ? "empty-srt-scalar-pointer-fallback"
+                    : "empty-srt-no-usable-resources";
+                lock (_submitTraceGate)
+                {
+                    if (_tracedEmptySrtDrawRejects.Add(pixelShaderAddress))
+                    {
+                        Console.Error.WriteLine(
+                            $"[LOADER][WARN] agc.draw_reject ps=0x{pixelShaderAddress:X16} " +
+                            $"es=0x{exportShaderAddress:X16} reason={error}");
+                        Console.Error.WriteLine(
+                            $"[LOADER][WARN] agc.draw_reject_state ps=0x{pixelShaderAddress:X16} " +
+                            $"header=0x{pixelShaderHeader:X16} " +
+                            Gen5ShaderTranslator.DescribeState(pixelState));
+                        var shDump = new List<string>(16);
+                        for (uint reg = 0x8; reg <= 0x1C; reg++)
+                        {
+                            if (state.ShRegisters.TryGetValue(reg, out var value))
+                            {
+                                shDump.Add($"0x{reg:X}={value:X8}");
+                            }
+                        }
+
+                        Console.Error.WriteLine(
+                            $"[LOADER][WARN] agc.draw_reject_sh ps=0x{pixelShaderAddress:X16} " +
+                            $"[{string.Join(',', shDump)}]");
+                        var bindingIndex = 0;
+                        foreach (var binding in pixelEvaluation.ImageBindings)
+                        {
+                            Console.Error.WriteLine(
+                                $"[LOADER][WARN] agc.draw_reject_binding ps=0x{pixelShaderAddress:X16} " +
+                                $"[{bindingIndex++}] pc=0x{binding.Pc:X} op={binding.Opcode} " +
+                                $"resource={FormatShaderDwords(binding.ResourceDescriptor)} " +
+                                $"sampler={FormatShaderDwords(binding.SamplerDescriptor)}");
+                        }
+
+                        foreach (var binding in pixelEvaluation.GlobalMemoryBindings)
+                        {
+                            Console.Error.WriteLine(
+                                $"[LOADER][WARN] agc.draw_reject_global ps=0x{pixelShaderAddress:X16} " +
+                                $"s{binding.ScalarAddress} base=0x{binding.BaseAddress:X16} " +
+                                $"bytes={binding.DataLength}");
+                        }
+                    }
+                }
+
+                ReturnPooledEvaluationArrays(exportEvaluation);
+                ReturnPooledEvaluationArrays(pixelEvaluation);
+                return false;
+            }
+        }
+
         if (pixelShaderAddress == 0x0000000500781200 &&
             _traceTitleGlobals)
         {
@@ -8573,6 +8676,33 @@ public static partial class AgcExports
         var baseGlobalBufferCount = (_bakeScalars
             ? guestGlobalBuffers
             : guestGlobalBuffers + 2) + (usesGds ? 1 : 0);
+        var useFixedFullscreenClear = IsProceduralFullscreenClearPair(
+            exportState,
+            exportEvaluation,
+            pixelState,
+            pixelEvaluation);
+        var fullscreenClearColor = useFixedFullscreenClear
+            ? DecodeSolidClearColor(pixelEvaluation)
+            : default;
+        if (useFixedFullscreenClear)
+        {
+            lock (_submitTraceGate)
+            {
+                if (_tracedFixedFullscreenClears.Add(
+                        (exportShaderAddress, pixelShaderAddress)))
+                {
+                    Console.Error.WriteLine(
+                        $"[LOADER][WARN] agc.shader_color_clear " +
+                        $"es=0x{exportShaderAddress:X16} " +
+                        $"ps=0x{pixelShaderAddress:X16} " +
+                        $"rgba=({fullscreenClearColor.Red:0.###}," +
+                        $"{fullscreenClearColor.Green:0.###}," +
+                        $"{fullscreenClearColor.Blue:0.###}," +
+                        $"{fullscreenClearColor.Alpha:0.###})");
+                }
+            }
+        }
+
         var pixelOutputs = new Gen5PixelOutputBinding[renderTargets.Length];
         for (var location = 0; location < renderTargets.Length; location++)
         {
@@ -8586,7 +8716,8 @@ public static partial class AgcExports
         (IGuestCompiledShader Vertex, IGuestCompiledShader Pixel) compiled = default;
         TranslatedNggDraw? translatedNgg = null;
         var totalGlobalBuffers = baseGlobalBufferCount;
-        if (_enableNggComputeRaster &&
+        if (!useFixedFullscreenClear &&
+            _enableNggComputeRaster &&
             isCombinedExportShader &&
             TryGetNggParameterCount(
                 exportState.Program,
@@ -8728,9 +8859,18 @@ public static partial class AgcExports
                 usesGds,
                 _storageBufferOffsetAlignment);
             _graphicsShaderCache.TryGetValue(shaderKey, out compiled);
-            if (compiled.Vertex is null || compiled.Pixel is null)
+            if (useFixedFullscreenClear)
             {
-
+                if (compiled.Vertex is null || compiled.Pixel is null)
+                {
+                    compiled = (
+                        GuestGpu.Current.GetDepthOnlyFragmentShader(),
+                        GuestGpu.Current.GetDepthOnlyFragmentShader());
+                    _graphicsShaderCache.TryAdd(shaderKey, compiled);
+                }
+            }
+            else if (compiled.Vertex is null || compiled.Pixel is null)
+            {
                 if (!GuestGpu.Current.TryCompilePixelShader(
                     pixelState,
                     pixelEvaluation,
@@ -8912,7 +9052,12 @@ public static partial class AgcExports
             pixelEvaluation.InitialScalarRegisters,
             exportEvaluation.InitialScalarRegisters,
             UsesGds: usesGds,
-            Ngg: translatedNgg);
+            Ngg: translatedNgg,
+            IsFullscreenColorClear: useFixedFullscreenClear,
+            ClearRed: fullscreenClearColor.Red,
+            ClearGreen: fullscreenClearColor.Green,
+            ClearBlue: fullscreenClearColor.Blue,
+            ClearAlpha: fullscreenClearColor.Alpha);
         return true;
     }
 
@@ -10198,6 +10343,119 @@ public static partial class AgcExports
                     Convert.ToHexString(binding.Data.AsSpan(offset, 16)));
             }
         }
+    }
+
+    private static bool IsCachedFixedFullscreenClearPair(
+        Gen5ShaderState exportState,
+        Gen5ShaderEvaluation exportEvaluation,
+        Gen5ShaderState pixelState,
+        Gen5ShaderEvaluation pixelEvaluation) =>
+        IsProceduralFullscreenClearPair(
+            exportState,
+            exportEvaluation,
+            pixelState,
+            pixelEvaluation);
+
+    private static bool IsProceduralFullscreenClearPair(
+        Gen5ShaderState exportState,
+        Gen5ShaderEvaluation exportEvaluation,
+        Gen5ShaderState pixelState,
+        Gen5ShaderEvaluation pixelEvaluation)
+    {
+        if ((exportEvaluation.VertexInputs?.Count ?? 0) != 0 ||
+            exportEvaluation.ImageBindings.Count != 0 ||
+            pixelEvaluation.ImageBindings.Count != 0 ||
+            exportEvaluation.GlobalMemoryBindings.Count != 0 ||
+            pixelEvaluation.GlobalMemoryBindings.Count != 0)
+        {
+            return false;
+        }
+
+        if (!HasExportTarget(exportState, target: 12) ||
+            !HasExportTarget(pixelState, target: 0))
+        {
+            return false;
+        }
+
+        if (pixelState.Program.Instructions.Count is 0 or > 8 ||
+            exportState.Program.Instructions.Count is 0 or > 48)
+        {
+            return false;
+        }
+
+        return pixelState.Program.Instructions.All(IsBenignClearPixelInstruction) &&
+               exportState.Program.Instructions.All(IsBenignProceduralVertexInstruction);
+    }
+
+    private static bool HasExportTarget(Gen5ShaderState state, uint target) =>
+        state.Program.Instructions.Any(instruction =>
+            instruction.Control is Gen5ExportControl export &&
+            export.Target == target);
+
+    private static bool IsBenignClearPixelInstruction(Gen5ShaderInstruction instruction) =>
+        instruction.Opcode is
+            "SNop" or
+            "SWaitcnt" or
+            "SInstPrefetch" or
+            "SEndpgm" or
+            "VMovB32" ||
+        instruction.Control is Gen5ExportControl { Target: 0 };
+
+    private static bool IsBenignProceduralVertexInstruction(Gen5ShaderInstruction instruction)
+    {
+        if (instruction.Control is Gen5BufferMemoryControl or
+            Gen5ImageControl or
+            Gen5GlobalMemoryControl or
+            Gen5ScalarMemoryControl)
+        {
+            return false;
+        }
+
+        if (instruction.Control is Gen5ExportControl export)
+        {
+            // Position (12) plus ignored NGG/param exports.
+            return export.Target is 12 or (>= 13 and < 32) or 20;
+        }
+
+        return instruction.Opcode is
+            "SNop" or
+            "SWaitcnt" or
+            "SInstPrefetch" or
+            "SEndpgm" or
+            "SSendmsg" or
+            "VMovB32" or
+            "VAndB32" or
+            "VAddI32" or
+            "VLshlrevB32" or
+            "VCvtF32I32" or
+            "VCvtF32U32" ||
+            instruction.Encoding is
+                Gen5ShaderEncoding.Sop1 or
+                Gen5ShaderEncoding.Sop2 or
+                Gen5ShaderEncoding.Sopc or
+                Gen5ShaderEncoding.Sopk or
+                Gen5ShaderEncoding.Sopp;
+    }
+
+    private static (float Red, float Green, float Blue, float Alpha) DecodeSolidClearColor(
+        Gen5ShaderEvaluation pixelEvaluation)
+    {
+        // Default opaque white; guest clear shaders often mov a 1.0 literal into v0.
+        float red = 1f, green = 1f, blue = 1f, alpha = 1f;
+        if (pixelEvaluation.InitialScalarRegisters.Count > 0)
+        {
+            var bits = pixelEvaluation.InitialScalarRegisters[0];
+            if (bits != 0)
+            {
+                red = green = blue = alpha = BitConverter.UInt32BitsToSingle(bits);
+                if (!float.IsFinite(red) || red < 0f || red > 4f)
+                {
+                    red = green = blue = alpha = 1f;
+                }
+            }
+        }
+
+        return (red, green, blue, alpha);
     }
 
     private static readonly bool _fillClearHack = !string.Equals(
@@ -13476,7 +13734,35 @@ public static partial class AgcExports
         var gpuDispatch = false;
         var evaluationHandledByCpu = false;
         var computeError = string.Empty;
-        if (!hasStorageBinding &&
+        // Empty SRT/EUD with a recorded null-base scalar pointer fallback
+        // produces Address-0 storage that can lose the Vulkan device on submit.
+        var emptyResourceTables =
+            shaderState.Metadata is
+            {
+                ShaderResourceTableSizeDwords: 0,
+                ExtendedUserDataSizeDwords: 0,
+            };
+        if (emptyResourceTables &&
+            (Gen5ShaderScalarEvaluator.WasEmptySrtScalarPointerFallback(shaderAddress) ||
+             (translatedBindings.All(static binding => binding.Descriptor.Address == 0) &&
+              !evaluation.GlobalMemoryBindings.Any(static binding => binding.BaseAddress != 0))))
+        {
+            computeError = Gen5ShaderScalarEvaluator.WasEmptySrtScalarPointerFallback(shaderAddress)
+                ? "empty-srt-scalar-pointer-fallback"
+                : "empty-srt-no-usable-resources";
+            lock (_submitTraceGate)
+            {
+                if (_tracedComputeShaders.Add(shaderAddress))
+                {
+                    Console.Error.WriteLine(
+                        $"[LOADER][WARN] agc.compute_reject cs=0x{shaderAddress:X16} " +
+                        $"source={(dispatch.IsIndirect ? "indirect" : "direct")} " +
+                        $"groups={dispatch.GroupCountX}x{dispatch.GroupCountY}x{dispatch.GroupCountZ} " +
+                        $"reason={computeError}");
+                }
+            }
+        }
+        else if (!hasStorageBinding &&
             writesGlobalMemory &&
             TrySubmitMaskedDwordCopyKernel(
                 ctx,

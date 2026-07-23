@@ -118,6 +118,7 @@ public static class KernelPthreadCompatExports
     static KernelPthreadCompatExports()
     {
         GuestThreadExecution.GuestThreadExited += ReleaseThreadSynchronizationState;
+        GuestThreadExecution.GuestThreadAbandoned += AbandonMutexesOwnedByThread;
     }
 
     /// <summary>
@@ -126,11 +127,23 @@ public static class KernelPthreadCompatExports
     /// but a dead owner would otherwise leave every Monitor.Wait caller parked
     /// forever because no future pthread_mutex_unlock can clear it.
     /// </summary>
-    public static void ReleaseThreadSynchronizationState(ulong threadHandle)
+    public static void ReleaseThreadSynchronizationState(ulong threadHandle) =>
+        _ = ReleaseThreadSynchronizationStateCore(threadHandle, reason: null);
+
+    /// <summary>
+    /// Force-releases mutexes owned by a guest thread that is being torn down
+    /// without a clean pthread exit.
+    /// </summary>
+    public static int AbandonMutexesOwnedByThread(ulong threadId, string reason) =>
+        ReleaseThreadSynchronizationStateCore(threadId, reason);
+
+    private static int ReleaseThreadSynchronizationStateCore(
+        ulong threadHandle,
+        string? reason)
     {
         if (threadHandle == 0)
         {
-            return;
+            return 0;
         }
 
         // Each initialized mutex is indexed by both its guest address and its
@@ -163,12 +176,18 @@ public static class KernelPthreadCompatExports
             }
         }
 
-        if (_tracePthreadExitCleanup && releasedMutexCount != 0)
+        if (releasedMutexCount != 0 &&
+            (_tracePthreadExitCleanup || reason is not null))
         {
             Console.Error.WriteLine(
-                $"[LOADER][TRACE] pthread exit cleanup: thread=0x{threadHandle:X16} " +
-                $"released_mutexes={releasedMutexCount} woken_waiters={wokenWaiterCount}");
+                $"[LOADER][{(reason is null ? "TRACE" : "WARN")}] " +
+                $"pthread {(reason is null ? "exit cleanup" : "mutex abandon")}: " +
+                $"thread={KernelPthreadState.DescribeThreadHandle(threadHandle)} " +
+                $"released_mutexes={releasedMutexCount} woken_waiters={wokenWaiterCount}" +
+                (reason is null ? string.Empty : $" reason={reason}"));
         }
+
+        return releasedMutexCount;
     }
 
     [SysAbiExport(

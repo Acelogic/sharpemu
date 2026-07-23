@@ -41,8 +41,13 @@ internal static class KernelPthreadState
 
     internal static ulong GetCurrentThreadHandle()
     {
-        if (TryGetCurrentGuestIdentity(out var guestThreadHandle, out _))
+        var guestThreadHandle = GuestThreadExecution.CurrentGuestThreadHandle;
+        // Prefer the bound guest handle even when it is not yet in Threads.
+        // Falling through to a synthetic ThreadStatic handle while a guest
+        // thread is bound causes mutex owner mismatches (unlock PERM → hang).
+        if (guestThreadHandle != 0)
         {
+            _ = EnsureGuestThreadUniqueId(guestThreadHandle);
             return guestThreadHandle;
         }
 
@@ -52,13 +57,26 @@ internal static class KernelPthreadState
 
     internal static ulong GetCurrentThreadUniqueId()
     {
-        if (TryGetCurrentGuestIdentity(out _, out var guestThreadUniqueId))
+        var guestThreadHandle = GuestThreadExecution.CurrentGuestThreadHandle;
+        if (guestThreadHandle != 0)
         {
-            return guestThreadUniqueId;
+            return EnsureGuestThreadUniqueId(guestThreadHandle);
         }
 
         EnsureCurrentThreadRegistered();
         return _currentThreadUniqueId;
+    }
+
+    internal static string DescribeThreadHandle(ulong threadHandle)
+    {
+        if (threadHandle == 0)
+        {
+            return "none";
+        }
+
+        return TryGetThreadIdentity(threadHandle, out var identity)
+            ? $"0x{threadHandle:X16}('{identity.Name}')"
+            : $"0x{threadHandle:X16}";
     }
 
     internal static ulong CreateThreadHandle(string name)
@@ -73,27 +91,21 @@ internal static class KernelPthreadState
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static bool TryGetCurrentGuestIdentity(
-        out ulong guestThreadHandle,
-        out ulong guestThreadUniqueId)
+    private static ulong EnsureGuestThreadUniqueId(ulong guestThreadHandle)
     {
-        guestThreadHandle = GuestThreadExecution.CurrentGuestThreadHandle;
-        if (guestThreadHandle == 0)
+        if (GuestIdentityCacheEnabled &&
+            guestThreadHandle == _cachedGuestThreadHandle &&
+            _cachedGuestThreadUniqueId != 0)
         {
-            guestThreadUniqueId = 0;
-            return false;
-        }
-
-        if (GuestIdentityCacheEnabled && guestThreadHandle == _cachedGuestThreadHandle)
-        {
-            guestThreadUniqueId = _cachedGuestThreadUniqueId;
-            return true;
+            return _cachedGuestThreadUniqueId;
         }
 
         if (!Threads.TryGetValue(guestThreadHandle, out var identity))
         {
-            guestThreadUniqueId = 0;
-            return false;
+            var uniqueId = unchecked((ulong)Interlocked.Increment(ref _nextUniqueThreadId));
+            identity = Threads.GetOrAdd(
+                guestThreadHandle,
+                new ThreadIdentity(uniqueId, $"Guest-0x{guestThreadHandle:X}"));
         }
 
         if (GuestIdentityCacheEnabled)
@@ -101,8 +113,7 @@ internal static class KernelPthreadState
             _cachedGuestThreadHandle = guestThreadHandle;
             _cachedGuestThreadUniqueId = identity.UniqueId;
         }
-        guestThreadUniqueId = identity.UniqueId;
-        return true;
+        return identity.UniqueId;
     }
 
     private static void EnsureCurrentThreadRegistered()
