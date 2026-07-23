@@ -129,8 +129,12 @@ public sealed class Gen5Vop3Tests
         Assert.DoesNotContain(75u, pureExtInsts); // FindUMsb, used by f16 widening
         Assert.Contains(50u, mixedExtInsts);
         Assert.Contains(75u, mixedExtInsts);
-        Assert.Contains(43u, mixedExtInsts); // FClamp
-        Assert.Contains((ushort)SpirvOp.FNegate, ReadSpirvOpcodes(mixed));
+        Assert.Contains(4u, mixedExtInsts); // FAbs
+        var mixedOpcodes = ReadSpirvOpcodes(mixed);
+        Assert.Contains((ushort)SpirvOp.FOrdGreaterThan, mixedOpcodes);
+        Assert.Contains((ushort)SpirvOp.FOrdLessThan, mixedOpcodes);
+        Assert.True(mixedOpcodes.Count(opcode => opcode == (ushort)SpirvOp.Select) >= 2);
+        Assert.Contains((ushort)SpirvOp.FNegate, mixedOpcodes);
     }
 
     [Theory]

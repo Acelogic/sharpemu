@@ -41,7 +41,8 @@ public static class NpWebApi2Exports
         Nid = "MsaFhR+lPE4",
         ExportName = "sceNpWebApi2PushEventCreateFilter",
         Target = Generation.Gen4 | Generation.Gen5,
-        LibraryName = "libSceNpWebApi2")]
+        LibraryName = "libSceNpWebApi2",
+        PreferLle = true)]
     public static int NpWebApi2PushEventCreateFilter(CpuContext ctx)
     {
         var libraryContextId = unchecked((int)ctx[CpuRegister.Rdi]);

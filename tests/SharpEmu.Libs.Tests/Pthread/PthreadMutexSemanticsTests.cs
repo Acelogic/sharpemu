@@ -1,6 +1,7 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using System.Reflection;
 using SharpEmu.HLE;
 using SharpEmu.Libs.Kernel;
 using Xunit;
@@ -63,6 +64,104 @@ public sealed class PthreadMutexSemanticsTests
         context[CpuRegister.Rdi] = mutexAddress;
         Assert.Equal(0, KernelPthreadCompatExports.PthreadMutexLock(context));
         Assert.Equal(0, KernelPthreadCompatExports.PthreadMutexUnlock(context));
+    }
+
+    [Fact]
+    public void MutexUnlock_ReservesHandoffForOldestWaiter()
+    {
+        const ulong memoryBase = 0x1_1000_0000;
+        const ulong mutexAddress = memoryBase + 0x100;
+        var memory = new AllocatingCpuMemory(memoryBase, 0x4000);
+        var ownerContext = new CpuContext(memory, Generation.Gen5);
+        ownerContext[CpuRegister.Rdi] = mutexAddress;
+        Assert.True(ownerContext.TryWriteUInt64(mutexAddress, 1)); // Static adaptive initializer.
+        Assert.Equal(0, KernelPthreadCompatExports.PthreadMutexLock(ownerContext));
+
+        var state = GetMutexState(mutexAddress);
+        var waiterCount = state.GetType().GetProperty("WaiterCount", BindingFlags.Instance | BindingFlags.Public);
+        Assert.NotNull(waiterCount);
+
+        using var waiterStarted = new ManualResetEventSlim();
+        using var waiterAcquired = new ManualResetEventSlim();
+        using var releaseWaiter = new ManualResetEventSlim();
+        Exception? waiterError = null;
+        var waiter = new Thread(() =>
+        {
+            try
+            {
+                var waiterContext = new CpuContext(memory, Generation.Gen5);
+                waiterContext[CpuRegister.Rdi] = mutexAddress;
+                waiterStarted.Set();
+                Assert.Equal(0, KernelPthreadCompatExports.PthreadMutexLock(waiterContext));
+                waiterAcquired.Set();
+                Assert.True(releaseWaiter.Wait(TimeSpan.FromSeconds(5)));
+                Assert.Equal(0, KernelPthreadCompatExports.PthreadMutexUnlock(waiterContext));
+            }
+            catch (Exception exception)
+            {
+                waiterError = exception;
+            }
+        });
+
+        waiter.IsBackground = true;
+        waiter.Start();
+        Assert.True(waiterStarted.Wait(TimeSpan.FromSeconds(5)));
+        Assert.True(SpinWait.SpinUntil(
+            () =>
+            {
+                lock (state)
+                {
+                    return (int)waiterCount.GetValue(state)! == 1;
+                }
+            },
+            TimeSpan.FromSeconds(5)));
+
+        int bargingResult;
+        lock (state)
+        {
+            // Keep the waiter from reacquiring the host monitor between these
+            // two calls. The mutex is unowned but already promised to it, so a
+            // newcomer must observe BUSY rather than stealing the hand-off.
+            Assert.Equal(0, KernelPthreadCompatExports.PthreadMutexUnlock(ownerContext));
+            bargingResult = KernelPthreadCompatExports.PthreadMutexTrylock(ownerContext);
+            if (bargingResult == 0)
+            {
+                // Keep the regression test self-cleaning against the old,
+                // barging implementation so its waiter cannot leak on failure.
+                Assert.Equal(0, KernelPthreadCompatExports.PthreadMutexUnlock(ownerContext));
+            }
+        }
+
+        try
+        {
+            Assert.True(waiterAcquired.Wait(TimeSpan.FromSeconds(5)));
+        }
+        finally
+        {
+            releaseWaiter.Set();
+            Assert.True(waiter.Join(TimeSpan.FromSeconds(5)));
+        }
+
+        Assert.Null(waiterError);
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY, bargingResult);
+    }
+
+    private static object GetMutexState(ulong mutexAddress)
+    {
+        var statesField = typeof(KernelPthreadCompatExports).GetField(
+            "_mutexStates",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(statesField);
+
+        var states = statesField.GetValue(null);
+        Assert.NotNull(states);
+        var tryGetValue = states.GetType().GetMethod("TryGetValue", BindingFlags.Instance | BindingFlags.Public);
+        Assert.NotNull(tryGetValue);
+
+        object?[] arguments = [mutexAddress, null];
+        Assert.True((bool)tryGetValue.Invoke(states, arguments)!);
+        Assert.NotNull(arguments[1]);
+        return arguments[1]!;
     }
 
     private sealed class AllocatingCpuMemory : ICpuMemory, IGuestMemoryAllocator

@@ -6,6 +6,7 @@ using SharpEmu.Libs.Gpu;
 using SharpEmu.Libs.Kernel;
 using SharpEmu.Libs.VideoOut;
 using System.Buffers.Binary;
+using System.Threading;
 
 namespace SharpEmu.Libs.SystemService;
 
@@ -19,11 +20,14 @@ public static class SystemServiceExports
     private const int TitleIdFieldSize = 0x10;
 
     private static string? _mainAppTitleId;
+    private static int _noticeScreenSkipFlag;
 
     public static void ConfigureApplicationInfo(string? titleId)
     {
         _mainAppTitleId = string.IsNullOrWhiteSpace(titleId) ? null : titleId.Trim();
     }
+
+    internal static void ResetForTests() => Volatile.Write(ref _noticeScreenSkipFlag, 0);
 
     [SysAbiExport(
         Nid = "3RQ5aQfnstU",
@@ -38,13 +42,41 @@ public static class SystemServiceExports
             return ctx.SetReturn(OrbisSystemServiceErrorParameter);
         }
 
-        // No system notice screen to skip in the emulator; report "do not skip".
         Span<byte> flagBytes = stackalloc byte[1];
-        flagBytes[0] = 0;
+        flagBytes[0] = Volatile.Read(ref _noticeScreenSkipFlag) == 0 ? (byte)0 : (byte)1;
         return KernelMemoryCompatExports.TryWriteCompat(ctx, flagAddress, flagBytes)
             ? ctx.SetReturn(0)
             : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
     }
+
+    [SysAbiExport(
+        Nid = "Q3utJvma4Mo",
+        ExportName = "sceSystemServiceSetNoticeScreenSkipFlag",
+        Target = Generation.Gen5,
+        LibraryName = "libSceSystemService",
+        PreferLle = true)]
+    public static int SystemServiceSetNoticeScreenSkipFlag(CpuContext ctx)
+    {
+        // The Gen5 provider takes no arguments and sends operation 0x62 to the
+        // system-service proxy. The flag is observable through the getter, so
+        // retain that state locally when the guest provider is unavailable.
+        Interlocked.Exchange(ref _noticeScreenSkipFlag, 1);
+        return ctx.SetReturn(0);
+    }
+
+    // Ghidra 12.1.2_PUBLIC_20260605, libSceSystemService.sprx
+    // SHA-256 6bcb5dd125d9d09b6053f383ba89b1613335bff5ab83870f0bd732b767f4aac9,
+    // entry RVA 0x3A80. The provider takes no arguments and sends proxy
+    // operation 0x61. SharpEmu has no automatic flag setter to disable, so the
+    // faithful provider-free fallback succeeds without altering explicit state.
+    [SysAbiExport(
+        Nid = "8Lo6Zv94aho",
+        ExportName = "sceSystemServiceDisableNoticeScreenSkipFlagAutoSet",
+        Target = Generation.Gen5,
+        LibraryName = "libSceSystemService",
+        PreferLle = true)]
+    public static int SystemServiceDisableNoticeScreenSkipFlagAutoSet(CpuContext ctx) =>
+        ctx.SetReturn(0);
 
     [SysAbiExport(
         Nid = "4veE0XiIugA",

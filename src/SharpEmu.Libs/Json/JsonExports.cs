@@ -198,17 +198,15 @@ public static class JsonExports
 
     // Catalog alias NID for the same callback setter.
     #pragma warning disable SHEM004
-    [SysAbiExport(
-        Nid = "00oCq0RwSAY",
-        ExportName = "_ZN3sce4Json11Initializer27setGlobalNullAccessCallbackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_",
-        Target = Generation.Gen4 | Generation.Gen5,
-        LibraryName = "libSceJson")]
-    public static int InitializerSetGlobalNullAccessCallbackAlt(CpuContext ctx) =>
-        InitializerSetGlobalNullAccessCallback(ctx);
     #pragma warning restore SHEM004
 
     // Kept as a direct helper for tests and JSON2 lifecycle emulation. The
     // shared NID is exported once by the catalog-backed libSceJson alias above.
+    [SysAbiExport(
+        Nid = "00oCq0RwSAY",
+        ExportName = "_ZN3sce4Json11Initializer27setGlobalNullAccessCallBackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_",
+        Target = Generation.Gen5,
+        LibraryName = "libSceJson2")]
     public static int InitializerSetGlobalNullAccessCallBack(CpuContext ctx)
     {
         var thisAddress = ctx[CpuRegister.Rdi];
@@ -369,6 +367,53 @@ public static class JsonExports
         TraceJson("Initializer.initialize2", thisAddress, initParameterAddress);
         return SetReturn(ctx, 0);
     }
+
+    [SysAbiExport(
+        Nid = "PR5k1penBLM",
+        ExportName = "_ZN3sce4Json11Initializer9terminateEv",
+        Target = Generation.Gen5,
+        LibraryName = "libSceJson2",
+        PreferLle = true)]
+    public static int InitializerTerminate(CpuContext ctx)
+    {
+        var thisAddress = ctx[CpuRegister.Rdi];
+        Span<byte> initialized = stackalloc byte[1];
+
+        lock (_globalNullAccessCallbackGate)
+        {
+            // The Gen5 provider requires both its global allocator state and
+            // the one-byte Initializer state before it tears down the heaps.
+            if (_json2InitializationState is null ||
+                thisAddress == 0 ||
+                !ctx.Memory.TryRead(thisAddress, initialized) ||
+                initialized[0] == 0)
+            {
+                return SetReturn(ctx, SceJsonErrorNotInitialized);
+            }
+
+            if (!ctx.Memory.TryWrite(thisAddress, new byte[] { 0 }))
+            {
+                return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            _json2InitializationState = null;
+            JsonObjectHeap.GlobalNullAccessCallback = 0;
+            JsonObjectHeap.GlobalNullAccessCallbackContext = 0;
+            JsonObjectHeap.Values.Clear();
+            JsonObjectHeap.Strings.Clear();
+            _values.Clear();
+            _strings.Clear();
+            _valueStrings.Clear();
+            _arrays.Clear();
+            _arrayIterators.Clear();
+            _valueReferences.Clear();
+            Interlocked.Exchange(ref _nextArrayIdentity, 0);
+        }
+
+        TraceJson("Initializer.terminate", thisAddress, 0);
+        return SetReturn(ctx, 0);
+    }
+
     public static int ValueConstructor(CpuContext ctx)
     {
         _ = ConstructValue(ctx);

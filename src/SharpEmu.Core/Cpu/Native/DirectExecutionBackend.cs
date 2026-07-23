@@ -300,6 +300,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private readonly Dictionary<string, ulong> _runtimeSymbolsByName = new Dictionary<string, ulong>(StringComparer.Ordinal);
 
+	// Data symbols are visible to dynamic lookup but never participate in
+	// direct-call bridge selection or callable symbol diagnostics.
+	private readonly Dictionary<string, ulong> _runtimeDataSymbolsByName = new Dictionary<string, ulong>(StringComparer.Ordinal);
+
 	private readonly RecentImportTraceEntry[] _recentImportTrace = new RecentImportTraceEntry[64];
 
 	private int _recentImportTraceCount;
@@ -1088,11 +1092,12 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		SetupExceptionHandler();
 	}
 
-	public bool TryExecute(CpuContext context, ulong entryPoint, Generation generation, IReadOnlyDictionary<ulong, string> importStubs, IReadOnlyDictionary<string, ulong> runtimeSymbols, CpuExecutionOptions executionOptions, out OrbisGen2Result result)
+	public bool TryExecute(CpuContext context, ulong entryPoint, Generation generation, IReadOnlyDictionary<ulong, string> importStubs, IReadOnlyDictionary<string, ulong> runtimeSymbols, IReadOnlyDictionary<string, ulong> runtimeDataSymbols, CpuExecutionOptions executionOptions, out OrbisGen2Result result)
 	{
 		Console.Error.WriteLine("[LOADER][INFO] === Execute START ===");
 		Console.Error.WriteLine($"[LOADER][INFO] EntryPoint: 0x{entryPoint:X16}, ImportStubs: {importStubs.Count}");
 		Console.Error.WriteLine($"[LOADER][INFO] RuntimeSymbols: {runtimeSymbols.Count}");
+		Console.Error.WriteLine($"[LOADER][INFO] RuntimeDataSymbols: {runtimeDataSymbols.Count}");
 		Console.Error.WriteLine(_moduleManager.TryGetExport("QrZZdJ8XsX0", out ExportedFunction export) ? ("[LOADER][INFO] ExportCheck fputs: " + export.LibraryName + ":" + export.Name) : "[LOADER][INFO] ExportCheck fputs: MISSING");
 		Console.Error.WriteLine(_moduleManager.TryGetExport("L-Q3LEjIbgA", out ExportedFunction export2) ? ("[LOADER][INFO] ExportCheck map_direct: " + export2.LibraryName + ":" + export2.Name) : "[LOADER][INFO] ExportCheck map_direct: MISSING");
 		_entryPoint = entryPoint;
@@ -1104,6 +1109,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		result = OrbisGen2Result.ORBIS_GEN2_OK;
 		LastError = null;
 		InitializeRuntimeSymbolIndex(runtimeSymbols);
+		InitializeRuntimeDataSymbolIndex(runtimeDataSymbols);
 		_recentImportTraceCount = 0;
 		_recentImportTraceWriteIndex = 0;
 		_distinctImportNidHistoryCount = 0;
@@ -1592,6 +1598,13 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		{
 			return false;
 		}
+		// Data symbols are addressable objects, never call targets. The loader also
+		// excludes STT_OBJECT imports from the stub map; retain this registry check
+		// as defense in depth for compatibility or malformed images.
+		if (!IsCallableImportNid(_moduleManager, nid))
+		{
+			return false;
+		}
 		if (IsHlePreferredNid(nid))
 		{
 			return false;
@@ -1599,16 +1612,13 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 		if (_moduleManager.TryGetExport(nid, out ExportedFunction export))
 		{
-			if (IsKernelLibrary(export.LibraryName))
+			var preferLleForLibc = IsLibcLibrary(export.LibraryName) && PreferLleForLibcExport(export.Name);
+			if (!ShouldResolveRegisteredExportViaLle(export, preferLleForLibc))
 			{
-				if (_logAllImports)
+				if (_logAllImports && IsKernelLibrary(export.LibraryName))
 				{
 					Console.Error.WriteLine($"[LOADER][DEBUG] TryResolveDirectImportTarget: {nid} ({export.LibraryName}:{export.Name}) -> HLE (kernel library)");
 				}
-				return false;
-			}
-			if (!IsLibcLibrary(export.LibraryName) || !PreferLleForLibcExport(export.Name))
-			{
 				return false;
 			}
 			if (TryResolveRuntimeSymbolAddress(nid, out var value2) && IsDirectImportTargetUsable(value2))
@@ -1662,6 +1672,21 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			}
 		}
 		return false;
+	}
+
+	internal static bool IsCallableImportNid(IModuleManager moduleManager, string nid)
+	{
+		ArgumentNullException.ThrowIfNull(moduleManager);
+		ArgumentException.ThrowIfNullOrWhiteSpace(nid);
+		return !moduleManager.TryGetDataSymbol(nid, out _);
+	}
+
+	internal static bool ShouldResolveRegisteredExportViaLle(
+		ExportedFunction export,
+		bool preferLleForLibc)
+	{
+		ArgumentNullException.ThrowIfNull(export);
+		return !IsKernelLibrary(export.LibraryName) && (export.PreferLle || preferLleForLibc);
 	}
 
 	private static bool IsHlePreferredNid(string nid)
@@ -5226,14 +5251,20 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			name = _moduleManager.TryGetExport(nid, out var export)
 				? $"{export.LibraryName}:{export.Name}"
 				: nid;
-			return nid is
-				"Op8TBGY5KHg" or // pthread_cond_wait
-				"27bAgiJmOh0" or // pthread_cond_timedwait
-				"fzyMKs9kim0";   // sceKernelWaitEqueue
+			return IsExpectedBlockingImportNid(nid);
 		}
 
 		return false;
 	}
+
+	internal static bool IsExpectedBlockingImportNid(string nid) =>
+		nid is
+			"Zxa0VhQVTsk" or // sceKernelWaitSema
+			"WKAXJ4XBPQ4" or // scePthreadCondWait
+			"BmMjYxmew1w" or // scePthreadCondTimedwait
+			"Op8TBGY5KHg" or // pthread_cond_wait
+			"27bAgiJmOh0" or // pthread_cond_timedwait
+			"fzyMKs9kim0";   // sceKernelWaitEqueue
 
 	private void StopStallWatchdog()
 	{

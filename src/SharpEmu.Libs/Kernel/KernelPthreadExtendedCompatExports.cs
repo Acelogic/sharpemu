@@ -550,7 +550,7 @@ public static class KernelPthreadExtendedCompatExports
             affinityMask = GetOrCreateThreadStateLocked(thread).AffinityMask;
         }
 
-        if (!KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, outMaskAddress, affinityMask))
+        if (!ctx.TryWriteUInt64(outMaskAddress, affinityMask))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -711,7 +711,7 @@ public static class KernelPthreadExtendedCompatExports
         }
 
         var syntheticHandle = AllocateSyntheticHandle(SyntheticPthreadAttrHandleBase, ref _nextSyntheticPthreadAttrHandleId);
-        if (!KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, attrAddress, syntheticHandle))
+        if (!ctx.TryWriteUInt64(attrAddress, syntheticHandle))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -795,7 +795,7 @@ public static class KernelPthreadExtendedCompatExports
             }
         }
 
-        _ = KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, attrAddress, 0);
+        _ = ctx.TryWriteUInt64(attrAddress, 0);
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
@@ -892,7 +892,7 @@ public static class KernelPthreadExtendedCompatExports
             state = GetOrCreateAttrStateLocked(attrAddress);
         }
 
-        if (!KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, outMaskAddress, state.AffinityMask))
+        if (!ctx.TryWriteUInt64(outMaskAddress, state.AffinityMask))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -950,7 +950,7 @@ public static class KernelPthreadExtendedCompatExports
             state = GetOrCreateAttrStateLocked(attrAddress);
         }
 
-        if (!KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, outGuardSizeAddress, state.GuardSize))
+        if (!ctx.TryWriteUInt64(outGuardSizeAddress, state.GuardSize))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -979,7 +979,7 @@ public static class KernelPthreadExtendedCompatExports
             state = GetOrCreateAttrStateLocked(attrAddress);
         }
 
-        if (!KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, outStackAddressPointer, state.StackAddress))
+        if (!ctx.TryWriteUInt64(outStackAddressPointer, state.StackAddress))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -1009,8 +1009,8 @@ public static class KernelPthreadExtendedCompatExports
             state = GetOrCreateAttrStateLocked(attrAddress);
         }
 
-        if (!KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, outStackAddressPointer, state.StackAddress) ||
-            !KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, outStackSizeAddress, state.StackSize))
+        if (!ctx.TryWriteUInt64(outStackAddressPointer, state.StackAddress) ||
+            !ctx.TryWriteUInt64(outStackSizeAddress, state.StackSize))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -1049,12 +1049,12 @@ public static class KernelPthreadExtendedCompatExports
             state = GetOrCreateAttrStateLocked(attrAddress);
         }
 
-        if (!KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, outStackSizeAddress, state.StackSize))
+        if (!ctx.TryWriteUInt64(outStackSizeAddress, state.StackSize))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
-        ctx[CpuRegister.Rax] = 0;
+        ctx[CpuRegister.Rax] = state.StackSize;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
@@ -1133,8 +1133,8 @@ public static class KernelPthreadExtendedCompatExports
         LibraryName = "libKernel")]
     public static int PosixPthreadSetNameNp(CpuContext ctx)
     {
-        // Thread names are diagnostic metadata; scheduling already recorded the
-        // entry point and host handle, so naming failure must not stop startup.
+        // Thread names are diagnostic metadata. A naming failure must not
+        // prevent startup when the host scheduler does not expose renaming.
         ctx[CpuRegister.Rax] = 0;
         return 0;
     }
@@ -2165,7 +2165,7 @@ public static class KernelPthreadExtendedCompatExports
             }
         }
 
-        if (KernelMemoryCompatExports.TryReadUInt64Compat(ctx, attrAddress, out var pointedHandle) && pointedHandle != 0)
+        if (ctx.TryReadUInt64(attrAddress, out var pointedHandle) && pointedHandle != 0)
         {
             lock (_stateGate)
             {
@@ -2191,13 +2191,13 @@ public static class KernelPthreadExtendedCompatExports
         var payload = new byte[payloadLength + 1];
         utf8.AsSpan(0, payloadLength).CopyTo(payload);
         payload[^1] = 0;
-        return KernelMemoryCompatExports.TryWriteCompat(ctx, address, payload);
+        return ctx.Memory.TryWrite(address, payload);
     }
 
     private static bool TryReadInt32(CpuContext ctx, ulong address, out int value)
     {
         Span<byte> bytes = stackalloc byte[sizeof(int)];
-        if (!KernelMemoryCompatExports.TryReadCompat(ctx, address, bytes))
+        if (!ctx.Memory.TryRead(address, bytes))
         {
             value = 0;
             return false;
@@ -2211,7 +2211,7 @@ public static class KernelPthreadExtendedCompatExports
     {
         Span<byte> bytes = stackalloc byte[sizeof(int)];
         BinaryPrimitives.WriteInt32LittleEndian(bytes, value);
-        return KernelMemoryCompatExports.TryWriteCompat(ctx, address, bytes);
+        return ctx.Memory.TryWrite(address, bytes);
     }
 
     // POSIX-named aliases. libKernel exports each of these routines under two

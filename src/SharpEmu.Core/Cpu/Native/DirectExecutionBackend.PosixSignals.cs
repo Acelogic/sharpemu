@@ -90,8 +90,8 @@ public sealed unsafe partial class DirectExecutionBackend
 	// XMM registers in the CONTEXT scratch buffer and writes to them will
 	// reach the mcontext on resume. Gates recovery paths (SSE4a EXTRQ/
 	// INSERTQ) that would otherwise compute results from a zeroed XMM area
-	// and silently discard what they "wrote". Darwin is not bridged yet, so
-	// the flag stays false there.
+	// and silently discard what they "wrote". Both Darwin and Linux expose
+	// an XMM block through GetPosixXmmBase.
 	[ThreadStatic]
 	private static bool _posixXmmContextBridged;
 
@@ -404,6 +404,7 @@ public sealed unsafe partial class DirectExecutionBackend
 		finally
 		{
 			_posixVectorContextAvailable = false;
+			_posixXmmContextBridged = false;
 		}
 		if (traceSignal)
 		{

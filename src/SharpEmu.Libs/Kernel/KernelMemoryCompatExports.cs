@@ -72,6 +72,7 @@ public static partial class KernelMemoryCompatExports
     private const int Enomem = 12;
     private const int Eacces = 13;
     private const int Efault = 14;
+    private const int OrbisKernelErrorEfault = unchecked((int)0x8002000E);
     private const int Einval = 22;
     private const int Erange = 34;
     private const int Struncate = 80;
@@ -96,6 +97,10 @@ public static partial class KernelMemoryCompatExports
     private const int KernelStatStGenOffset = 96;
     private const int KernelStatStLspareOffset = 100;
     private const int KernelStatStBirthtimOffset = 104;
+    private const int KernelDirectoryEntryHeaderSize = 8;
+    private const int KernelDirectoryEntryAlignment = sizeof(ulong);
+    private const int KernelDirectoryEntryMaximumNameLength = 255;
+    private const int KernelDirectoryReadMaximum = 1024 * 1024;
 
     private static readonly object _fdGate = new();
     private static readonly Dictionary<int, FileStream> _openFiles = new();
@@ -209,6 +214,7 @@ public static partial class KernelMemoryCompatExports
         public required string Path { get; init; }
         public required string[] Entries { get; init; }
         public int NextIndex { get; set; }
+        public ulong NextByteOffset { get; set; }
     }
 
     private readonly record struct DirectAllocation(ulong Start, ulong Length, int MemoryType);
@@ -2151,9 +2157,37 @@ public static partial class KernelMemoryCompatExports
             }
 
             var conversion = format[formatIndex++];
-            if (conversion is 'f' or 'x' or 's')
+            if (conversion is 'd' or 'f' or 'x' or 's')
             {
                 SkipSscanfWhitespace(input, ref inputIndex);
+            }
+
+            if (conversion == 'd')
+            {
+                // Firmware 12.70 libSceLibcInternal.sprx SHA-256
+                // d85d61d42f7bb538caafa8b07066f36ec7553a0d6f442cc8138894f22b77370a:
+                // sscanf (1Pk0qZQGeWo) at 0x611c0 enters the scanner at
+                // 0x5cc70. Its conversion dispatch at 0x5d100 sends '%d' to
+                // the signed-integer scanner at 0x5f170, whose default output
+                // is an int-sized store. GTA V reads an asset count through
+                // this path and uses it immediately as an allocation count.
+                if (!TryScanSscanfDecimal(input, ref inputIndex, width, out var value))
+                {
+                    break;
+                }
+
+                if (!suppressAssignment)
+                {
+                    var destination = GetSscanfOutputAddress(ctx, outputIndex++);
+                    if (destination == 0 || !TryWriteUInt32Compat(ctx, destination, value))
+                    {
+                        break;
+                    }
+
+                    assignments++;
+                }
+
+                continue;
             }
 
             if (conversion == 'f')
@@ -2390,6 +2424,37 @@ public static partial class KernelMemoryCompatExports
             value = unchecked(0u - value);
         }
 
+        return true;
+    }
+
+    private static bool TryScanSscanfDecimal(string input, ref int index, int width, out uint value)
+    {
+        value = 0;
+        var start = index;
+        var limit = width > 0 ? Math.Min(input.Length, start + width) : input.Length;
+        if (index < limit && input[index] is '+' or '-')
+        {
+            index++;
+        }
+
+        var digitsStart = index;
+        while (index < limit && char.IsAsciiDigit(input[index]))
+        {
+            index++;
+        }
+
+        if (index == digitsStart ||
+            !long.TryParse(
+                input.AsSpan(start, index - start),
+                NumberStyles.AllowLeadingSign,
+                CultureInfo.InvariantCulture,
+                out var signedValue))
+        {
+            index = start;
+            return false;
+        }
+
+        value = unchecked((uint)(int)signedValue);
         return true;
     }
 
@@ -2959,6 +3024,103 @@ public static partial class KernelMemoryCompatExports
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
+    // Gen5 syscall 0x2bd wrapper ABI, recovered from firmware 12.70 libkernel
+    // and GTA V's callsite at 0x80002a378:
+    //   (prefix, paths, uint32 count, uint32 ids[], uint64 sizes[]).
+    // The wrapper zero-extends EDX before syscall 0x2bd. GTA also supplies an
+    // R9 scratch dword that its caller never reads; its kernel-side meaning is
+    // not recoverable from the userland wrapper, so this HLE leaves it alone.
+    // GTA immediately passes each returned id to sceKernelAprGetFileStat; a
+    // fail-closed result leaves 0xffffffff in that slot and stalls AMPR asset
+    // streaming.  Reuse the same registry and per-file miss contract as the
+    // no-prefix sibling above.
+    internal static int KernelAprResolveFilepathsWithPrefixToIdsAndFileSizes(CpuContext ctx)
+    {
+        var prefixAddress = ctx[CpuRegister.Rdi];
+        var pathListAddress = ctx[CpuRegister.Rsi];
+        var count = (uint)ctx[CpuRegister.Rdx];
+        var idsAddress = ctx[CpuRegister.Rcx];
+        var sizesAddress = ctx[CpuRegister.R8];
+        if (prefixAddress == 0 ||
+            pathListAddress == 0 ||
+            sizesAddress == 0)
+        {
+            KernelRuntimeCompatExports.TrySetErrno(ctx, Efault);
+            return OrbisKernelErrorEfault;
+        }
+
+        if (count == 0 || count > 1024)
+        {
+            KernelRuntimeCompatExports.TrySetErrno(ctx, Einval);
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
+        if (!TryReadNullTerminatedUtf8(
+                ctx,
+                prefixAddress,
+                MaxGuestStringLength,
+                out var prefix))
+        {
+            KernelRuntimeCompatExports.TrySetErrno(ctx, Efault);
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        for (ulong i = 0; i < count; i++)
+        {
+            if (idsAddress != 0 &&
+                !TryWriteUInt32Compat(ctx, idsAddress + (i * sizeof(uint)), uint.MaxValue))
+            {
+                KernelRuntimeCompatExports.TrySetErrno(ctx, Efault);
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            }
+
+            if (!TryResolveAprFilepath(ctx, pathListAddress, i, out var relativeGuestPath))
+            {
+                KernelRuntimeCompatExports.TrySetErrno(ctx, Efault);
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            }
+
+            var guestPath = CombineAprPathPrefix(prefix, relativeGuestPath);
+            var hostPath = ResolveGuestPath(guestPath);
+            if (!TryGetAprFileSize(hostPath, out var fileSize))
+            {
+                LogIoTrace(
+                    "apr_resolve_prefix",
+                    guestPath,
+                    $"host='{hostPath}' index={i} count={count} result=not_found");
+                if (!TryWriteUInt64Compat(ctx, sizesAddress + (i * sizeof(ulong)), 0))
+                {
+                    KernelRuntimeCompatExports.TrySetErrno(ctx, Efault);
+                    return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+                }
+
+                continue;
+            }
+
+            var fileId = AmprFileRegistry.Register(guestPath, hostPath);
+            LogIoTrace(
+                "apr_resolve_prefix",
+                guestPath,
+                $"host='{hostPath}' index={i} count={count} id=0x{fileId:X8} size={fileSize}");
+
+            if (idsAddress != 0 &&
+                !TryWriteUInt32Compat(ctx, idsAddress + (i * sizeof(uint)), fileId))
+            {
+                KernelRuntimeCompatExports.TrySetErrno(ctx, Efault);
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            }
+
+            if (!TryWriteUInt64Compat(ctx, sizesAddress + (i * sizeof(ulong)), fileSize))
+            {
+                KernelRuntimeCompatExports.TrySetErrno(ctx, Efault);
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            }
+        }
+
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
     // The IDs-only sibling of sceKernelAprResolveFilepathsToIdsAndFileSizes.
     // Games that stream via AMPR APR call this to turn asset paths into file
     // IDs, then hand those IDs to sceAmprAprCommandBufferReadFile. Without it
@@ -3078,15 +3240,6 @@ public static partial class KernelMemoryCompatExports
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
-
-    // POSIX alias; same Orbis result convention as the other posix-named
-    // file exports in this module (mkdir/rmdir/open).
-    [SysAbiExport(
-        Nid = "VAzswvTOCzI",
-        ExportName = "unlink",
-        Target = Generation.Gen4 | Generation.Gen5,
-        LibraryName = "libKernel")]
-    public static int PosixUnlink(CpuContext ctx) => KernelUnlink(ctx);
 
     [SysAbiExport(
         Nid = "AUXVxWeJU-A",
@@ -3915,7 +4068,7 @@ public static partial class KernelMemoryCompatExports
         var outSizeAddress = ctx[CpuRegister.Rdi];
         if (outSizeAddress == 0)
         {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
         Span<byte> sizeBytes = stackalloc byte[sizeof(ulong)];
@@ -4834,30 +4987,12 @@ public static partial class KernelMemoryCompatExports
     /// POSIX alias of <see cref="KernelMunmap"/>; identical (addr, len) argument
     /// order.
     /// </summary>
-    [SysAbiExport(
-        Nid = "UqDGjXA5yUM",
-        ExportName = "munmap",
-        Target = Generation.Gen4 | Generation.Gen5,
-        LibraryName = "libKernel")]
-    public static int PosixMunmap(CpuContext ctx) => KernelMunmap(ctx);
-
     /// <summary>
     /// Reports the 16 KiB page granularity this backend maps and aligns against
     /// (<see cref="OrbisPageSize"/>), not the host's 4 KiB. An allocator that
     /// rounded to the host value would hand back sub-page offsets that every
     /// mapping call here then rejects for misalignment.
     /// </summary>
-    [SysAbiExport(
-        Nid = "k+AXqu2-eBc",
-        ExportName = "getpagesize",
-        Target = Generation.Gen4 | Generation.Gen5,
-        LibraryName = "libKernel")]
-    public static int PosixGetPageSize(CpuContext ctx)
-    {
-        ctx[CpuRegister.Rax] = OrbisPageSize;
-        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
-    }
-
     [SysAbiExport(
         Nid = "vSMAm3cxYTY",
         ExportName = "sceKernelMprotect",
@@ -6956,6 +7091,27 @@ public static partial class KernelMemoryCompatExports
         return false;
     }
 
+    private static string CombineAprPathPrefix(string prefix, string path)
+    {
+        if (prefix.Length == 0)
+        {
+            return path;
+        }
+
+        if (path.Length == 0)
+        {
+            return prefix;
+        }
+
+        if (prefix.EndsWith('/') || prefix.EndsWith('\\') ||
+            path.StartsWith('/') || path.StartsWith('\\'))
+        {
+            return prefix + path;
+        }
+
+        return prefix + '/' + path;
+    }
+
     private static bool TryReadAprPathPointer(CpuContext ctx, ulong pointerAddress, out string guestPath)
     {
         guestPath = string.Empty;
@@ -8603,7 +8759,8 @@ public static partial class KernelMemoryCompatExports
 
     private static int KernelGetdirentriesCore(CpuContext ctx, int fd, ulong bufferAddress, int requested, ulong basePointerAddress)
     {
-        if (fd < 0 || bufferAddress == 0 || requested < 512)
+        var minimumRecordLength = AlignKernelDirectoryEntryLength(KernelDirectoryEntryHeaderSize + 2);
+        if (fd < 0 || bufferAddress == 0 || requested < minimumRecordLength)
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
@@ -8620,7 +8777,8 @@ public static partial class KernelMemoryCompatExports
         }
 
         var currentIndex = directory.NextIndex;
-        if (basePointerAddress != 0 && !TryWriteUInt64Compat(ctx, basePointerAddress, (ulong)currentIndex))
+        if (basePointerAddress != 0 &&
+            !TryWriteUInt64Compat(ctx, basePointerAddress, directory.NextByteOffset))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -8631,38 +8789,73 @@ public static partial class KernelMemoryCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
-        var entryName = directory.Entries[currentIndex];
-        directory.NextIndex = currentIndex + 1;
+        // GTA walks the returned buffer by the uint16 d_reclen at +0x04 and
+        // reads d_type/d_namlen/d_name at +0x06/+0x07/+0x08.  Pack as many
+        // aligned Orbis dirents as the caller can accept instead of returning
+        // one synthetic 512-byte record per syscall.
+        var payload = new byte[Math.Min(requested, KernelDirectoryReadMaximum)];
+        var written = 0;
+        var nextIndex = currentIndex;
+        while (nextIndex < directory.Entries.Length)
+        {
+            var entryName = directory.Entries[nextIndex];
+            var entryBytes = Encoding.UTF8.GetBytes(entryName);
+            var nameLength = Math.Min(entryBytes.Length, KernelDirectoryEntryMaximumNameLength);
+            var recordLength = AlignKernelDirectoryEntryLength(
+                KernelDirectoryEntryHeaderSize + nameLength + 1);
+            if (recordLength > payload.Length - written)
+            {
+                break;
+            }
 
-        var entryBytes = Encoding.UTF8.GetBytes(entryName);
-        var nameLength = Math.Min(entryBytes.Length, 255);
-        var entryPath = Path.Combine(directory.Path, entryName);
-        var entryType = Directory.Exists(entryPath) ? (byte)4 : (byte)8;
+            var record = payload.AsSpan(written, recordLength);
+            var entryPath = Path.Combine(directory.Path, entryName);
+            var entryType = entryName is "." or ".." || Directory.Exists(entryPath)
+                ? (byte)4
+                : (byte)8;
+            BinaryPrimitives.WriteUInt32LittleEndian(
+                record,
+                ComputeDirectoryEntryHash(entryBytes.AsSpan(0, nameLength)));
+            BinaryPrimitives.WriteUInt16LittleEndian(record[4..], unchecked((ushort)recordLength));
+            record[6] = entryType;
+            record[7] = unchecked((byte)nameLength);
+            entryBytes.AsSpan(0, nameLength).CopyTo(record[KernelDirectoryEntryHeaderSize..]);
 
-        var payload = new byte[512];
-        BinaryPrimitives.WriteUInt32LittleEndian(payload.AsSpan(0, sizeof(uint)), ComputeDirectoryEntryHash(entryBytes.AsSpan(0, nameLength)));
-        BinaryPrimitives.WriteUInt16LittleEndian(payload.AsSpan(4, sizeof(ushort)), 512);
-        payload[6] = entryType;
-        payload[7] = unchecked((byte)nameLength);
-        entryBytes.AsSpan(0, nameLength).CopyTo(payload.AsSpan(8));
+            written += recordLength;
+            nextIndex++;
+        }
 
-        if (!TryWriteCompat(ctx, bufferAddress, payload))
+        if (written == 0)
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
+        if (!TryWriteCompat(ctx, bufferAddress, payload.AsSpan(0, written)))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
-        ctx[CpuRegister.Rax] = 512;
+        directory.NextIndex = nextIndex;
+        directory.NextByteOffset += unchecked((ulong)written);
+        ctx[CpuRegister.Rax] = unchecked((ulong)written);
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
     private static string[] EnumerateDirectoryEntries(string hostPath)
     {
-        return Directory.EnumerateFileSystemEntries(hostPath)
+        return [
+            ".",
+            "..",
+            .. Directory.EnumerateFileSystemEntries(hostPath)
             .Select(Path.GetFileName)
             .Where(static name => !string.IsNullOrEmpty(name))
             .OrderBy(static name => name, StringComparer.OrdinalIgnoreCase)
-            .ToArray()!;
+            .Select(static name => name!)
+        ];
     }
+
+    private static int AlignKernelDirectoryEntryLength(int length) =>
+        (length + KernelDirectoryEntryAlignment - 1) & -KernelDirectoryEntryAlignment;
 
     private static uint ComputeDirectoryEntryHash(ReadOnlySpan<byte> utf8Name)
     {

@@ -65,7 +65,7 @@ public sealed class KernelEventFlagCompatExportsTests
     }
 
     [Fact]
-    public void KernelWaitEventFlag_ZeroTimeoutDoesNotPumpScheduler()
+    public void KernelWaitEventFlag_ZeroTimeoutReturnsTimedOutImmediately()
     {
         const ulong memoryBase = 0x1_0000_0000;
         const ulong nameAddress = memoryBase + 0x100;
@@ -84,9 +84,6 @@ public sealed class KernelEventFlagCompatExportsTests
         Assert.Equal(0, KernelEventFlagCompatExports.KernelCreateEventFlag(context));
         Assert.True(context.TryReadUInt64(handleAddress, out var handle));
 
-        var previousScheduler = GuestThreadExecution.Scheduler;
-        var scheduler = new CountingScheduler();
-        GuestThreadExecution.Scheduler = scheduler;
         try
         {
             context[CpuRegister.Rdi] = handle;
@@ -98,18 +95,18 @@ public sealed class KernelEventFlagCompatExportsTests
             Assert.Equal(
                 (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT,
                 KernelEventFlagCompatExports.KernelWaitEventFlag(context));
-            Assert.Equal(0, scheduler.PumpCount);
+            Assert.True(context.TryReadUInt32(timeoutAddress, out var remainingTimeout));
+            Assert.Equal(0U, remainingTimeout);
         }
         finally
         {
-            GuestThreadExecution.Scheduler = previousScheduler;
             context[CpuRegister.Rdi] = handle;
             Assert.Equal(0, KernelEventFlagCompatExports.KernelDeleteEventFlag(context));
         }
     }
 
     [Fact]
-    public void KernelWaitEventFlag_TimedWaitDoesNotPumpScheduler()
+    public void KernelWaitEventFlag_PositiveTimeoutClearsOutputsWithoutPumpingScheduler()
     {
         const ulong memoryBase = 0x1_0000_0000;
         const ulong nameAddress = memoryBase + 0x100;
@@ -146,6 +143,10 @@ public sealed class KernelEventFlagCompatExportsTests
                 KernelEventFlagCompatExports.KernelWaitEventFlag(context));
             Assert.Equal(0, scheduler.PumpCount);
             Assert.Equal(0, scheduler.MaxPumpDepth);
+            Assert.True(context.TryReadUInt32(timeoutAddress, out var remainingTimeout));
+            Assert.Equal(0U, remainingTimeout);
+            Assert.True(context.TryReadUInt64(resultAddress, out var resultPattern));
+            Assert.Equal(0UL, resultPattern);
         }
         finally
         {
@@ -303,4 +304,5 @@ public sealed class KernelEventFlagCompatExportsTests
             return false;
         }
     }
+
 }

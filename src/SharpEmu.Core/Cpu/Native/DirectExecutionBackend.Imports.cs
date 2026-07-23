@@ -1495,38 +1495,7 @@ public sealed partial class DirectExecutionBackend
 			return false;
 		}
 
-		var expectedFileProbeMiss =
-			result == OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND &&
-			IsExpectedFileProbeNotFoundNid(nid);
-		var expectedTimedWaitTimeout =
-			string.Equals(nid, "27bAgiJmOh0", StringComparison.Ordinal) &&
-			unchecked((int)result) == 60;
-		var expectedEqueueTimeout =
-			string.Equals(nid, "fzyMKs9kim0", StringComparison.Ordinal) &&
-			result == OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT;
-		var expectedMutexTrylockBusy =
-			string.Equals(nid, "K-jXhbt2gn4", StringComparison.Ordinal) &&
-			result == OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY;
-		var expectedSemaphoreTrywaitAgain =
-			string.Equals(nid, "H2a+IN9TP0E", StringComparison.Ordinal) &&
-			result == OrbisGen2Result.ORBIS_GEN2_ERROR_TRY_AGAIN;
-		var expectedNetAcceptWouldBlock =
-			string.Equals(nid, "PIWqhn9oSxc", StringComparison.Ordinal) &&
-			resultValue == unchecked((int)0x80410123);
-		var expectedUserServiceNoEvent =
-			string.Equals(nid, "yH17Q6NWtVg", StringComparison.Ordinal) &&
-			resultValue == unchecked((int)0x80960007);
-		var expectedPrivacyInvalidParameter =
-			string.Equals(nid, "D-CzAxQL0XI", StringComparison.Ordinal) &&
-			resultValue == unchecked((int)0x80960009);
-		if (!expectedFileProbeMiss &&
-			!expectedTimedWaitTimeout &&
-			!expectedEqueueTimeout &&
-			!expectedMutexTrylockBusy &&
-			!expectedSemaphoreTrywaitAgain &&
-			!expectedNetAcceptWouldBlock &&
-			!expectedUserServiceNoEvent &&
-			!expectedPrivacyInvalidParameter)
+		if (!IsExpectedImportResult(nid, result))
 		{
 			return true;
 		}
@@ -1546,6 +1515,55 @@ public sealed partial class DirectExecutionBackend
 		}
 
 		return count <= 8 || count % 10000 == 0;
+	}
+
+	internal static bool IsExpectedImportResult(string nid, OrbisGen2Result result)
+	{
+		var resultValue = unchecked((int)result);
+		var expectedFileProbeMiss =
+			result == OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND &&
+			IsExpectedFileProbeNotFoundNid(nid);
+		var expectedPosixTimedWaitTimeout =
+			string.Equals(nid, "27bAgiJmOh0", StringComparison.Ordinal) &&
+			resultValue == 60;
+		var expectedSceTimedWaitTimeout =
+			string.Equals(nid, "BmMjYxmew1w", StringComparison.Ordinal) &&
+			result == OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT;
+		var expectedKernelSemaTimeout =
+			string.Equals(nid, "Zxa0VhQVTsk", StringComparison.Ordinal) &&
+			result == OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT;
+		var expectedEqueueTimeout =
+			string.Equals(nid, "fzyMKs9kim0", StringComparison.Ordinal) &&
+			result == OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT;
+		var expectedMutexTrylockBusy =
+			string.Equals(nid, "K-jXhbt2gn4", StringComparison.Ordinal) &&
+			result == OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY;
+		var expectedSemaphoreTrywaitAgain =
+			string.Equals(nid, "H2a+IN9TP0E", StringComparison.Ordinal) &&
+			result == OrbisGen2Result.ORBIS_GEN2_ERROR_TRY_AGAIN;
+		var expectedSemaphorePollBusy =
+			string.Equals(nid, "12wOHk8ywb0", StringComparison.Ordinal) &&
+			result == OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY;
+		var expectedNetAcceptWouldBlock =
+			string.Equals(nid, "PIWqhn9oSxc", StringComparison.Ordinal) &&
+			resultValue == unchecked((int)0x80410123);
+		var expectedUserServiceNoEvent =
+			string.Equals(nid, "yH17Q6NWtVg", StringComparison.Ordinal) &&
+			resultValue == unchecked((int)0x80960007);
+		var expectedPrivacyInvalidParameter =
+			string.Equals(nid, "D-CzAxQL0XI", StringComparison.Ordinal) &&
+			resultValue == unchecked((int)0x80960009);
+		return expectedFileProbeMiss ||
+			expectedPosixTimedWaitTimeout ||
+			expectedSceTimedWaitTimeout ||
+			expectedKernelSemaTimeout ||
+			expectedEqueueTimeout ||
+			expectedMutexTrylockBusy ||
+			expectedSemaphoreTrywaitAgain ||
+			expectedSemaphorePollBusy ||
+			expectedNetAcceptWouldBlock ||
+			expectedUserServiceNoEvent ||
+			expectedPrivacyInvalidParameter;
 	}
 
 	private static bool ShouldLogExpectedImportResults() =>
@@ -1845,9 +1863,10 @@ public sealed partial class DirectExecutionBackend
 		return elapsedTicks >= (long)(_importLoopGuardSeconds * Stopwatch.Frequency);
 	}
 
-	private static bool IsImportLoopGuardBoundary(string nid) =>
+	internal static bool IsImportLoopGuardBoundary(string nid) =>
 		nid is
 			"1jfXLRVzisc" or // sceKernelUsleep
+			"Zxa0VhQVTsk" or // sceKernelWaitSema
 			"WKAXJ4XBPQ4" or // scePthreadCondWait
 			"BmMjYxmew1w" or // scePthreadCondTimedwait
 			"Op8TBGY5KHg" or // pthread_cond_wait
@@ -2108,8 +2127,11 @@ public sealed partial class DirectExecutionBackend
 		}
 		var moduleHandle = unchecked((int)cpuContext[CpuRegister.Rdi]);
 		if (!TryResolveModuleSymbolAddress(moduleHandle, symbolName, out var resolvedAddress) &&
-			!TryResolveRuntimeSymbolAddress(symbolName, out resolvedAddress) &&
-			!TryResolveRuntimeSymbolAddress(ComputePsNid(symbolName), out resolvedAddress) &&
+			!TryResolveGlobalDlsymSymbolAddress(
+				_runtimeSymbolsByName,
+				_runtimeDataSymbolsByName,
+				symbolName,
+				out resolvedAddress) &&
 			!TryResolveRuntimeSymbolAlias(symbolName, out resolvedAddress))
 		{
 			Console.Error.WriteLine(
@@ -2253,22 +2275,55 @@ public sealed partial class DirectExecutionBackend
 
 	private bool TryResolveRuntimeSymbolAddress(string symbolName, out ulong address)
 	{
+		return TryResolveCallableRuntimeSymbolAddress(_runtimeSymbolsByName, symbolName, out address);
+	}
+
+	internal static bool TryResolveGlobalDlsymSymbolAddress(
+		IReadOnlyDictionary<string, ulong> runtimeSymbols,
+		IReadOnlyDictionary<string, ulong> runtimeDataSymbols,
+		string symbolName,
+		out ulong address)
+	{
+		if (TryResolveIndexedRuntimeSymbolAddress(runtimeSymbols, symbolName, out address) ||
+			TryResolveIndexedRuntimeSymbolAddress(runtimeDataSymbols, symbolName, out address))
+		{
+			return true;
+		}
+
+		var nid = ComputePsNid(symbolName);
+		return TryResolveIndexedRuntimeSymbolAddress(runtimeSymbols, nid, out address) ||
+			TryResolveIndexedRuntimeSymbolAddress(runtimeDataSymbols, nid, out address);
+	}
+
+	internal static bool TryResolveCallableRuntimeSymbolAddress(
+		IReadOnlyDictionary<string, ulong> runtimeSymbols,
+		string symbolName,
+		out ulong address)
+	{
+		return TryResolveIndexedRuntimeSymbolAddress(runtimeSymbols, symbolName, out address);
+	}
+
+	private static bool TryResolveIndexedRuntimeSymbolAddress(
+		IReadOnlyDictionary<string, ulong> runtimeSymbols,
+		string symbolName,
+		out ulong address)
+	{
 		address = 0uL;
 		if (string.IsNullOrWhiteSpace(symbolName))
 		{
 			return false;
 		}
-		if (_runtimeSymbolsByName.TryGetValue(symbolName, out var value) && IsRuntimeSymbolAddressUsable(value))
+		if (runtimeSymbols.TryGetValue(symbolName, out var value) && IsRuntimeSymbolAddressUsable(value))
 		{
 			address = value;
 			return true;
 		}
-		if (symbolName.StartsWith("_", StringComparison.Ordinal) && _runtimeSymbolsByName.TryGetValue(symbolName[1..], out value) && IsRuntimeSymbolAddressUsable(value))
+		if (symbolName.StartsWith("_", StringComparison.Ordinal) && runtimeSymbols.TryGetValue(symbolName[1..], out value) && IsRuntimeSymbolAddressUsable(value))
 		{
 			address = value;
 			return true;
 		}
-		if (_runtimeSymbolsByName.TryGetValue("_" + symbolName, out value) && IsRuntimeSymbolAddressUsable(value))
+		if (runtimeSymbols.TryGetValue("_" + symbolName, out value) && IsRuntimeSymbolAddressUsable(value))
 		{
 			address = value;
 			return true;

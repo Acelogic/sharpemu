@@ -89,6 +89,52 @@ public sealed class AgcRecoveredExportsTests
     }
 
     [Fact]
+    public void DriverRegisterOwnerReturnsExactProviderConstantWithoutTouchingGuestMemory()
+    {
+        var context = new CpuContext(new FakeCpuMemory(BaseAddress, 1), Generation.Gen5);
+        context[CpuRegister.Rdi] = 0xDEAD_BEEF;
+        context[CpuRegister.Rsi] = 0xFEED_FACE;
+
+        Assert.Equal(unchecked((int)0x8A6C9018), AgcExports.DriverRegisterOwner(context));
+        Assert.Equal(unchecked((ulong)unchecked((int)0x8A6C9018)), context[CpuRegister.Rax]);
+    }
+
+    [Fact]
+    public void DcbJumpGetSize_MatchesFirmware1270AndRegistersAsLlePreferred()
+    {
+        var ctx = new CpuContext(new FakeCpuMemory(BaseAddress, 0x100), Generation.Gen5);
+
+        Assert.Equal(0x10, AgcExports.DcbJumpGetSize(ctx));
+        Assert.Equal(0x10UL, ctx[CpuRegister.Rax]);
+
+        var export = Assert.Single(
+            SharpEmu.Generated.SysAbiExportRegistry.CreateExports(Generation.Gen5),
+            candidate => candidate.Nid == "VEGu4dixjUg");
+        Assert.Equal("sceAgcDcbJumpGetSize", export.Name);
+        Assert.Equal("libSceAgc", export.LibraryName);
+        Assert.True(export.PreferLle);
+    }
+
+    [Fact]
+    public void RefillGetSizeHandlers_MatchFirmware1270()
+    {
+        var ctx = new CpuContext(new FakeCpuMemory(BaseAddress, 0x100), Generation.Gen5);
+
+        Assert.Equal(0x20, AgcExports.AcbAcquireMemGetSize(ctx));
+        Assert.Equal(0x20UL, ctx[CpuRegister.Rax]);
+        Assert.Equal(0x20, AgcExports.DcbAcquireMemGetSize(ctx));
+        Assert.Equal(0x20UL, ctx[CpuRegister.Rax]);
+        Assert.Equal(0x20, AgcExports.CbQueueEndOfPipeActionGetSize(ctx));
+        Assert.Equal(0x20UL, ctx[CpuRegister.Rax]);
+        Assert.Equal(8, AgcExports.DcbRewindGetSize(ctx));
+        Assert.Equal(8UL, ctx[CpuRegister.Rax]);
+
+        ctx[CpuRegister.Rdi] = 9;
+        Assert.Equal(0x24, AgcExports.CbNopGetSize(ctx));
+        Assert.Equal(0x24UL, ctx[CpuRegister.Rax]);
+    }
+
+    [Fact]
     public void GetIsTrinityMode_WritesOneZeroByteAndPreservesRax()
     {
         var memory = new FakeCpuMemory(BaseAddress, 0x100);
@@ -126,6 +172,157 @@ public sealed class AgcRecoveredExportsTests
         Assert.Equal(0x8877_6655_4433_2211UL, ctx[CpuRegister.Rax]);
         Assert.True(ctx.WasRaxWritten);
         Assert.Equal(0, ReadByte(memory, BaseAddress + 0x20));
+    }
+
+    [Fact]
+    public void CreatePrimState_MergesHullAndGeometrySpecialRegisters()
+    {
+        var memory = new FakeCpuMemory(BaseAddress, 0x2000);
+        var ctx = new CpuContext(memory, Generation.Gen5);
+        var cxRegisters = BaseAddress + 0x100;
+        var ucRegisters = BaseAddress + 0x200;
+        var hullShader = BaseAddress + 0x300;
+        var geometryShader = BaseAddress + 0x400;
+        var hullSpecials = BaseAddress + 0x600;
+        var geometrySpecials = BaseAddress + 0x800;
+        WriteUInt64(memory, hullShader + 0x28, hullSpecials);
+        WriteUInt64(memory, geometryShader + 0x28, geometrySpecials);
+        WriteRegisters(
+            memory,
+            geometrySpecials,
+            (0x25B, 0x1111_1111),
+            (0x2D5, 0x0000_0000),
+            (0, 0),
+            (0, 0),
+            (0x2D6, 0xAAAA_AAAA),
+            (0x262, 0xBBBB_BBBB));
+        WriteRegisters(
+            memory,
+            hullSpecials,
+            (0x25B, 0x2222_2222),
+            (0x2D5, 0x0000_0010),
+            (0, 0),
+            (0, 0),
+            (0x2D6, 0xCCCC_CCCC),
+            (0x262, 0xDDDD_DDDD));
+        ctx[CpuRegister.Rdi] = cxRegisters;
+        ctx[CpuRegister.Rsi] = ucRegisters;
+        ctx[CpuRegister.Rdx] = hullShader;
+        ctx[CpuRegister.Rcx] = geometryShader;
+        ctx[CpuRegister.R8] = 17;
+
+        Assert.Equal(0, AgcExports.CreatePrimState(ctx));
+
+        AssertRegister(memory, cxRegisters, 0, 0x2D5, 0x10);
+        AssertRegister(memory, cxRegisters, 1, 0x2D6, 0xCCCC_CCCC);
+        AssertRegister(memory, ucRegisters, 0, 0x25B, 0x1111_1111);
+        AssertRegister(memory, ucRegisters, 1, 0x262, 0xDDDD_DDDD);
+        AssertRegister(memory, ucRegisters, 2, 0x242, 17);
+    }
+
+    [Fact]
+    public void CreatePrimState_HullMergeRetainsGeometryOutputPrimitiveWhenGsBitIsSet()
+    {
+        var memory = new FakeCpuMemory(BaseAddress, 0x2000);
+        var ctx = new CpuContext(memory, Generation.Gen5);
+        var cxRegisters = BaseAddress + 0x100;
+        var hullShader = BaseAddress + 0x300;
+        var geometryShader = BaseAddress + 0x400;
+        var hullSpecials = BaseAddress + 0x600;
+        var geometrySpecials = BaseAddress + 0x800;
+        WriteUInt64(memory, hullShader + 0x28, hullSpecials);
+        WriteUInt64(memory, geometryShader + 0x28, geometrySpecials);
+        WriteRegisters(
+            memory,
+            geometrySpecials,
+            (0x25B, 1),
+            (0x2D5, 0x20),
+            (0, 0),
+            (0, 0),
+            (0x2D6, 0x1234_5678),
+            (0x262, 2));
+        WriteRegisters(
+            memory,
+            hullSpecials,
+            (0x25B, 3),
+            (0x2D5, 0x04),
+            (0, 0),
+            (0, 0),
+            (0x2D6, 0x8765_4321),
+            (0x262, 4));
+        ctx[CpuRegister.Rdi] = cxRegisters;
+        ctx[CpuRegister.Rsi] = 0;
+        ctx[CpuRegister.Rdx] = hullShader;
+        ctx[CpuRegister.Rcx] = geometryShader;
+        ctx[CpuRegister.R8] = 7;
+
+        Assert.Equal(0, AgcExports.CreatePrimState(ctx));
+
+        AssertRegister(memory, cxRegisters, 0, 0x2D5, 0x24);
+        AssertRegister(memory, cxRegisters, 1, 0x2D6, 0x1234_5678);
+    }
+
+    [Theory]
+    [InlineData(0u, 2u)]
+    [InlineData(1u, 0u)]
+    [InlineData(2u, 1u)]
+    [InlineData(7u, 3u)]
+    [InlineData(17u, 4u)]
+    [InlineData(18u, 1u)]
+    [InlineData(19u, 2u)]
+    public void CreatePrimState_MapsDefaultOutputPrimitiveLikeFirmware(
+        uint primitiveType,
+        uint expectedOutputPrimitive)
+    {
+        var memory = new FakeCpuMemory(BaseAddress, 0x1000);
+        var ctx = new CpuContext(memory, Generation.Gen5);
+        var cxRegisters = BaseAddress + 0x100;
+        var geometryShader = BaseAddress + 0x200;
+        var geometrySpecials = BaseAddress + 0x400;
+        WriteUInt64(memory, geometryShader + 0x28, geometrySpecials);
+        WriteRegisters(
+            memory,
+            geometrySpecials,
+            (0x25B, 1),
+            (0x2D5, 0),
+            (0, 0),
+            (0, 0),
+            (0x2D6, 0xFFFF_FFFF),
+            (0x262, 2));
+        ctx[CpuRegister.Rdi] = cxRegisters;
+        ctx[CpuRegister.Rsi] = 0;
+        ctx[CpuRegister.Rdx] = 0;
+        ctx[CpuRegister.Rcx] = geometryShader;
+        ctx[CpuRegister.R8] = primitiveType;
+
+        Assert.Equal(0, AgcExports.CreatePrimState(ctx));
+
+        AssertRegister(memory, cxRegisters, 1, 0x29B, expectedOutputPrimitive);
+    }
+
+    [Fact]
+    public void CreatePrimState_NoOutputsReturnsSuccessWithoutReadingShaders()
+    {
+        var ctx = new CpuContext(new FakeCpuMemory(BaseAddress, 0x100), Generation.Gen5);
+        ctx[CpuRegister.Rdi] = 0;
+        ctx[CpuRegister.Rsi] = 0;
+        ctx[CpuRegister.Rdx] = ulong.MaxValue;
+        ctx[CpuRegister.Rcx] = ulong.MaxValue;
+
+        Assert.Equal(0, AgcExports.CreatePrimState(ctx));
+        Assert.Equal(0UL, ctx[CpuRegister.Rax]);
+    }
+
+    [Fact]
+    public void CreatePrimState_InaccessibleShaderReturnsMemoryFault()
+    {
+        var ctx = new CpuContext(new FakeCpuMemory(BaseAddress, 0x100), Generation.Gen5);
+        ctx[CpuRegister.Rdi] = BaseAddress;
+        ctx[CpuRegister.Rcx] = ulong.MaxValue;
+
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+            AgcExports.CreatePrimState(ctx));
     }
 
     [Fact]
@@ -236,6 +433,93 @@ public sealed class AgcRecoveredExportsTests
         Assert.Equal(
             new uint[] { 0, 4, 0x700, 0x704 },
             program.Instructions.Select(instruction => instruction.Pc));
+    }
+
+    [Theory]
+    [InlineData(4, 0x8Au, 0x8Bu)]
+    [InlineData(5, 0x10Au, 0x10Bu)]
+    public void CreateShader_CombinedShaderFirstHalfSkipsProgramRelocation(
+        byte shaderType,
+        uint firstRegister,
+        uint secondRegister)
+    {
+        var memory = new FakeCpuMemory(BaseAddress, 0x4000);
+        var ctx = new CpuContext(memory, Generation.Gen5);
+        var output = BaseAddress + 0x80;
+        var header = BaseAddress + 0x100;
+        var registers = BaseAddress + 0x400;
+        const ulong code = 0x0000_12AB_CDEF_1200;
+        Span<byte> descriptor = stackalloc byte[DescriptorSize];
+        descriptor.Clear();
+        BinaryPrimitives.WriteUInt32LittleEndian(descriptor, 0x3433_3231);
+        BinaryPrimitives.WriteUInt32LittleEndian(descriptor[4..], 0x18);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            descriptor[0x20..],
+            registers - (header + 0x20));
+        descriptor[0x5A] = shaderType;
+        descriptor[0x5C] = 2;
+        Assert.True(memory.TryWrite(header, descriptor));
+        WriteRegisters(
+            memory,
+            registers,
+            (firstRegister, 0x1122_3344),
+            (secondRegister, 0x5566_7788));
+        ctx[CpuRegister.Rdi] = output;
+        ctx[CpuRegister.Rsi] = header;
+        ctx[CpuRegister.Rdx] = code;
+
+        Assert.Equal(0, AgcExports.CreateShader(ctx));
+
+        Assert.Equal(header, ReadUInt64(memory, output));
+        Assert.Equal(code, ReadUInt64(memory, header + 0x10));
+        Assert.Equal(registers, ReadUInt64(memory, header + 0x20));
+        AssertRegisterValue(memory, registers, 0, 0x1122_3344);
+        AssertRegisterValue(memory, registers, 1, 0x5566_7788);
+    }
+
+    [Fact]
+    public void CreateShader_ScansRegisterTableAndAddsCodeBase()
+    {
+        var memory = new FakeCpuMemory(BaseAddress, 0x4000);
+        var ctx = new CpuContext(memory, Generation.Gen5);
+        var output = BaseAddress + 0x80;
+        var header = BaseAddress + 0x100;
+        var registers = BaseAddress + 0x400;
+        const ulong code = 0x0000_12AB_CDEF_1200;
+        const ulong relativeAddress = 0x2000;
+        var relocatedAddress = code + relativeAddress;
+        Span<byte> descriptor = stackalloc byte[DescriptorSize];
+        descriptor.Clear();
+        BinaryPrimitives.WriteUInt32LittleEndian(descriptor, 0x3433_3231);
+        BinaryPrimitives.WriteUInt32LittleEndian(descriptor[4..], 0x18);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            descriptor[0x20..],
+            registers - (header + 0x20));
+        descriptor[0x5A] = 0;
+        descriptor[0x5C] = 4;
+        Assert.True(memory.TryWrite(header, descriptor));
+        WriteRegisters(
+            memory,
+            registers,
+            (0x210, 0x1111_1111),
+            (0x211, 0x2222_2222),
+            (0x20C, (uint)(relativeAddress >> 8)),
+            (0x20D, 0xAABB_CC00));
+        ctx[CpuRegister.Rdi] = output;
+        ctx[CpuRegister.Rsi] = header;
+        ctx[CpuRegister.Rdx] = code;
+
+        Assert.Equal(0, AgcExports.CreateShader(ctx));
+
+        Assert.Equal(header, ReadUInt64(memory, output));
+        AssertRegisterValue(memory, registers, 0, 0x1111_1111);
+        AssertRegisterValue(memory, registers, 1, 0x2222_2222);
+        AssertRegisterValue(memory, registers, 2, (uint)(relocatedAddress >> 8));
+        AssertRegisterValue(
+            memory,
+            registers,
+            3,
+            0xAABB_CC00u | (byte)(relocatedAddress >> 40));
     }
 
     [Theory]
@@ -440,6 +724,46 @@ public sealed class AgcRecoveredExportsTests
             "unknown_fd5Bp5tGTgo");
     }
 
+    [Fact]
+    public void ConfigureUnknownPatchDescriptor_MatchesFirmware1270BitfieldWrites()
+    {
+        const ulong descriptorAddress = BaseAddress + 0x100;
+        const ulong targetAddress = 0x1_3DA4_0080;
+        const uint originalControl = 0xC550_0000;
+        var memory = new FakeCpuMemory(BaseAddress, 0x1000);
+        var ctx = new CpuContext(memory, Generation.Gen5);
+        Span<byte> descriptor = stackalloc byte[16];
+        descriptor.Clear();
+        descriptor[1] = 0x3F;
+        BinaryPrimitives.WriteUInt32LittleEndian(descriptor[4..], 3);
+        BinaryPrimitives.WriteUInt32LittleEndian(descriptor[12..], originalControl);
+        Assert.True(memory.TryWrite(descriptorAddress, descriptor));
+
+        ctx[CpuRegister.Rdi] = descriptorAddress;
+        ctx[CpuRegister.Rsi] = 2;
+        ctx[CpuRegister.Rdx] = targetAddress;
+        ctx[CpuRegister.Rcx] = 0x2127;
+
+        Assert.Equal(0, AgcExports.ConfigureUnknownPatchDescriptor(ctx));
+        Assert.True(memory.TryRead(descriptorAddress, descriptor));
+        Assert.Equal(0x3F, descriptor[1]);
+        Assert.Equal(
+            3U | (unchecked((uint)targetAddress) & 0xFFFF_FFFC),
+            BinaryPrimitives.ReadUInt32LittleEndian(descriptor[4..]));
+        Assert.Equal(
+            (uint)(targetAddress >> 32),
+            BinaryPrimitives.ReadUInt32LittleEndian(descriptor[8..]));
+        Assert.Equal(
+            (2U << 28) | (originalControl & 0xCFF0_0000) | 0x2127U,
+            BinaryPrimitives.ReadUInt32LittleEndian(descriptor[12..]));
+
+        var export = Assert.Single(
+            SharpEmu.Generated.SysAbiExportRegistry.CreateExports(Generation.Gen5),
+            candidate => candidate.Nid == "Ikfdt-rIqCE");
+        Assert.Equal("Ikfdt-rIqCE#G#A", export.Name);
+        Assert.False(export.PreferLle);
+    }
+
     private static void AssertExport(
         ModuleManager manager,
         string nid,
@@ -550,6 +874,23 @@ public sealed class AgcRecoveredExportsTests
         Span<byte> value = stackalloc byte[4];
         Assert.True(memory.TryRead(address + ((ulong)index * 8) + 4, value));
         Assert.Equal(expected, BinaryPrimitives.ReadUInt32LittleEndian(value));
+    }
+
+    private static void AssertRegister(
+        FakeCpuMemory memory,
+        ulong address,
+        int index,
+        uint expectedRegister,
+        uint expectedValue)
+    {
+        Span<byte> record = stackalloc byte[8];
+        Assert.True(memory.TryRead(address + ((ulong)index * 8), record));
+        Assert.Equal(
+            expectedRegister,
+            BinaryPrimitives.ReadUInt32LittleEndian(record));
+        Assert.Equal(
+            expectedValue,
+            BinaryPrimitives.ReadUInt32LittleEndian(record[4..]));
     }
 
     private static void WriteByte(FakeCpuMemory memory, ulong address, byte value)

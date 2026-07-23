@@ -15,8 +15,10 @@ public static class AudioOut2Exports
     // Clearing 0x80 bytes here overwrote the caller's stack canary immediately
     // following the 0x40-byte parameter block.
     private const int AudioOut2ContextParamSize = 0x40;
-    private const int AudioOut2ContextMemorySize = 0x10000;
-    private const int AudioOut2ContextMemoryAlignment = 0x10000;
+    private const int AudioOut2ErrorInvalidArgument = unchecked((int)0x80268001);
+    private const int SpeakerArrayDescriptorSize = 0x28;
+    private const int SpeakerArrayFooterSize = 0x18;
+    private const uint MaximumSpeakerArrayCount = 0x20;
     private static long _nextContextHandle = 1;
     private static long _nextUserHandle = 1;
     private static int _nextPortId;
@@ -25,6 +27,40 @@ public static class AudioOut2Exports
     // Per-context audio parameters captured at ContextCreate so ContextAdvance
     // can pace to the real playback cadence (grain samples at the sample rate).
     private static readonly ConcurrentDictionary<ulong, ContextState> Contexts = new();
+    private static readonly ConcurrentDictionary<ulong, SpeakerArrayState> SpeakerArrays = new();
+
+    private sealed class SpeakerArrayState
+    {
+        public SpeakerArrayState(
+            ulong workspaceAddress,
+            ulong workspaceSize,
+            uint speakerCount,
+            byte layout,
+            int mode,
+            uint coefficientConfiguration,
+            bool coefficientFeature,
+            byte[] positions)
+        {
+            WorkspaceAddress = workspaceAddress;
+            WorkspaceSize = workspaceSize;
+            SpeakerCount = speakerCount;
+            Layout = layout;
+            Mode = mode;
+            CoefficientConfiguration = coefficientConfiguration;
+            CoefficientFeature = coefficientFeature;
+            Positions = positions;
+        }
+
+        public ulong WorkspaceAddress { get; }
+        public ulong WorkspaceSize { get; }
+        public uint SpeakerCount { get; }
+        public byte Layout { get; }
+        public int Mode { get; }
+        public uint CoefficientConfiguration { get; }
+        public bool CoefficientFeature { get; }
+        public byte[] Positions { get; }
+        public bool HasCoefficients => CoefficientConfiguration < 2;
+    }
 
     private sealed class ContextState
     {
@@ -79,6 +115,204 @@ public static class AudioOut2Exports
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
+    // Firmware 12.70 libSceAudioOut.sprx SHA-256
+    // 948dfdc30b9c974c5447d9078853beb1555a2e548de6093b05a114e99445ab33:
+    // G1YOKDJYX2Y at 0x4ec40 normalizes the two flags and delegates to the
+    // shared speaker-array sizing routine at 0x4ef40. GTA V uses the returned
+    // value directly as the size of a mandatory aligned allocation.
+    [SysAbiExport(
+        Nid = "G1YOKDJYX2Y",
+        ExportName = "sceAudioOut2GetSpeakerArrayMemorySize",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAudioOut2",
+        PreferLle = true)]
+    public static int AudioOut2GetSpeakerArrayMemorySize(CpuContext ctx)
+    {
+        var speakerCount = unchecked((uint)ctx[CpuRegister.Rdi]);
+        var useObjectLayout = unchecked((uint)ctx[CpuRegister.Rsi]) != 0;
+        var includeCoefficients = unchecked((uint)ctx[CpuRegister.Rdx]) != 0;
+        var size = GetSpeakerArrayMemorySize(speakerCount, useObjectLayout, includeCoefficients);
+
+        TraceAudioOut2(
+            $"speaker-array-memory-size speakers={speakerCount} object-layout={useObjectLayout} " +
+            $"coefficients={includeCoefficients} size=0x{size:X}");
+        ctx[CpuRegister.Rax] = size;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    // Firmware 12.70 libSceAudioOut.sprx SHA-256
+    // 948dfdc30b9c974c5447d9078853beb1555a2e548de6093b05a114e99445ab33:
+    // +k91hoTuoA8 at 0x4ec60 delegates to FUN_0004efd0. The public ABI is
+    // (outHandle, descriptor, auxiliary); the wrapper replaces RCX with a
+    // provider-private feature byte, so callers such as GTA may leave RCX stale.
+    [SysAbiExport(
+        Nid = "+k91hoTuoA8",
+        ExportName = "sceAudioOut2SpeakerArrayCreate",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAudioOut2",
+        PreferLle = true)]
+    public static int AudioOut2SpeakerArrayCreate(CpuContext ctx)
+    {
+        var outHandleAddress = ctx[CpuRegister.Rdi];
+        var descriptorAddress = ctx[CpuRegister.Rsi];
+        var auxiliaryAddress = ctx[CpuRegister.Rdx];
+        if (outHandleAddress == 0 || descriptorAddress == 0)
+        {
+            return SetReturn(ctx, AudioOut2ErrorInvalidArgument);
+        }
+
+        Span<byte> descriptor = stackalloc byte[SpeakerArrayDescriptorSize];
+        if (!ctx.Memory.TryRead(descriptorAddress, descriptor))
+        {
+            return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        var positionsAddress = BinaryPrimitives.ReadUInt64LittleEndian(descriptor[0x00..]);
+        var speakerCount = BinaryPrimitives.ReadUInt32LittleEndian(descriptor[0x08..]);
+        var layout = descriptor[0x0C];
+        var workspaceAddress = BinaryPrimitives.ReadUInt64LittleEndian(descriptor[0x10..]);
+        var workspaceSize = BinaryPrimitives.ReadUInt64LittleEndian(descriptor[0x18..]);
+        var mode = BinaryPrimitives.ReadInt32LittleEndian(descriptor[0x20..]);
+        var modeParameter = BitConverter.Int32BitsToSingle(
+            BinaryPrimitives.ReadInt32LittleEndian(descriptor[0x24..]));
+
+        if (positionsAddress == 0 ||
+            workspaceAddress == 0 ||
+            workspaceSize == 0 ||
+            speakerCount > MaximumSpeakerArrayCount ||
+            (mode == 1 && (!float.IsFinite(modeParameter) || modeParameter < 0.0f)))
+        {
+            return SetReturn(ctx, AudioOut2ErrorInvalidArgument);
+        }
+
+        var coefficientConfiguration = uint.MaxValue;
+        var coefficientFeature = false;
+        if (auxiliaryAddress != 0)
+        {
+            Span<byte> auxiliaryConfiguration = stackalloc byte[sizeof(uint)];
+            if (!ctx.Memory.TryRead(auxiliaryAddress, auxiliaryConfiguration))
+            {
+                return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            coefficientConfiguration = BinaryPrimitives.ReadUInt32LittleEndian(auxiliaryConfiguration);
+            if (coefficientConfiguration < 2)
+            {
+                // Firmware 12.70's SDK gate is active, so coefficient creation
+                // also consumes the feature byte at auxiliary +4.
+                Span<byte> feature = stackalloc byte[1];
+                if (auxiliaryAddress > ulong.MaxValue - sizeof(uint) ||
+                    !ctx.Memory.TryRead(auxiliaryAddress + sizeof(uint), feature))
+                {
+                    return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+                }
+
+                coefficientFeature = feature[0] != 0;
+            }
+        }
+
+        var includeCoefficients = coefficientConfiguration < 2;
+        var requiredSize = GetSpeakerArrayMemorySize(speakerCount, layout != 0, includeCoefficients);
+        if (workspaceSize < requiredSize ||
+            workspaceSize < SpeakerArrayFooterSize ||
+            workspaceAddress > ulong.MaxValue - (workspaceSize - SpeakerArrayFooterSize))
+        {
+            return SetReturn(ctx, AudioOut2ErrorInvalidArgument);
+        }
+
+        var positionsSize = checked((int)(speakerCount * 3U * sizeof(float)));
+        var positions = new byte[positionsSize];
+        if (positions.Length != 0 && !ctx.Memory.TryRead(positionsAddress, positions))
+        {
+            return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        var handle = workspaceAddress + workspaceSize - SpeakerArrayFooterSize;
+        Span<byte> footer = stackalloc byte[SpeakerArrayFooterSize];
+        footer.Clear();
+        // The provider stores opaque primary/secondary implementation pointers
+        // in the first two qwords. HLE owns equivalent host state instead, so it
+        // leaves those pointers null while preserving the proven mode/layout ABI.
+        BinaryPrimitives.WriteInt32LittleEndian(footer[0x10..], mode);
+        footer[0x14] = layout;
+
+        if (!ctx.Memory.TryWrite(handle, footer) || !TryWriteUInt64(ctx, outHandleAddress, handle))
+        {
+            return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        SpeakerArrays[handle] = new SpeakerArrayState(
+            workspaceAddress,
+            workspaceSize,
+            speakerCount,
+            layout,
+            mode,
+            coefficientConfiguration,
+            coefficientFeature,
+            positions);
+        TraceAudioOut2(
+            $"speaker-array-create handle=0x{handle:X} speakers={speakerCount} layout={layout} " +
+            $"mode={mode} coefficients={includeCoefficients} workspace=0x{workspaceAddress:X}+0x{workspaceSize:X}");
+        return SetReturn(ctx, 0);
+    }
+
+    // Firmware wrapper 28QqMnuuJ9Y at 0x4ee10 delegates to FUN_0004f540.
+    // GTA's mode-zero speaker array requests all 36 fifth-order rows as indices
+    // 64..99, with two floats per row. Exact decoder synthesis remains provider
+    // work; zero-initializing every requested row is a deterministic progression
+    // fallback and avoids exposing stale guest stack data as audio coefficients.
+    [SysAbiExport(
+        Nid = "28QqMnuuJ9Y",
+        ExportName = "sceAudioOut2GetSpeakerArrayAmbisonicsCoefficients",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAudioOut2",
+        PreferLle = true)]
+    public static int AudioOut2GetSpeakerArrayAmbisonicsCoefficients(CpuContext ctx)
+    {
+        var handle = ctx[CpuRegister.Rdi];
+        var coefficientIndex = unchecked((uint)ctx[CpuRegister.Rsi]);
+        var outputAddress = ctx[CpuRegister.Rdx];
+        var speakerCount = unchecked((uint)ctx[CpuRegister.Rcx]);
+        if (handle == 0 ||
+            outputAddress == 0 ||
+            !SpeakerArrays.TryGetValue(handle, out var state) ||
+            !state.HasCoefficients ||
+            state.SpeakerCount != speakerCount ||
+            !IsValidAmbisonicsCoefficientIndex(state.Mode, coefficientIndex))
+        {
+            return SetReturn(ctx, AudioOut2ErrorInvalidArgument);
+        }
+
+        Span<byte> coefficients = stackalloc byte[checked((int)speakerCount * sizeof(float))];
+        coefficients.Clear();
+        if (!ctx.Memory.TryWrite(outputAddress, coefficients))
+        {
+            return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        return SetReturn(ctx, 0);
+    }
+
+    // Firmware wrapper erCWQR5eKiQ at 0x4ecf0 delegates to FUN_0004f3b0,
+    // which rejects null and tears down both the primary and optional decoder.
+    [SysAbiExport(
+        Nid = "erCWQR5eKiQ",
+        ExportName = "sceAudioOut2SpeakerArrayDestroy",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAudioOut2",
+        PreferLle = true)]
+    public static int AudioOut2SpeakerArrayDestroy(CpuContext ctx)
+    {
+        var handle = ctx[CpuRegister.Rdi];
+        if (handle == 0 || !SpeakerArrays.TryRemove(handle, out _))
+        {
+            return SetReturn(ctx, AudioOut2ErrorInvalidArgument);
+        }
+
+        TraceAudioOut2($"speaker-array-destroy handle=0x{handle:X}");
+        return SetReturn(ctx, 0);
+    }
+
     [SysAbiExport(
         Nid = "t5YrizufpQc",
         ExportName = "sceAudioOut2ContextResetParam",
@@ -94,10 +328,11 @@ public static class AudioOut2Exports
 
         Span<byte> param = stackalloc byte[AudioOut2ContextParamSize];
         param.Clear();
-        BinaryPrimitives.WriteUInt32LittleEndian(param[0x00..], AudioOut2ContextParamSize);
-        BinaryPrimitives.WriteUInt32LittleEndian(param[0x04..], 2);
-        BinaryPrimitives.WriteUInt32LittleEndian(param[0x08..], 48000);
-        BinaryPrimitives.WriteUInt32LittleEndian(param[0x0C..], 0x400);
+        // Firmware 12.70 t5YrizufpQc at 0x11050 copies the 16-byte default
+        // block at 0x5e160, stores 0x100 at +0x10, and clears through +0x3f.
+        BinaryPrimitives.WriteUInt32LittleEndian(param[0x00..], 8);
+        BinaryPrimitives.WriteUInt32LittleEndian(param[0x0C..], 1);
+        BinaryPrimitives.WriteUInt32LittleEndian(param[0x10..], 0x100);
 
         return ctx.Memory.TryWrite(paramAddress, param)
             ? SetReturn(ctx, 0)
@@ -112,20 +347,68 @@ public static class AudioOut2Exports
     public static int AudioOut2ContextQueryMemory(CpuContext ctx)
     {
         var paramAddress = ctx[CpuRegister.Rdi];
-        var memoryInfoAddress = ctx[CpuRegister.Rsi];
-        if (paramAddress == 0 || memoryInfoAddress == 0)
+        var memorySizeAddress = ctx[CpuRegister.Rsi];
+        if (paramAddress == 0 || memorySizeAddress == 0)
         {
-            return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+            return SetReturn(ctx, AudioOut2ErrorInvalidArgument);
         }
 
-        Span<byte> memoryInfo = stackalloc byte[0x20];
-        memoryInfo.Clear();
-        BinaryPrimitives.WriteUInt64LittleEndian(memoryInfo[0x00..], AudioOut2ContextMemorySize);
-        BinaryPrimitives.WriteUInt64LittleEndian(memoryInfo[0x08..], AudioOut2ContextMemoryAlignment);
-        BinaryPrimitives.WriteUInt64LittleEndian(memoryInfo[0x10..], AudioOut2ContextMemorySize);
-        BinaryPrimitives.WriteUInt64LittleEndian(memoryInfo[0x18..], AudioOut2ContextMemoryAlignment);
+        Span<byte> param = stackalloc byte[AudioOut2ContextParamSize];
+        if (!ctx.Memory.TryRead(paramAddress, param))
+        {
+            return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
 
-        return ctx.Memory.TryWrite(memoryInfoAddress, memoryInfo)
+        var bedCount = BinaryPrimitives.ReadUInt32LittleEndian(param[0x00..]);
+        var objectCount = BinaryPrimitives.ReadUInt32LittleEndian(param[0x04..]);
+        var reservedObjectCount = BinaryPrimitives.ReadUInt32LittleEndian(param[0x08..]);
+        var busCount = BinaryPrimitives.ReadUInt32LittleEndian(param[0x0C..]);
+        var mode = BinaryPrimitives.ReadUInt32LittleEndian(param[0x10..]);
+        var objectMode = BinaryPrimitives.ReadUInt32LittleEndian(param[0x14..]);
+
+        // Firmware 12.70 pDmme7Bgm6E at 0x2a6b0 validates this public
+        // parameter block, normalizes it at 0x2a7a0, and calls +8fuZ1rh4PA
+        // with RDX equal to the caller's single uint64_t output. The latter
+        // clears RCX before entering the sizing routine at 0xe330, so there is
+        // no alignment/secondary output. Writing a fabricated structure here
+        // used to overwrite GTA V's adjacent stack canary.
+        if (mode < 0x100 || (mode & 0xFF) != 0 ||
+            bedCount > 0x20 || reservedObjectCount > objectCount || busCount == 0 ||
+            (objectCount != 0 && reservedObjectCount != 0) ||
+            (objectCount != 0 && objectMode is not (1 or 2)))
+        {
+            return SetReturn(ctx, AudioOut2ErrorInvalidArgument);
+        }
+
+        // The provider gates larger modes on hardware capability globals.
+        // GTA uses mode 0x100; fail closed for modes that need those gates.
+        if ((objectCount == 0 && mode > 0x800) ||
+            (objectCount != 0 && mode > 0x400))
+        {
+            return SetReturn(ctx, AudioOut2ErrorInvalidArgument);
+        }
+
+        var normalizedObjectCount = Math.Min(objectCount, 0x80U);
+        var normalizedBusCount = (ulong)(mode >> 8) * (busCount + 1UL) - 1UL;
+        if (normalizedBusCount > 0x40)
+        {
+            return SetReturn(ctx, AudioOut2ErrorInvalidArgument);
+        }
+
+        const uint builtInVoiceCount = 0x15;
+        var memorySize = ((ulong)bedCount + normalizedObjectCount + builtInVoiceCount) * 0xB60UL
+            + GetAudioOut2DescriptorSize(bedCount)
+            + GetAudioOut2DescriptorSize(normalizedObjectCount)
+            + GetAudioOut2DescriptorSize(builtInVoiceCount)
+            + AlignUp((ulong)normalizedObjectCount * 0x18UL, 0x80UL);
+
+        Span<byte> sizeBytes = stackalloc byte[sizeof(ulong)];
+        BinaryPrimitives.WriteUInt64LittleEndian(sizeBytes, memorySize);
+        TraceAudioOut2(
+            $"context-query-memory beds={bedCount} objects={objectCount} buses={busCount} " +
+            $"mode=0x{mode:X} object-mode={objectMode} size=0x{memorySize:X}");
+
+        return ctx.Memory.TryWrite(memorySizeAddress, sizeBytes)
             ? SetReturn(ctx, 0)
             : SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
     }
@@ -240,11 +523,25 @@ public static class AudioOut2Exports
         LibraryName = "libSceAudioOut2")]
     public static int AudioOut2ContextGetQueueLevel(CpuContext ctx)
     {
-        // The advance path paces synchronously, so the queue is always drained.
+        // Firmware 12.70 libSceAudioOut.sprx SHA-256
+        // 948dfdc30b9c974c5447d9078853beb1555a2e548de6093b05a114e99445ab33:
+        // R7d0F1g2qsU at 0x2b3f0 enters the shared implementation at 0x2c260,
+        // whose two optional outputs are uint32_t pointers. GTA V places the
+        // first output four bytes before its stack canary, so an eight-byte
+        // store here corrupts the canary.
+        //
+        // The advance path paces synchronously, so both queue values are zero.
         var levelAddress = ctx[CpuRegister.Rsi];
-        if (levelAddress != 0)
+        var availableAddress = ctx[CpuRegister.Rdx];
+        if (levelAddress == 0 && availableAddress == 0)
         {
-            _ = TryWriteUInt64(ctx, levelAddress, 0);
+            return SetReturn(ctx, AudioOut2ErrorInvalidArgument);
+        }
+
+        if ((levelAddress != 0 && !TryWriteUInt32(ctx, levelAddress, 0)) ||
+            (availableAddress != 0 && !TryWriteUInt32(ctx, availableAddress, 0)))
+        {
+            return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
 
         return SetReturn(ctx, 0);
@@ -373,6 +670,110 @@ public static class AudioOut2Exports
         BinaryPrimitives.WriteUInt64LittleEndian(buffer, value);
         return ctx.Memory.TryWrite(address, buffer);
     }
+
+    private static bool TryWriteUInt32(CpuContext ctx, ulong address, uint value)
+    {
+        Span<byte> buffer = stackalloc byte[sizeof(uint)];
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer, value);
+        return ctx.Memory.TryWrite(address, buffer);
+    }
+
+    private static ulong GetSpeakerArrayMemorySize(
+        uint speakerCount,
+        bool useObjectLayout,
+        bool includeCoefficients)
+    {
+        // Ghidra 0x4ef40. The public export always supplies zero for the
+        // private fourth parameter, selecting (3, 7) for the object layout.
+        var size = useObjectLayout
+            ? GetObjectSpeakerArrayBaseSize(speakerCount) + 0xA0UL
+            : GetStandardSpeakerArrayBaseSize(speakerCount) + 0x80UL;
+
+        if (!includeCoefficients)
+        {
+            return size + 0x100UL;
+        }
+
+        var coefficientBytes = GetAmbisonicsCoefficientBytes(speakerCount, 5, 0xF0);
+        return size + 0x1A0UL + AlignUp32(coefficientBytes + 0x100UL);
+    }
+
+    private static ulong GetStandardSpeakerArrayBaseSize(uint speakerCount)
+    {
+        // Ghidra 0x3f790.
+        var countPlusOne = (ulong)unchecked(speakerCount + 1U);
+        return AlignUp32(countPlusOne * 8UL) +
+               ((ulong)(unchecked(speakerCount + 8U) & ~7U) * 4UL) +
+               AlignUp32(countPlusOne * 2UL) +
+               AlignUp32(countPlusOne * 0x10UL);
+    }
+
+    private static ulong GetObjectSpeakerArrayBaseSize(uint speakerCount)
+    {
+        // Ghidra 0x41a00 with its public-export constants param2=3,param3=7.
+        const uint objectCount = 3;
+        const uint objectStrideSelector = 7;
+        var totalCount = unchecked(speakerCount + objectCount);
+        var lowCount = totalCount & 0xFFFFU;
+        var expandedCount = lowCount < 3U ? lowCount : unchecked((lowCount * 2U) - 4U);
+
+        var size = GetSpeakerMixWorkspaceSize(lowCount) + 0x60UL +
+                   AlignUp32((ulong)totalCount * 0xCUL) +
+                   ((ulong)(unchecked(speakerCount + objectCount + 7U) & ~7U) * 4UL) +
+                   AlignUp32((ulong)expandedCount * 6UL) +
+                   AlignUp32((ulong)expandedCount * 0x30UL);
+
+        size += ((objectStrideSelector * 2UL) + 0x18UL) * objectCount;
+        var lastIndex = unchecked(totalCount - 1U);
+        if (lastIndex > 0x1FU)
+        {
+            size += ((lastIndex >> 3) & 0xFFFF_FFFCUL) + 4UL;
+        }
+
+        return AlignUp32(size);
+    }
+
+    private static ulong GetSpeakerMixWorkspaceSize(uint count)
+    {
+        // Ghidra 0x44110.
+        var smallCount = count < 3U;
+        var doubled = smallCount ? count : unchecked((count * 2U) - 4U);
+        var tripled = smallCount ? count : unchecked((count * 3U) - 6U);
+        return AlignUp32((ulong)count * 2UL) +
+               AlignUp32((ulong)tripled * 4UL) +
+               AlignUp32((ulong)doubled * 6UL);
+    }
+
+    private static ulong GetAmbisonicsCoefficientBytes(uint speakerCount, uint order, uint stride)
+    {
+        // Ghidra 0x45d40.
+        var alignedSpeakers = unchecked(speakerCount + 7U) & ~7U;
+        var alignedStride = unchecked(stride + 7U) & ~7U;
+        var coefficientCount = unchecked((order + 1U) * (order + 1U));
+        return ((ulong)stride * alignedSpeakers +
+                ((ulong)alignedStride + alignedSpeakers) * coefficientCount) * 4UL;
+    }
+
+    private static bool IsValidAmbisonicsCoefficientIndex(int mode, uint coefficientIndex) =>
+        mode switch
+        {
+            0 => coefficientIndex is >= 0x40 and <= 0x63,
+            1 => coefficientIndex < 0x10,
+            _ => coefficientIndex < 0x10 || coefficientIndex is >= 0x40 and <= 0x63,
+        };
+
+    internal static void ResetSpeakerArraysForTests() => SpeakerArrays.Clear();
+
+    internal static int SpeakerArrayCountForTests => SpeakerArrays.Count;
+
+    // Firmware 12.70 FUN_0000dc90 at 0xdc90.
+    private static ulong GetAudioOut2DescriptorSize(uint count) =>
+        (((ulong)count + 0x1FUL) >> 5) * 4UL + 0xCUL;
+
+    private static ulong AlignUp(ulong value, ulong alignment) =>
+        unchecked(value + alignment - 1UL) & ~(alignment - 1UL);
+
+    private static ulong AlignUp32(ulong value) => unchecked(value + 0x1FUL) & ~0x1FUL;
 
     private static int SetReturn(CpuContext ctx, int result)
     {

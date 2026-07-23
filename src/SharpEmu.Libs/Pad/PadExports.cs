@@ -38,6 +38,12 @@ public static class PadExports
     [ThreadStatic]
     private static PadState _cachedInputState;
 
+    [ThreadStatic]
+    private static bool _hasTracedButtons;
+
+    [ThreadStatic]
+    private static uint _lastTracedButtons;
+
     private static int _initialized;
     private static int _primaryPadDeviceState;
     private static int _controlsAnnouncementLogged;
@@ -64,8 +70,11 @@ public static class PadExports
         return ctx.SetReturn(0);
     }
 
-    // The title-captured value collides with the catalogued UserService name;
-    // retain the helper for direct callers without publishing a duplicate NID.
+    [SysAbiExport(
+        Nid = "znaWI0gpuo8",
+        ExportName = "scePadGetTriggerEffectState",
+        Target = Generation.Gen5,
+        LibraryName = "libScePad")]
     public static int PadGetTriggerEffectState(CpuContext ctx)
     {
         var handle = unchecked((int)ctx[CpuRegister.Rdi]);
@@ -138,6 +147,11 @@ public static class PadExports
             _queryTriggerEffectState = QueryUnsupportedTriggerEffectState;
             _hostInputForTests = null;
         }
+
+        _lastInputSampleTicks = 0;
+        _cachedInputState = default;
+        _hasTracedButtons = false;
+        _lastTracedButtons = 0;
     }
 
     internal static void SetPrimaryPadOpenForTests(bool open)
@@ -621,7 +635,10 @@ public static class PadExports
         data[0x07] = rightY;
         data[0x08] = l2;
         data[0x09] = r2;
-        BinaryPrimitives.WriteSingleLittleEndian(data[0x18..], 1.0f);
+        // GTA V's Gen5 caller reads acceleration at 0x0C..0x14, angular
+        // velocity at 0x18..0x20, and orientation x/y/z/w at 0x24..0x30.
+        // A neutral quaternion therefore stores its identity W at 0x30.
+        BinaryPrimitives.WriteSingleLittleEndian(data[0x30..], 1.0f);
         data[0x4C] = 1;
         var timestampTicks = Stopwatch.GetTimestamp();
         var timestampMicroseconds =
@@ -669,9 +686,18 @@ public static class PadExports
             r2 = Math.Max(r2, pad.RightTrigger);
         }
 
-        if (IsAutoCrossActive())
+        var autoCrossActive = IsAutoCrossActive(out var autoCrossElapsedSeconds);
+        if (autoCrossActive)
         {
             buttons |= 0x4000;
+        }
+
+        if (TracePadState && (!_hasTracedButtons || buttons != _lastTracedButtons))
+        {
+            Console.Error.WriteLine(FormattableString.Invariant(
+                $"[PAD][TRACE] state buttons=0x{buttons:X8} auto_cross={autoCrossActive} elapsed={autoCrossElapsedSeconds:F3}s host_thread={Environment.CurrentManagedThreadId}"));
+            _hasTracedButtons = true;
+            _lastTracedButtons = buttons;
         }
 
         _cachedInputState = new PadState(
@@ -689,6 +715,10 @@ public static class PadExports
 
     private static readonly long PadStartTimestamp = Stopwatch.GetTimestamp();
     private static readonly double[] AutoCrossTimes = ParseAutoCrossTimes();
+    private static readonly bool TracePadState = string.Equals(
+        Environment.GetEnvironmentVariable("SHARPEMU_TRACE_PAD_STATE"),
+        "1",
+        StringComparison.Ordinal);
 
     private static double[] ParseAutoCrossTimes()
     {
@@ -712,15 +742,15 @@ public static class PadExports
         return values.ToArray();
     }
 
-    private static bool IsAutoCrossActive()
+    private static bool IsAutoCrossActive(out double elapsed)
     {
+        elapsed = (Stopwatch.GetTimestamp() - PadStartTimestamp) / (double)Stopwatch.Frequency;
         var times = AutoCrossTimes;
         if (times.Length == 0)
         {
             return false;
         }
 
-        var elapsed = (Stopwatch.GetTimestamp() - PadStartTimestamp) / (double)Stopwatch.Frequency;
         foreach (var time in times)
         {
             if (elapsed >= time && elapsed < time + 0.4)

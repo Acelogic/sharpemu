@@ -12,6 +12,8 @@ public sealed class ModuleManager : IModuleManager
     private readonly ConcurrentDictionary<string, Delegate> _dispatchTable = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ExportedFunction> _exportTable = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ExportedFunction> _exportNameTable = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, DataSymbolRegistration> _dataSymbolTable = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, DataSymbolRegistration> _dataSymbolNameTable = new(StringComparer.Ordinal);
     private readonly object _registrationGate = new();
     private readonly HashSet<Assembly> _warmupAssemblies = new();
     private bool _isFrozen;
@@ -30,6 +32,12 @@ public sealed class ModuleManager : IModuleManager
             var registeredCount = 0;
             foreach (var export in exports)
             {
+                if (_dataSymbolTable.ContainsKey(export.Nid))
+                {
+                    throw new InvalidOperationException(
+                        $"NID '{export.Nid}' ({export.Name}) is already registered as a data symbol.");
+                }
+
                 if (!_dispatchTable.TryAdd(export.Nid, export.Function))
                 {
                     Console.Error.WriteLine($"[HLE] Duplicate NID '{export.Nid}' ({export.Name}) — already registered, skipping.");
@@ -41,6 +49,41 @@ public sealed class ModuleManager : IModuleManager
                 // The warm sweep in Freeze() covers every assembly that contributed a
                 // handler (generated thunks resolve to their home assembly too).
                 _warmupAssemblies.Add(export.Function.Method.Module.Assembly);
+                registeredCount++;
+            }
+
+            return registeredCount;
+        }
+    }
+
+    public int RegisterDataSymbols(IReadOnlyList<DataSymbolRegistration> registrations)
+    {
+        ArgumentNullException.ThrowIfNull(registrations);
+
+        lock (_registrationGate)
+        {
+            if (_isFrozen)
+            {
+                throw new InvalidOperationException("Module registration is frozen.");
+            }
+
+            var registeredCount = 0;
+            foreach (var registration in registrations)
+            {
+                if (_exportTable.ContainsKey(registration.Nid) || _dispatchTable.ContainsKey(registration.Nid))
+                {
+                    throw new InvalidOperationException(
+                        $"NID '{registration.Nid}' ({registration.Name}) is already registered as a callable export.");
+                }
+
+                if (!_dataSymbolTable.TryAdd(registration.Nid, registration))
+                {
+                    Console.Error.WriteLine(
+                        $"[HLE] Duplicate data NID '{registration.Nid}' ({registration.Name}) — already registered, skipping.");
+                    continue;
+                }
+
+                _dataSymbolNameTable.TryAdd(registration.Name, registration);
                 registeredCount++;
             }
 
@@ -318,6 +361,18 @@ public sealed class ModuleManager : IModuleManager
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(exportName);
         return _exportNameTable.TryGetValue(exportName, out export!);
+    }
+
+    public bool TryGetDataSymbol(string nid, out DataSymbolRegistration registration)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(nid);
+        return _dataSymbolTable.TryGetValue(nid, out registration!);
+    }
+
+    public bool TryGetDataSymbolByName(string name, out DataSymbolRegistration registration)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        return _dataSymbolNameTable.TryGetValue(name, out registration!);
     }
 
     public OrbisGen2Result Dispatch(string nid, CpuContext context)

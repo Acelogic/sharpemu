@@ -110,6 +110,7 @@ public static partial class AgcExports
     private const uint ComputeNumThreadZ = 0x209;
     private const uint SpiPsInputCntl0 = 0x191;
     private const uint VgtPrimitiveType = 0x242;
+    private const uint VgtGsOutPrimType = 0x29B;
     private const uint VgtShaderStagesEn = 0x2D5;
     private const uint GeCntl = 0x25B;
     private const uint GeUserVgpr1 = 0x25C;
@@ -214,6 +215,9 @@ public static partial class AgcExports
     private const ulong ShaderTypeOffset = 0x5A;
     private const ulong ShaderNumShRegistersOffset = 0x5C;
     private const int AgcErrorIncompatibleShaderPair = unchecked((int)0x8A6C0008);
+    private const int AgcErrorInvalidPatchDescriptor = unchecked((int)0x8A6C000C);
+    private const int AgcDriverErrorInvalidArgument = unchecked((int)0x8A6DFFFF);
+    private const uint AgcDriverTfRingMaximumSize = 0x4000;
     private const int ShaderDescriptorSize = 0x60;
     private const uint InternalGsRegister = 0x080;
     private const uint InternalHsRegister = 0x100;
@@ -786,6 +790,12 @@ public static partial class AgcExports
         public int WaitMonitorRunning;
         public object WaitMonitorSignalGate { get; } = new();
         public long WaitMonitorSignalVersion { get; set; }
+        public bool TfRingConfigured { get; set; }
+        public ulong TfRingAddress { get; set; }
+        public uint TfRingSize { get; set; }
+        public bool HsOffchipParamConfigured { get; set; }
+        // Firmware payload layout: low16(second) at +0, low16(first) at +2.
+        public uint HsOffchipParamPayload { get; set; }
     }
 
     private readonly record struct RegisteredAgcResource(
@@ -1781,6 +1791,51 @@ public static partial class AgcExports
         AddIndirectPatchRegisters(ctx, "uc");
 
     [SysAbiExport(
+        Nid = "Ikfdt-rIqCE",
+        ExportName = "Ikfdt-rIqCE#G#A",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int ConfigureUnknownPatchDescriptor(CpuContext ctx)
+    {
+        var descriptorAddress = ctx[CpuRegister.Rdi];
+        var mode = (byte)ctx[CpuRegister.Rsi];
+        var targetAddress = ctx[CpuRegister.Rdx];
+        var count = (uint)ctx[CpuRegister.Rcx];
+
+        // Firmware 12.70 libSceAgc.sprx SHA-256
+        // 110df81f759ae3dffcc9b5e3fa062c74058518631847641b8e08a54f6b8b6e2d:
+        // Ikfdt-rIqCE at 0xc360 accepts only a descriptor tagged 0x3f at
+        // byte +1. It preserves the low two address flags and selected control
+        // bits while installing the supplied address, mode, and 20-bit count.
+        if (!TryReadByte(ctx, descriptorAddress + 1, out var tag))
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        if (tag != 0x3F)
+        {
+            return ctx.SetReturn(AgcErrorInvalidPatchDescriptor);
+        }
+
+        if (!TryReadUInt32(ctx, descriptorAddress + 4, out var addressLowAndFlags) ||
+            !TryReadUInt32(ctx, descriptorAddress + 12, out var control) ||
+            !TryWriteUInt32(
+                ctx,
+                descriptorAddress + 4,
+                (addressLowAndFlags & 0x3) | ((uint)targetAddress & 0xFFFF_FFFC)) ||
+            !TryWriteUInt32(ctx, descriptorAddress + 8, (uint)(targetAddress >> 32)) ||
+            !TryWriteUInt32(
+                ctx,
+                descriptorAddress + 12,
+                ((uint)(mode & 0x3) << 28) | (control & 0xCFF0_0000) | (count & 0x000F_FFFF)))
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    [SysAbiExport(
         Nid = "D9sr1xGUriE",
         ExportName = "sceAgcCreatePrimState",
         Target = Generation.Gen5,
@@ -1793,29 +1848,156 @@ public static partial class AgcExports
         var geometryShaderAddress = ctx[CpuRegister.Rcx];
         var primitiveType = (uint)ctx[CpuRegister.R8];
 
-        if (cxRegistersAddress == 0 || ucRegistersAddress == 0 || hullShaderAddress != 0 || geometryShaderAddress == 0)
+        // Firmware 12.70 libSceAgc.sprx SHA-256
+        // 110df81f759ae3dffcc9b5e3fa062c74058518631847641b8e08a54f6b8b6e2d:
+        // D9sr1xGUriE at 0x10c60 accepts an optional hull shader and optional
+        // CX/UC output arrays.  In particular, the hull+geometry path used by
+        // GTA V is a normal merge path rather than an invalid argument.
+        if (cxRegistersAddress == 0 && ucRegistersAddress == 0)
         {
-            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
-        if (!TryReadByte(ctx, geometryShaderAddress + ShaderTypeOffset, out var shaderType) || !IsEsGeometryShaderType(shaderType) ||
-            !TryReadUInt64(ctx, geometryShaderAddress + ShaderSpecialsOffset, out var specialsAddress) ||
-            specialsAddress == 0)
+        if (!TryReadUInt64(
+                ctx,
+                geometryShaderAddress + ShaderSpecialsOffset,
+                out var geometrySpecialsAddress))
         {
-            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+            // The native provider would fault on an inaccessible descriptor.
+            // Convert that guest fault into SharpEmu's recoverable memory error.
+            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
 
-        if (!CopyShaderRegister(ctx, specialsAddress + ShaderSpecialVgtShaderStagesEnOffset, cxRegistersAddress) ||
-            !CopyShaderRegister(ctx, specialsAddress + ShaderSpecialVgtGsOutPrimTypeOffset, cxRegistersAddress + 8) ||
-            !CopyShaderRegister(ctx, specialsAddress + ShaderSpecialGeCntlOffset, ucRegistersAddress) ||
-            !CopyShaderRegister(ctx, specialsAddress + ShaderSpecialGeUserVgprEnOffset, ucRegistersAddress + 8) ||
-            !TryWriteUInt32(ctx, ucRegistersAddress + 16, VgtPrimitiveType) ||
-            !TryWriteUInt32(ctx, ucRegistersAddress + 20, primitiveType))
+        var hullSpecialsAddress = 0UL;
+        if (hullShaderAddress != 0 &&
+            !TryReadUInt64(
+                ctx,
+                hullShaderAddress + ShaderSpecialsOffset,
+                out hullSpecialsAddress))
         {
             return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
 
-        TraceAgc($"agc.create_prim_state cx=0x{cxRegistersAddress:X16} uc=0x{ucRegistersAddress:X16} gs=0x{geometryShaderAddress:X16} type={shaderType} prim=0x{primitiveType:X8}");
+        if (cxRegistersAddress != 0)
+        {
+            if (!TryReadUInt32(
+                    ctx,
+                    geometrySpecialsAddress + ShaderSpecialVgtShaderStagesEnOffset,
+                    out var stagesRegister) ||
+                !TryReadUInt32(
+                    ctx,
+                    geometrySpecialsAddress + ShaderSpecialVgtShaderStagesEnOffset + sizeof(uint),
+                    out var stagesValue) ||
+                !TryReadUInt32(
+                    ctx,
+                    geometrySpecialsAddress + ShaderSpecialVgtGsOutPrimTypeOffset,
+                    out var outputPrimitiveRegister) ||
+                !TryReadUInt32(
+                    ctx,
+                    geometrySpecialsAddress + ShaderSpecialVgtGsOutPrimTypeOffset + sizeof(uint),
+                    out var outputPrimitiveValue))
+            {
+                return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            if ((stagesValue & 0x20) == 0)
+            {
+                // The provider's Vsh register-default table selects
+                // { VGT_GS_OUT_PRIM_TYPE (0x29b), 2 } and replaces its low
+                // three value bits with this API's primitive mapping.
+                outputPrimitiveRegister = VgtGsOutPrimType;
+                outputPrimitiveValue = MapPrimStateOutputPrimitive(primitiveType);
+            }
+
+            if (hullShaderAddress != 0)
+            {
+                if (!TryReadUInt32(
+                        ctx,
+                        hullSpecialsAddress + ShaderSpecialVgtShaderStagesEnOffset + sizeof(uint),
+                        out var hullStagesValue))
+                {
+                    return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+                }
+
+                stagesValue |= hullStagesValue;
+                if ((stagesValue & 0x20) == 0 &&
+                    (!TryReadUInt32(
+                         ctx,
+                         hullSpecialsAddress + ShaderSpecialVgtGsOutPrimTypeOffset,
+                         out outputPrimitiveRegister) ||
+                     !TryReadUInt32(
+                         ctx,
+                         hullSpecialsAddress + ShaderSpecialVgtGsOutPrimTypeOffset + sizeof(uint),
+                         out outputPrimitiveValue)))
+                {
+                    return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+                }
+            }
+
+            Span<byte> cxRegisters = stackalloc byte[0x10];
+            BinaryPrimitives.WriteUInt32LittleEndian(cxRegisters, stagesRegister);
+            BinaryPrimitives.WriteUInt32LittleEndian(cxRegisters[4..], stagesValue);
+            BinaryPrimitives.WriteUInt32LittleEndian(cxRegisters[8..], outputPrimitiveRegister);
+            BinaryPrimitives.WriteUInt32LittleEndian(cxRegisters[12..], outputPrimitiveValue);
+            if (!ctx.Memory.TryWrite(cxRegistersAddress, cxRegisters))
+            {
+                return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+        }
+
+        if (ucRegistersAddress != 0)
+        {
+            if (!TryReadUInt32(
+                    ctx,
+                    geometrySpecialsAddress + ShaderSpecialGeCntlOffset,
+                    out var geControlRegister) ||
+                !TryReadUInt32(
+                    ctx,
+                    geometrySpecialsAddress + ShaderSpecialGeCntlOffset + sizeof(uint),
+                    out var geControlValue) ||
+                !TryReadUInt32(
+                    ctx,
+                    geometrySpecialsAddress + ShaderSpecialGeUserVgprEnOffset,
+                    out var userVgprRegister) ||
+                !TryReadUInt32(
+                    ctx,
+                    geometrySpecialsAddress + ShaderSpecialGeUserVgprEnOffset + sizeof(uint),
+                    out var userVgprValue))
+            {
+                return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            if (hullShaderAddress != 0 &&
+                (!TryReadUInt32(
+                     ctx,
+                     hullSpecialsAddress + ShaderSpecialGeUserVgprEnOffset,
+                     out userVgprRegister) ||
+                 !TryReadUInt32(
+                     ctx,
+                     hullSpecialsAddress + ShaderSpecialGeUserVgprEnOffset + sizeof(uint),
+                     out userVgprValue)))
+            {
+                return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            Span<byte> ucRegisters = stackalloc byte[0x18];
+            BinaryPrimitives.WriteUInt32LittleEndian(ucRegisters, geControlRegister);
+            BinaryPrimitives.WriteUInt32LittleEndian(ucRegisters[4..], geControlValue);
+            BinaryPrimitives.WriteUInt32LittleEndian(ucRegisters[8..], userVgprRegister);
+            BinaryPrimitives.WriteUInt32LittleEndian(ucRegisters[12..], userVgprValue);
+            BinaryPrimitives.WriteUInt32LittleEndian(ucRegisters[16..], VgtPrimitiveType);
+            BinaryPrimitives.WriteUInt32LittleEndian(ucRegisters[20..], primitiveType);
+            if (!ctx.Memory.TryWrite(ucRegistersAddress, ucRegisters))
+            {
+                return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+        }
+
+        TraceAgc(
+            $"agc.create_prim_state cx=0x{cxRegistersAddress:X16} " +
+            $"uc=0x{ucRegistersAddress:X16} hs=0x{hullShaderAddress:X16} " +
+            $"gs=0x{geometryShaderAddress:X16} prim=0x{primitiveType:X8}");
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
@@ -2539,6 +2721,36 @@ public static partial class AgcExports
         DcbSetRegistersIndirect(ctx, RUcRegsIndirect, "uc");
 
     [SysAbiExport(
+        Nid = "w4-d0n60hdo",
+        ExportName = "sceAgcDcbSetUcRegisterDirect",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int DcbSetUcRegisterDirect(CpuContext ctx)
+    {
+        var commandBufferAddress = ctx[CpuRegister.Rdi];
+        var packedRegisterAndValue = ctx[CpuRegister.Rsi];
+
+        // Firmware 12.70 libSceAgc.sprx SHA-256
+        // 110df81f759ae3dffcc9b5e3fa062c74058518631847641b8e08a54f6b8b6e2d:
+        // w4-d0n60hdo at 0x4900 reserves three dwords, then emits exactly
+        // C0017900, the low 16 bits of RSI, and the high 32 bits of RSI.
+        // GTA packs the UCONFIG register offset and value into that argument.
+        if (commandBufferAddress == 0 ||
+            !TryAllocateCommandDwords(ctx, commandBufferAddress, 3, out var commandAddress) ||
+            !TryWriteUInt32(ctx, commandAddress, Pm4(3, ItSetUconfigReg, 0)) ||
+            !TryWriteUInt32(ctx, commandAddress + sizeof(uint), (uint)packedRegisterAndValue & 0xFFFF) ||
+            !TryWriteUInt32(ctx, commandAddress + (2 * sizeof(uint)), (uint)(packedRegisterAndValue >> 32)))
+        {
+            return ReturnPointer(ctx, 0);
+        }
+
+        TraceAgc(
+            $"agc.dcb_set_uc_direct buf=0x{commandBufferAddress:X16} cmd=0x{commandAddress:X16} " +
+            $"reg=0x{((uint)packedRegisterAndValue & 0xFFFF):X4} value=0x{((uint)(packedRegisterAndValue >> 32)):X8}");
+        return ReturnPointer(ctx, commandAddress);
+    }
+
+    [SysAbiExport(
         Nid = "GIIW2J37e70",
         ExportName = "sceAgcDcbSetIndexSize",
         Target = Generation.Gen5,
@@ -2995,7 +3207,8 @@ public static partial class AgcExports
         Nid = "pFLArOT53+w",
         ExportName = "sceAgcDcbSetShRegisterDirect",
         Target = Generation.Gen5,
-        LibraryName = "libSceAgc")]
+        LibraryName = "libSceAgc",
+        PreferLle = true)]
     public static int DcbSetShRegisterDirect(CpuContext ctx)
     {
         var commandBufferAddress = ctx[CpuRegister.Rdi];
@@ -3027,7 +3240,8 @@ public static partial class AgcExports
         Nid = "43WJ08sSugE",
         ExportName = "sceAgcDcbWaitOnAddressGetSize",
         Target = Generation.Gen5,
-        LibraryName = "libSceAgc")]
+        LibraryName = "libSceAgc",
+        PreferLle = true)]
     public static int DcbWaitOnAddressGetSize(CpuContext ctx)
     {
         var size = (uint)(ctx[CpuRegister.Rdi] & 0xFF);
@@ -3884,7 +4098,8 @@ public static partial class AgcExports
         Nid = "Zw7uUVPulbw",
         ExportName = "sceAgcDriverGetEqContextId",
         Target = Generation.Gen5,
-        LibraryName = "libSceAgcDriver")]
+        LibraryName = "libSceAgcDriver",
+        PreferLle = true)]
     public static int DriverGetEqContextId(CpuContext ctx)
     {
         var contextIdAddress = ctx[CpuRegister.Rdi];
@@ -3921,6 +4136,135 @@ public static partial class AgcExports
 
         TraceAgc($"agc.driver_delete_eq_event eq=0x{equeue:X16} id=0x{eventId:X16}");
         return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    // Ghidra: libSceAgcDriver.sprx
+    // SHA-256 bc2ca28f3632ce69e25ab44991ed1f49bc1624fe39c2fc81f2efc6e705876348,
+    // public export 0x6FF0 -> selected Prospero callback 0x6F90 -> helper
+    // 0x9C20. The base path clamps the requested size before the callback
+    // validates the address and effective size, in that order.
+    [SysAbiExport(
+        Nid = "XlNp7jzGiPo",
+        ExportName = "sceAgcDriverSetTFRing",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgcDriver")]
+    public static int DriverSetTfRing(CpuContext ctx)
+    {
+        var ringAddress = ctx[CpuRegister.Rdi];
+        var requestedRingSize = (uint)ctx[CpuRegister.Rsi];
+        var effectiveRingSize = Math.Min(requestedRingSize, AgcDriverTfRingMaximumSize);
+
+        // GTA checks the pointer before entering the provider, so the direct
+        // null-provider outcome is not present in the recovered path. Reject
+        // it conservatively instead of recording a synthetic null ring.
+        if (ringAddress == 0 ||
+            (ringAddress & 0xFF) != 0 ||
+            (effectiveRingSize & 3) != 0)
+        {
+            TraceAgc(
+                $"agc.driver_set_tf_ring invalid addr=0x{ringAddress:X16} " +
+                $"requested=0x{requestedRingSize:X} effective=0x{effectiveRingSize:X}");
+            return ctx.SetReturn(AgcDriverErrorInvalidArgument);
+        }
+
+        var gpuState = _submittedGpuStates.GetValue(ctx.Memory, static _ => new SubmittedGpuState());
+        lock (gpuState.Gate)
+        {
+            gpuState.TfRingConfigured = true;
+            gpuState.TfRingAddress = ringAddress;
+            gpuState.TfRingSize = effectiveRingSize;
+        }
+
+        TraceAgc(
+            $"agc.driver_set_tf_ring addr=0x{ringAddress:X16} " +
+            $"requested=0x{requestedRingSize:X} effective=0x{effectiveRingSize:X}");
+        return ctx.SetReturn(0);
+    }
+
+    internal static bool TryGetDriverTfRingState(
+        ICpuMemory memory,
+        out ulong ringAddress,
+        out uint ringSize)
+    {
+        if (!_submittedGpuStates.TryGetValue(memory, out var gpuState))
+        {
+            ringAddress = 0;
+            ringSize = 0;
+            return false;
+        }
+
+        lock (gpuState.Gate)
+        {
+            ringAddress = gpuState.TfRingAddress;
+            ringSize = gpuState.TfRingSize;
+            return gpuState.TfRingConfigured;
+        }
+    }
+
+    // Ghidra: libSceAgcDriver.sprx
+    // SHA-256 bc2ca28f3632ce69e25ab44991ed1f49bc1624fe39c2fc81f2efc6e705876348,
+    // public export 0x70B0 -> selected Prospero callback 0x6FC0 -> helper
+    // 0x9D00. The helper submits a four-byte payload with low16(second) at
+    // offset 0 and low16(first) at offset 2, mapping driver failure to
+    // 0x8A6DFFFF. GTA V calls this as (0, 0x1FF) immediately after TFRing.
+    [SysAbiExport(
+        Nid = "MM4IZSEYytQ",
+        ExportName = "sceAgcDriverSetHsOffchipParam",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgcDriver",
+        PreferLle = true)]
+    public static int DriverSetHsOffchipParam(CpuContext ctx)
+    {
+        var requestedFirst = (uint)ctx[CpuRegister.Rdi];
+        var requestedSecond = (uint)ctx[CpuRegister.Rsi];
+        var first = (ushort)requestedFirst;
+        var second = (ushort)requestedSecond;
+
+        // The firmware call is stateful and can fail at the driver boundary.
+        // Require the per-process AGC state established by the preceding setup
+        // instead of creating state here and returning blind success.
+        if (!_submittedGpuStates.TryGetValue(ctx.Memory, out var gpuState))
+        {
+            TraceAgc(
+                $"agc.driver_set_hs_offchip_param unavailable " +
+                $"first=0x{requestedFirst:X8} second=0x{requestedSecond:X8}");
+            return ctx.SetReturn(AgcDriverErrorInvalidArgument);
+        }
+
+        lock (gpuState.Gate)
+        {
+            gpuState.HsOffchipParamPayload = (uint)second | ((uint)first << 16);
+            gpuState.HsOffchipParamConfigured = true;
+        }
+
+        TraceAgc(
+            $"agc.driver_set_hs_offchip_param " +
+            $"first=0x{requestedFirst:X8}->0x{first:X4} " +
+            $"second=0x{requestedSecond:X8}->0x{second:X4}");
+        return ctx.SetReturn(0);
+    }
+
+    internal static bool TryGetDriverHsOffchipParamState(
+        ICpuMemory memory,
+        out ushort first,
+        out ushort second,
+        out uint payload)
+    {
+        if (!_submittedGpuStates.TryGetValue(memory, out var gpuState))
+        {
+            first = 0;
+            second = 0;
+            payload = 0;
+            return false;
+        }
+
+        lock (gpuState.Gate)
+        {
+            payload = gpuState.HsOffchipParamPayload;
+            first = (ushort)(payload >> 16);
+            second = (ushort)payload;
+            return gpuState.HsOffchipParamConfigured;
+        }
     }
 
     [SysAbiExport(
@@ -8121,6 +8465,7 @@ public static partial class AgcExports
         var usesGds = pixelState.Program.Instructions.Any(static instruction =>
             (instruction.Opcode is "DsConsume" or "DsAppend") &&
             instruction.Control is Gen5DataShareControl { Gds: true });
+
         var guestGlobalBuffers =
             pixelEvaluation.GlobalMemoryBindings.Count +
             exportEvaluation.GlobalMemoryBindings.Count;
@@ -8578,7 +8923,7 @@ public static partial class AgcExports
                     ? string.Empty
                     : Convert.ToHexString(binding.Data.AsSpan(0, headLength));
                 var byteBias = binding.BaseAddress &
-                    (VulkanVideoPresenter.GuestStorageBufferOffsetAlignment - 1);
+                    (_storageBufferOffsetAlignment - 1);
                 var recordSample = string.Empty;
                 if (hasRecordProbe &&
                     binding.ScalarAddress + 1 <
@@ -11945,31 +12290,6 @@ public static partial class AgcExports
         }
     }
 
-    internal static bool TryUseAvailableGuestImageWithoutSnapshot(
-        ulong address,
-        bool guestImageAvailable,
-        out bool dirtySnapshotClaimed)
-    {
-        dirtySnapshotClaimed = guestImageAvailable &&
-            GuestImageWriteTracker.ConsumeDirty(address);
-        return guestImageAvailable && !dirtySnapshotClaimed;
-    }
-
-    internal static void CompleteGuestImageSnapshot(ulong address, bool succeeded)
-    {
-        GuestImageWriteTracker.Rearm(address);
-        if (!succeeded)
-        {
-            // Put the consumed generation back for a later attempt. Rearm first
-            // so this synthetic notification leaves the range dirty/disarmed,
-            // matching a real CPU write and preventing a failed read from
-            // making the stale host image look current.
-            GuestImageWriteTracker.NotifyManagedWrite(address, 1);
-        }
-    }
-
-
-
     /// <summary>
     /// On PS5 render targets alias guest memory, so pixels the game wrote with
     /// the CPU are visible before the first GPU draw (Chowdren pre-fills its
@@ -12256,6 +12576,37 @@ public static partial class AgcExports
         }
     }
 
+    internal static bool TryUseAvailableGuestImageWithoutSnapshot(
+        ulong address,
+        bool guestImageAvailable,
+        out bool dirtySnapshotClaimed)
+    {
+        dirtySnapshotClaimed = guestImageAvailable &&
+            GuestImageWriteTracker.ConsumeDirty(address);
+        return guestImageAvailable && !dirtySnapshotClaimed;
+    }
+
+    internal static void CompleteGuestImageSnapshot(ulong address, bool succeeded)
+    {
+        GuestImageWriteTracker.Rearm(address);
+        if (!succeeded)
+        {
+            // Put the consumed generation back for a later attempt. Rearm first
+            // so this synthetic notification leaves the range dirty/disarmed,
+            // matching a real CPU write and preventing a failed read from
+            // making the stale host image look current.
+            GuestImageWriteTracker.NotifyManagedWrite(address, 1);
+        }
+    }
+
+
+
+    /// <summary>
+    /// On PS5 render targets alias guest memory, so pixels the game wrote with
+    /// the CPU are visible before the first GPU draw (Chowdren pre-fills its
+    /// fog/overlay layers that way). Seed newly created Vulkan guest images
+    /// with the current guest memory contents to preserve that base layer.
+    /// </summary>
     private static GuestDrawTexture CreateFallbackGuestDrawTexture(
         bool isStorage,
         bool writesImage,
@@ -14434,20 +14785,25 @@ public static partial class AgcExports
 
     private static bool PatchShaderProgramRegisters(CpuContext ctx, ulong headerAddress, ulong codeAddress)
     {
+        if (!TryReadByte(ctx, headerAddress + ShaderTypeOffset, out var shaderType))
+        {
+            return false;
+        }
+
+        // Firmware 12.70 libSceAgc.sprx SHA-256
+        // 110df81f759ae3dffcc9b5e3fa062c74058518631847641b8e08a54f6b8b6e2d,
+        // f3dg2CSgRKY at 0xe770: types 4 and 5 deliberately skip program-address
+        // relocation. They are the first half of a combined shader; the paired
+        // type 6/7 descriptor carries the address that is reconciled later.
+        if (shaderType is 4 or 5)
+        {
+            return true;
+        }
+
         if (!TryReadUInt64(ctx, headerAddress + ShaderShRegistersOffset, out var shRegistersAddress) ||
-            !TryReadByte(ctx, headerAddress + ShaderTypeOffset, out var shaderType) ||
-            !TryReadByte(ctx, headerAddress + ShaderNumShRegistersOffset, out var registerCount))
-        {
-            return false;
-        }
-
-        if (shRegistersAddress == 0 || registerCount < 2)
-        {
-            return false;
-        }
-
-        if (!TryReadUInt32(ctx, shRegistersAddress, out var loRegister) ||
-            !TryReadUInt32(ctx, shRegistersAddress + 8, out var hiRegister))
+            !TryReadByte(ctx, headerAddress + ShaderNumShRegistersOffset, out var registerCount) ||
+            shRegistersAddress == 0 ||
+            registerCount == 0)
         {
             return false;
         }
@@ -14457,33 +14813,76 @@ public static partial class AgcExports
             0 => ComputePgmLo,
             1 => SpiShaderPgmLoPs,
             2 or 6 => SpiShaderPgmLoEs,
-            4 => SpiShaderPgmLoGs,
-            7 => SpiShaderPgmLoLs,
+            3 or 7 => SpiShaderPgmLoLs,
             _ => 0u,
         };
-        var expectedHi = shaderType switch
+        if (expectedLo == 0)
         {
-            0 => ComputePgmHi,
-            1 => SpiShaderPgmHiPs,
-            2 or 6 => SpiShaderPgmHiEs,
-            4 => SpiShaderPgmHiGs,
-            7 => SpiShaderPgmHiLs,
-            _ => 0u,
-        };
-        if (expectedLo == 0 || loRegister != expectedLo || hiRegister != expectedHi)
-        {
-            TraceCreateShader(0, headerAddress, codeAddress, $"unexpected-registers type={shaderType} lo=0x{loRegister:X8} hi=0x{hiRegister:X8}");
             return false;
         }
 
-        var loValue = (uint)((codeAddress >> 8) & 0xFFFF_FFFFUL);
-        var hiValue = (uint)((codeAddress >> 40) & 0xFFUL);
-        return TryWriteUInt32(ctx, shRegistersAddress + sizeof(uint), loValue) &&
-               TryWriteUInt32(ctx, shRegistersAddress + 8 + sizeof(uint), hiValue);
+        // The provider scans the complete register table, then treats the
+        // existing LO/HI value as a relative address and adds the supplied code
+        // base. The HI component is the low byte of the following entry's value.
+        for (var index = 0; index < registerCount; index++)
+        {
+            var entryAddress = shRegistersAddress + (ulong)index * 8;
+            if (!TryReadUInt32(ctx, entryAddress, out var register))
+            {
+                return false;
+            }
+
+            if (register != expectedLo)
+            {
+                continue;
+            }
+
+            if (!TryReadUInt32(ctx, entryAddress + sizeof(uint), out var relativeLo) ||
+                !TryReadByte(ctx, entryAddress + 12, out var relativeHi))
+            {
+                return false;
+            }
+
+            var relativeAddress = ((ulong)relativeLo << 8) | ((ulong)relativeHi << 40);
+            var relocatedAddress = relativeAddress + codeAddress;
+            if (!TryWriteUInt32(
+                    ctx,
+                    entryAddress + sizeof(uint),
+                    (uint)(relocatedAddress >> 8)))
+            {
+                return false;
+            }
+
+            Span<byte> highAddress = stackalloc byte[1];
+            highAddress[0] = (byte)(relocatedAddress >> 40);
+            return ctx.Memory.TryWrite(entryAddress + 12, highAddress);
+        }
+
+        TraceCreateShader(
+            0,
+            headerAddress,
+            codeAddress,
+            $"missing-program-register type={shaderType} expected=0x{expectedLo:X8}");
+        return false;
     }
 
     private static bool IsEsGeometryShaderType(byte shaderType) =>
         shaderType is 2 or 6;
+
+    private static uint MapPrimStateOutputPrimitive(uint primitiveType) =>
+        primitiveType switch
+        {
+            1 => 0,
+            2 or 3 => 1,
+            4 or 5 or 6 => 2,
+            7 => 3,
+            8 or 9 => 2,
+            10 or 11 => 1,
+            12 or 13 or 14 or 15 or 16 => 2,
+            17 => 4,
+            18 => 1,
+            _ => 2,
+        };
 
     private static int SetIndirectPatchAddress(CpuContext ctx, string registerSpace)
     {
@@ -15534,6 +15933,69 @@ public static partial class AgcExports
             $"[LOADER][TRACE] agc.create_shader dst=0x{destinationAddress:X16} header=0x{headerAddress:X16} code=0x{codeAddress:X16} {detail}");
     }
 
+    // Firmware 12.70 libSceAgc.sprx SHA-256
+    // 110df81f759ae3dffcc9b5e3fa062c74058518631847641b8e08a54f6b8b6e2d:
+    // -vnlTPPXPrw at 0xce50 and ewobAQeMo5k at 0xd160 return 0x20
+    // in the non-Trinity mode exposed by GetIsTrinityMode.
+    [SysAbiExport(
+        Nid = "-vnlTPPXPrw",
+        ExportName = "sceAgcDcbAcquireMemGetSize",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc",
+        PreferLle = true)]
+    public static int DcbAcquireMemGetSize(CpuContext ctx) => ReturnAgcSize(ctx, 0x20);
+
+    [SysAbiExport(
+        Nid = "ewobAQeMo5k",
+        ExportName = "sceAgcAcbAcquireMemGetSize",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc",
+        PreferLle = true)]
+    public static int AcbAcquireMemGetSize(CpuContext ctx) => ReturnAgcSize(ctx, 0x20);
+
+    // t7PlZ9nt5Lc at 0xcd90 is `lea eax,[rdi*4]; ret`.
+    [SysAbiExport(
+        Nid = "t7PlZ9nt5Lc",
+        ExportName = "sceAgcCbNopGetSize",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc",
+        PreferLle = true)]
+    public static int CbNopGetSize(CpuContext ctx) =>
+        ReturnAgcSize(ctx, unchecked((uint)ctx[CpuRegister.Rdi] * sizeof(uint)));
+
+    // hL7C0IRpWZI at 0xcda0 is `mov eax,0x20; ret`.
+    [SysAbiExport(
+        Nid = "hL7C0IRpWZI",
+        ExportName = "sceAgcCbQueueEndOfPipeActionGetSize",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc",
+        PreferLle = true)]
+    public static int CbQueueEndOfPipeActionGetSize(CpuContext ctx) => ReturnAgcSize(ctx, 0x20);
+
+    // QIXCsbipds0 at 0xd0d0 is `mov eax,8; ret`.
+    [SysAbiExport(
+        Nid = "QIXCsbipds0",
+        ExportName = "sceAgcDcbRewindGetSize",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc",
+        PreferLle = true)]
+    public static int DcbRewindGetSize(CpuContext ctx) => ReturnAgcSize(ctx, 8);
+
+    // VEGu4dixjUg at 0xcec0 is exactly `mov eax, 0x10; ret`.
+    [SysAbiExport(
+        Nid = "VEGu4dixjUg",
+        ExportName = "sceAgcDcbJumpGetSize",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc",
+        PreferLle = true)]
+    public static int DcbJumpGetSize(CpuContext ctx) => ReturnAgcSize(ctx, 0x10);
+
+    private static int ReturnAgcSize(CpuContext ctx, uint size)
+    {
+        ctx[CpuRegister.Rax] = size;
+        return unchecked((int)size);
+    }
+
     [SysAbiExport(
         Nid = "xSAR0LTcRKM",
         ExportName = "sceAgcDcbJump",
@@ -15766,57 +16228,11 @@ public static partial class AgcExports
         LibraryName = "libSceAgc")]
     public static int DriverRegisterOwner(CpuContext ctx)
     {
-        var ownerAddress = ctx[CpuRegister.Rdi];
-        var nameAddress = ctx[CpuRegister.Rsi];
-        if (ownerAddress == 0 || nameAddress == 0 ||
-            !TryReadGuestCString(
-                ctx,
-                nameAddress,
-                ResourceRegistrationMaxNameLength,
-                out var nameBytes))
-        {
-            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
-        }
-
-        var state = _submittedGpuStates.GetValue(ctx.Memory, static _ => new SubmittedGpuState());
-        uint owner;
-        lock (state.Gate)
-        {
-            if (state.ResourceRegistrationInitialized &&
-                state.ResourceRegistrationMaxOwners != 0 &&
-                state.ResourceOwners.Count >= state.ResourceRegistrationMaxOwners)
-            {
-                return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
-            }
-
-            owner = state.NextOwner;
-            while (owner == state.DefaultOwner || state.ResourceOwners.ContainsKey(owner))
-            {
-                owner++;
-                if (owner == 0)
-                {
-                    return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
-                }
-            }
-
-            state.NextOwner = owner + 1;
-            state.ResourceOwners.Add(owner, System.Text.Encoding.UTF8.GetString(nameBytes));
-        }
-
-        if (!ctx.TryWriteUInt32(ownerAddress, owner))
-        {
-            lock (state.Gate)
-            {
-                state.ResourceOwners.Remove(owner);
-            }
-
-            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
-        }
-
-        TraceAgc(
-            $"agc.driver_register_owner out=0x{ownerAddress:X16} owner={owner} " +
-            $"name={System.Text.Encoding.UTF8.GetString(nameBytes)}");
-        return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+        // Ghidra 12.1.2_PUBLIC_20260605, developer libSceAgc.sprx
+        // provider SHA-256 prefix bc2ca28f, entry RVA 0x71C0. The complete body is
+        // `mov eax, 0x8A6C9018; ret`: it reads no arguments, writes no owner,
+        // and creates no registration state.
+        return ctx.SetReturn(unchecked((int)0x8A6C9018));
     }
 
     private static int RemoveResourcesForOwner(SubmittedGpuState state, uint owner)
@@ -15842,7 +16258,8 @@ public static partial class AgcExports
         Nid = "ZLJk9r2+2Aw",
         ExportName = "sceAgcDriverUnregisterOwnerAndResources",
         Target = Generation.Gen5,
-        LibraryName = "libSceAgc")]
+        LibraryName = "libSceAgcDriver",
+        PreferLle = true)]
     public static int DriverUnregisterOwnerAndResources(CpuContext ctx)
     {
         var owner = (uint)ctx[CpuRegister.Rdi];
@@ -15867,7 +16284,8 @@ public static partial class AgcExports
         Nid = "SCoAN5fYlUM",
         ExportName = "sceAgcDriverUnregisterAllResourcesForOwner",
         Target = Generation.Gen5,
-        LibraryName = "libSceAgc")]
+        LibraryName = "libSceAgcDriver",
+        PreferLle = true)]
     public static int DriverUnregisterAllResourcesForOwner(CpuContext ctx)
     {
         var owner = (uint)ctx[CpuRegister.Rdi];
@@ -15903,34 +16321,4 @@ public static partial class AgcExports
         return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
     }
 
-    // Tessellation-factor ring and hull-shader off-chip buffers are guest-driver
-    // configuration for on-hardware tessellation memory. Our translator handles
-    // shader execution directly, so there is no guest-side ring to program: the
-    // guest driver only needs these to report success so init proceeds. Games
-    // (e.g. Unity titles) call them during GPU setup and stall if unresolved.
-    [SysAbiExport(
-        Nid = "XlNp7jzGiPo",
-        ExportName = "sceAgcDriverSetTFRing",
-        Target = Generation.Gen5,
-        LibraryName = "libSceAgcDriver")]
-    public static int DriverSetTFRing(CpuContext ctx)
-    {
-        TraceAgc(
-            $"agc.driver_set_tf_ring ring=0x{ctx[CpuRegister.Rdi]:X16} " +
-            $"size=0x{(uint)ctx[CpuRegister.Rsi]:X8}");
-        return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
-    }
-
-    [SysAbiExport(
-        Nid = "MM4IZSEYytQ",
-        ExportName = "sceAgcDriverSetHsOffchipParam",
-        Target = Generation.Gen5,
-        LibraryName = "libSceAgcDriver")]
-    public static int DriverSetHsOffchipParam(CpuContext ctx)
-    {
-        TraceAgc(
-            $"agc.driver_set_hs_offchip_param buffer=0x{ctx[CpuRegister.Rdi]:X16} " +
-            $"param=0x{(uint)ctx[CpuRegister.Rsi]:X8}");
-        return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
-    }
 }

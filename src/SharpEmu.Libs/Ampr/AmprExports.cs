@@ -375,7 +375,8 @@ public static class AmprExports
         Nid = "4fgtGfXDrFc",
         ExportName = "sceAmprMeasureCommandSizeWriteAddress_04_00",
         Target = Generation.Gen5,
-        LibraryName = "libSceAmpr")]
+        LibraryName = "libSceAmpr",
+        PreferLle = true)]
     public static int MeasureCommandSizeWriteAddress0400(CpuContext ctx)
     {
         TraceAmpr(ctx, "measure_write_address", 0, WriteAddressRecordSize, 0);
@@ -559,7 +560,8 @@ public static class AmprExports
         Nid = "j0+3uJMxYJY",
         ExportName = "sceAmprCommandBufferWriteAddress_04_00",
         Target = Generation.Gen5,
-        LibraryName = "libSceAmpr")]
+        LibraryName = "libSceAmpr",
+        PreferLle = true)]
     public static int CommandBufferWriteAddress0400(CpuContext ctx)
     {
         var commandBuffer = ctx[CpuRegister.Rdi];

@@ -115,9 +115,6 @@ public sealed class KernelSystemSoftwareCompatExportsTests
                     : 0;
         }
 
-        public bool TryBackFixedRange(ulong address, ulong size, bool executable) =>
-            AllocateAt(address, size, executable, allowAlternative: false) == address;
-
         public bool TryAllocateAtOrAbove(
             ulong desiredAddress,
             ulong size,
@@ -147,6 +144,10 @@ public sealed class KernelSystemSoftwareCompatExportsTests
             _nextAddress = candidate + size;
             return true;
         }
+
+        public bool TryBackFixedRange(ulong address, ulong size, bool executable) =>
+            size <= int.MaxValue &&
+            (TryResolve(address, (int)size, out _, out _) || TryAllocateExact(address, size));
 
         public bool TryProtect(ulong address, ulong size, GuestPageProtection protection) =>
             size <= int.MaxValue && TryResolve(address, (int)size, out _, out _);

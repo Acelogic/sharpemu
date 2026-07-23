@@ -15,6 +15,7 @@ public static class ShareExports
 
     private static readonly object _contentEventGate = new();
     private static readonly List<ContentEventRegistration> _contentEventRegistrations = [];
+    private static readonly HashSet<int> _permittedFeatures = [];
     private static int _initialized;
     private static int _contentEventServiceAvailable;
     private static string _contentParam = string.Empty;
@@ -70,11 +71,40 @@ public static class ShareExports
         return SetShareReturn(ctx, 0);
     }
 
+    // Ghidra entry 00006d00 in libSceShare.native.sprx (SHA-256
+    // 02b41c8d10cc86418a7b3182a972d0a24163791eaf67a187ac6d1df531e4560d)
+    // forwards the signed feature selector with command mask 0x200000000.
+    // The provider returns NOT_INITIALIZED before the service call when its
+    // global Share service is absent. SharpEmu's initialized local service
+    // records the permit operation and completes it synchronously.
+    [SysAbiExport(
+        Nid = "YBiIdcDPrxs",
+        ExportName = "sceShareFeaturePermit",
+        Target = Generation.Gen5,
+        LibraryName = "libSceShare",
+        PreferLle = true)]
+    public static int ShareFeaturePermit(CpuContext ctx)
+    {
+        var feature = unchecked((int)ctx[CpuRegister.Rdi]);
+        lock (_contentEventGate)
+        {
+            if (Volatile.Read(ref _initialized) == 0)
+            {
+                return SetShareReturn(ctx, ShareErrorNotInitialized);
+            }
+
+            _permittedFeatures.Add(feature);
+        }
+
+        TraceShare($"feature_permit feature=0x{unchecked((uint)feature):X8}");
+        return SetShareReturn(ctx, 0);
+    }
+
     [SysAbiExport(
         Nid = "Sygnk9dr5WQ",
         ExportName = "sceShareRegisterContentEventCallback",
-        Target = Generation.Gen4 | Generation.Gen5,
-        LibraryName = "libSceShareUtility")]
+        Target = Generation.Gen5,
+        LibraryName = "libSceShare")]
     public static int ShareRegisterContentEventCallback(CpuContext ctx)
     {
         var callback = ctx[CpuRegister.Rdi];
@@ -235,6 +265,14 @@ public static class ShareExports
         }
     }
 
+    internal static bool IsFeaturePermittedForTests(int feature)
+    {
+        lock (_contentEventGate)
+        {
+            return _permittedFeatures.Contains(feature);
+        }
+    }
+
     internal static void SetContentEventServiceAvailableForTests(bool available)
     {
         lock (_contentEventGate)
@@ -254,6 +292,7 @@ public static class ShareExports
     private static void ClearShareLifecycleUnderLock()
     {
         _contentEventRegistrations.Clear();
+        _permittedFeatures.Clear();
         Volatile.Write(ref _contentEventServiceAvailable, 0);
         Volatile.Write(ref _initialized, 0);
         _contentParam = string.Empty;

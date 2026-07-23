@@ -596,7 +596,6 @@ public static unsafe class GuestImageWriteTracker
                 Interlocked.Increment(ref range.WriteGeneration);
             }
             if (wasArmed &&
-                range.TraceLifetime &&
                 Interlocked.CompareExchange(ref range.FirstCpuWriteSeen, 1, 0) == 0)
             {
                 // Signal context: capture preallocated scalar fields only.

@@ -81,9 +81,12 @@ public static class KernelRuntimeCompatExports
         string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_GUEST_THREADS"), "1", StringComparison.Ordinal);
     private static readonly bool _traceTimeCompat =
         string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_TIME_COMPAT"), "1", StringComparison.Ordinal);
+    private static readonly bool _traceStrtokReentrant =
+        string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_STRTOK_R"), "1", StringComparison.Ordinal);
     private static int _mktimeTraceCount;
     private static int _localtimeTraceCount;
     private static int _difftimeTraceCount;
+    private static long _strtokReentrantTraceCount;
 
     [ThreadStatic]
     private static int _shortUsleepCount;
@@ -1142,19 +1145,35 @@ public static class KernelRuntimeCompatExports
         }
     }
 
-    private static bool TryReadUtf8CString(CpuContext ctx, ulong address, int maxBytes, out string value)
+    private static bool TryReadUtf8CString(
+        CpuContext ctx,
+        ulong address,
+        int maxBytes,
+        out string value,
+        int minimumPrintableCharacters = 4)
     {
         value = string.Empty;
-        var buffer = GC.AllocateUninitializedArray<byte>(maxBytes);
-        if (!ctx.Memory.TryRead(address, buffer))
+        if (address == 0 || maxBytes <= 0)
         {
             return false;
         }
 
-        var length = Array.IndexOf(buffer, (byte)0);
-        if (length < 0)
+        var buffer = GC.AllocateUninitializedArray<byte>(maxBytes);
+        Span<byte> current = stackalloc byte[1];
+        var length = 0;
+        while (length < maxBytes)
         {
-            length = maxBytes;
+            if (!ctx.Memory.TryRead(address + unchecked((ulong)length), current))
+            {
+                return false;
+            }
+
+            if (current[0] == 0)
+            {
+                break;
+            }
+
+            buffer[length++] = current[0];
         }
 
         if (length == 0)
@@ -1163,7 +1182,7 @@ public static class KernelRuntimeCompatExports
         }
 
         var text = Encoding.UTF8.GetString(buffer, 0, length);
-        if (!IsMostlyPrintable(text))
+        if (!IsMostlyPrintable(text, minimumPrintableCharacters))
         {
             return false;
         }
@@ -1207,7 +1226,7 @@ public static class KernelRuntimeCompatExports
         return true;
     }
 
-    private static bool IsMostlyPrintable(string text)
+    private static bool IsMostlyPrintable(string text, int minimumPrintableCharacters = 4)
     {
         if (string.IsNullOrWhiteSpace(text))
         {
@@ -1229,7 +1248,7 @@ public static class KernelRuntimeCompatExports
             }
         }
 
-        return printable >= Math.Max(4, text.Length * 3 / 4);
+        return printable >= Math.Max(minimumPrintableCharacters, text.Length * 3 / 4);
     }
 
     private static void TraceProcParamEmbeddedPointers(CpuContext ctx, ulong baseAddress, ReadOnlySpan<byte> data)
@@ -1997,22 +2016,9 @@ public static class KernelRuntimeCompatExports
         Nid = "4fU5yvOkVG4",
         ExportName = "sceSysmoduleGetModuleInfoForUnwind",
         Target = Generation.Gen4 | Generation.Gen5,
-        LibraryName = "libSceSysmodule")]
+        LibraryName = "libSceSysmodule",
+        PreferLle = true)]
     public static int SysmoduleGetModuleInfoForUnwind(CpuContext ctx) => KernelGetModuleInfoForUnwind(ctx);
-
-    // libc unwinder predicate: is this PC the kernel signal-return trampoline?
-    // Guest signal returns do not run through a guest-visible trampoline here,
-    // so no PC is ever one — report false and let the frame unwind normally.
-    [SysAbiExport(
-        Nid = "crb5j7mkk1c",
-        ExportName = "_is_signal_return",
-        Target = Generation.Gen4 | Generation.Gen5,
-        LibraryName = "libc")]
-    public static int IsSignalReturn(CpuContext ctx)
-    {
-        ctx[CpuRegister.Rax] = 0;
-        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
-    }
 
     [SysAbiExport(
         Nid = "39iV5E1HoCk",
@@ -2260,20 +2266,79 @@ public static class KernelRuntimeCompatExports
         LibraryName = "libc")]
     public static int LibcStrtokReentrant(CpuContext ctx)
     {
-        var currentAddress = ctx[CpuRegister.Rdi];
+        var argumentAddress = ctx[CpuRegister.Rdi];
+        var currentAddress = argumentAddress;
         var delimiterAddress = ctx[CpuRegister.Rsi];
         var savePointerAddress = ctx[CpuRegister.Rdx];
+        var traceIndex = _traceStrtokReentrant
+            ? Interlocked.Increment(ref _strtokReentrantTraceCount)
+            : 0;
+        var returnRip = GuestThreadExecution.TryGetCurrentImportCallFrame(out var frame)
+            ? frame.ReturnRip
+            : 0UL;
         if (delimiterAddress == 0 || savePointerAddress == 0 ||
-            !TryReadUtf8CString(ctx, delimiterAddress, 64, out var delimiters))
+            !TryReadUtf8CString(
+                ctx,
+                delimiterAddress,
+                64,
+                out var delimiters,
+                minimumPrintableCharacters: 1))
         {
+            TraceStrtokReentrant(
+                ctx,
+                traceIndex,
+                returnRip,
+                argumentAddress,
+                currentAddress,
+                delimiterAddress,
+                savePointerAddress,
+                0,
+                "invalid-arguments");
             ctx[CpuRegister.Rax] = 0;
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
         if (currentAddress == 0 && !ctx.TryReadUInt64(savePointerAddress, out currentAddress))
         {
+            TraceStrtokReentrant(
+                ctx,
+                traceIndex,
+                returnRip,
+                argumentAddress,
+                currentAddress,
+                delimiterAddress,
+                savePointerAddress,
+                0,
+                "unreadable-saveptr");
             return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
+
+        if (currentAddress == 0)
+        {
+            TraceStrtokReentrant(
+                ctx,
+                traceIndex,
+                returnRip,
+                argumentAddress,
+                currentAddress,
+                delimiterAddress,
+                savePointerAddress,
+                0,
+                "end-of-sequence");
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        TraceStrtokReentrant(
+            ctx,
+            traceIndex,
+            returnRip,
+            argumentAddress,
+            currentAddress,
+            delimiterAddress,
+            savePointerAddress,
+            0,
+            "entry");
 
         Span<byte> value = stackalloc byte[1];
         var examined = 0;
@@ -2286,7 +2351,17 @@ public static class KernelRuntimeCompatExports
 
             if (value[0] == 0)
             {
-                _ = ctx.TryWriteUInt64(savePointerAddress, 0);
+                _ = ctx.TryWriteUInt64(savePointerAddress, currentAddress);
+                TraceStrtokReentrant(
+                    ctx,
+                    traceIndex,
+                    returnRip,
+                    argumentAddress,
+                    currentAddress,
+                    delimiterAddress,
+                    savePointerAddress,
+                    0,
+                    "no-token");
                 ctx[CpuRegister.Rax] = 0;
                 return (int)OrbisGen2Result.ORBIS_GEN2_OK;
             }
@@ -2309,11 +2384,21 @@ public static class KernelRuntimeCompatExports
 
             if (value[0] == 0)
             {
-                if (!ctx.TryWriteUInt64(savePointerAddress, 0))
+                if (!ctx.TryWriteUInt64(savePointerAddress, currentAddress))
                 {
                     return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
                 }
 
+                TraceStrtokReentrant(
+                    ctx,
+                    traceIndex,
+                    returnRip,
+                    argumentAddress,
+                    currentAddress,
+                    delimiterAddress,
+                    savePointerAddress,
+                    tokenAddress,
+                    "token-at-end");
                 ctx[CpuRegister.Rax] = tokenAddress;
                 return (int)OrbisGen2Result.ORBIS_GEN2_OK;
             }
@@ -2327,6 +2412,16 @@ public static class KernelRuntimeCompatExports
                     return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
                 }
 
+                TraceStrtokReentrant(
+                    ctx,
+                    traceIndex,
+                    returnRip,
+                    argumentAddress,
+                    currentAddress,
+                    delimiterAddress,
+                    savePointerAddress,
+                    tokenAddress,
+                    "token-before-delimiter");
                 ctx[CpuRegister.Rax] = tokenAddress;
                 return (int)OrbisGen2Result.ORBIS_GEN2_OK;
             }
@@ -2336,6 +2431,81 @@ public static class KernelRuntimeCompatExports
 
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    private static void TraceStrtokReentrant(
+        CpuContext ctx,
+        long traceIndex,
+        ulong returnRip,
+        ulong argumentAddress,
+        ulong currentAddress,
+        ulong delimiterAddress,
+        ulong savePointerAddress,
+        ulong tokenAddress,
+        string outcome)
+    {
+        if (!_traceStrtokReentrant)
+        {
+            return;
+        }
+
+        var savedCursorText = "unreadable";
+        var savedCursor = 0UL;
+        if (savePointerAddress != 0 && ctx.TryReadUInt64(savePointerAddress, out savedCursor))
+        {
+            savedCursorText = $"0x{savedCursor:X16}:{DescribeGuestCString(ctx, savedCursor, 256)}";
+        }
+
+        Console.Error.WriteLine(
+            $"[LIBC][STRTOK_R] #{traceIndex} outcome={outcome} ret=0x{returnRip:X16} " +
+            $"thread=0x{GuestThreadExecution.CurrentGuestThreadHandle:X16} " +
+            $"arg=0x{argumentAddress:X16} current=0x{currentAddress:X16}:{DescribeGuestCString(ctx, currentAddress, 256)} " +
+            $"delim=0x{delimiterAddress:X16}:{DescribeGuestCString(ctx, delimiterAddress, 64)} " +
+            $"saveptr=0x{savePointerAddress:X16}->{savedCursorText} " +
+            $"token=0x{tokenAddress:X16}:{DescribeGuestCString(ctx, tokenAddress, 256)}");
+    }
+
+    private static string DescribeGuestCString(CpuContext ctx, ulong address, int maxBytes)
+    {
+        if (address == 0)
+        {
+            return "<null>";
+        }
+
+        var text = new StringBuilder(Math.Min(maxBytes, 256) + 16);
+        Span<byte> value = stackalloc byte[1];
+        for (var offset = 0; offset < maxBytes; offset++)
+        {
+            if (!ctx.Memory.TryRead(address + unchecked((ulong)offset), value))
+            {
+                return text.Length == 0
+                    ? "<unreadable>"
+                    : $"\"{text}\"<unreadable>";
+            }
+
+            if (value[0] == 0)
+            {
+                return $"\"{text}\"";
+            }
+
+            switch (value[0])
+            {
+                case (byte)'\\':
+                    text.Append("\\\\");
+                    break;
+                case (byte)'\"':
+                    text.Append("\\\"");
+                    break;
+                case >= 0x20 and <= 0x7E:
+                    text.Append((char)value[0]);
+                    break;
+                default:
+                    text.Append($"\\x{value[0]:X2}");
+                    break;
+            }
+        }
+
+        return $"\"{text}\"<truncated>";
     }
 
     [SysAbiExport(
@@ -3379,7 +3549,7 @@ public static class KernelRuntimeCompatExports
         Nid = "NhpspxdjEKU",
         ExportName = "_nanosleep",
         Target = Generation.Gen4 | Generation.Gen5,
-        LibraryName = "libKernel")]
+        LibraryName = "libkernel")]
     public static int PosixNanosleepUnderscore(CpuContext ctx) => NanosleepCore(ctx, posix: true);
 
     [SysAbiExport(

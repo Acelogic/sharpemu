@@ -1906,6 +1906,10 @@ public static class Gen5ShaderTranslator
             0x1B => "ImageAtomicInc",
             0x1C => "ImageAtomicDec",
             0x20 => "ImageSample",
+            // PS5 AGC emits the OPM form of the otherwise ordinary sampled
+            // image operation.  GTA V uses this encoding for 2D texture
+            // reads; its operands and result layout match IMAGE_SAMPLE.
+            0xA0 => "ImageSampleOpm",
             0x22 => "ImageSampleD",
             0x24 => "ImageSampleL",
             0x25 => "ImageSampleB",

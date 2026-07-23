@@ -171,6 +171,8 @@ public sealed class PadExportsTests
             var data = new byte[0x78];
             Marshal.Copy(unchecked((nint)dataAddress), data, 0, data.Length);
             Assert.Equal(new byte[] { 128, 128, 128, 128 }, data[4..8]);
+            Assert.Equal(0.0f, BinaryPrimitives.ReadSingleLittleEndian(data.AsSpan(0x18)));
+            Assert.Equal(1.0f, BinaryPrimitives.ReadSingleLittleEndian(data.AsSpan(0x30)));
             Assert.Equal(1, data[0x4C]);
             Assert.Equal(1, data[0x68]);
         }
@@ -179,6 +181,22 @@ public sealed class PadExportsTests
             FreeTracked(_ctx, dataAddress);
             PadExports.ResetTriggerEffectStateForTests();
         }
+    }
+
+    [Fact]
+    public void PadReadState_WritesCrossAtGtaButtonOffset()
+    {
+        PadExports.SetHostInputForTests(new TestHostInput(HostGamepadButtons.Cross));
+        var dataAddress = Base + 0x500;
+        _ctx[CpuRegister.Rdi] = 1;
+        _ctx[CpuRegister.Rsi] = dataAddress;
+
+        Assert.Equal(0, PadExports.PadReadState(_ctx));
+
+        Span<byte> data = stackalloc byte[0x78];
+        Assert.True(_memory.TryRead(dataAddress, data));
+        Assert.Equal(0x4000U, BinaryPrimitives.ReadUInt32LittleEndian(data));
+        Assert.Equal(1, data[0x4C]);
     }
 
     [Fact]
@@ -216,11 +234,35 @@ public sealed class PadExportsTests
 
     private sealed class TestHostInput : IHostInput
     {
+        private readonly HostGamepadButtons _buttons;
+
+        public TestHostInput(HostGamepadButtons buttons = HostGamepadButtons.None)
+        {
+            _buttons = buttons;
+        }
+
         public void EnsureStarted()
         {
         }
 
-        public int GetGamepadStates(Span<HostGamepadState> destination) => 0;
+        public int GetGamepadStates(Span<HostGamepadState> destination)
+        {
+            if (_buttons == HostGamepadButtons.None || destination.IsEmpty)
+            {
+                return 0;
+            }
+
+            destination[0] = new HostGamepadState(
+                Connected: true,
+                Buttons: _buttons,
+                LeftX: 128,
+                LeftY: 128,
+                RightX: 128,
+                RightY: 128,
+                LeftTrigger: 0,
+                RightTrigger: 0);
+            return 1;
+        }
 
         public string? DescribeConnectedGamepad() => null;
 

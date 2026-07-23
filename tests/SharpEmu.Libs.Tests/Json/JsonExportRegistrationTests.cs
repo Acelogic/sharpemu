@@ -245,6 +245,63 @@ public sealed class JsonExportRegistrationTests
     }
 
     [Fact]
+    public void InitializerTerminate_ClearsJson2LifecycleAndRejectsSecondTermination()
+    {
+        const ulong initializerAddress = 0x1_0000_0000;
+        const ulong parameterAddress = initializerAddress + 0x100;
+        JsonObjectHeap.ResetForTests();
+        var memory = new FakeCpuMemory(initializerAddress, 0x1000);
+        var ctx = new CpuContext(memory, Generation.Gen5);
+        var manager = CreateRegisteredManager();
+
+        ctx[CpuRegister.Rdi] = initializerAddress;
+        Assert.Equal(0, JsonExports.InitializerConstructor(ctx));
+        ctx[CpuRegister.Rdi] = parameterAddress;
+        Assert.Equal(0, JsonExports.InitParameter2Constructor(ctx));
+        ctx[CpuRegister.Rdi] = parameterAddress;
+        ctx[CpuRegister.Rsi] = initializerAddress + 0x300;
+        ctx[CpuRegister.Rdx] = initializerAddress + 0x400;
+        Assert.Equal(0, JsonExports.InitParameter2SetAllocator(ctx));
+        ctx[CpuRegister.Rdi] = initializerAddress;
+        ctx[CpuRegister.Rsi] = parameterAddress;
+        Assert.Equal(0, JsonExports.InitializerInitialize2(ctx));
+        ctx[CpuRegister.Rdi] = initializerAddress;
+        ctx[CpuRegister.Rsi] = 0x8_0012_3456;
+        ctx[CpuRegister.Rdx] = initializerAddress + 0x800;
+        Assert.Equal(0, JsonExports.InitializerSetGlobalNullAccessCallBack(ctx));
+
+        ctx[CpuRegister.Rdi] = initializerAddress;
+        Assert.True(manager.TryDispatch("PR5k1penBLM", ctx, out var result));
+        Assert.Equal(OrbisGen2Result.ORBIS_GEN2_OK, result);
+        Assert.Equal(0UL, ctx[CpuRegister.Rax]);
+
+        Span<byte> initialized = stackalloc byte[1];
+        Assert.True(memory.TryRead(initializerAddress, initialized));
+        Assert.Equal(0, initialized[0]);
+        Assert.False(JsonExports.TryGetJson2InitializationStateForTests(out _, out _, out _, out _));
+        Assert.Equal(0UL, JsonObjectHeap.GlobalNullAccessCallback);
+        Assert.Equal(0UL, JsonObjectHeap.GlobalNullAccessCallbackContext);
+
+        Assert.True(manager.TryDispatch("PR5k1penBLM", ctx, out result));
+        Assert.Equal(unchecked((OrbisGen2Result)(int)0x80848110), result);
+        Assert.Equal(unchecked((ulong)(int)0x80848110), ctx[CpuRegister.Rax]);
+    }
+
+    [Fact]
+    public void InitializerTerminate_RegistersExactGen5SemanticFallback()
+    {
+        var export = Assert.Single(
+            SharpEmu.Generated.SysAbiExportRegistry.CreateExports(Generation.Gen5),
+            candidate => candidate.Nid == "PR5k1penBLM");
+
+        Assert.Equal("_ZN3sce4Json11Initializer9terminateEv", export.Name);
+        Assert.Equal("libSceJson2", export.LibraryName);
+        Assert.Equal(Generation.Gen5, export.Target);
+        Assert.True(export.PreferLle);
+        Assert.Equal(typeof(JsonExports), export.Function.Method.DeclaringType);
+    }
+
+    [Fact]
     public void DispatchValueConstructor_RunsHandlerAndReturnsThis()
     {
         JsonObjectHeap.ResetForTests();

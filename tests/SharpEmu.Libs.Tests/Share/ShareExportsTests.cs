@@ -44,6 +44,30 @@ public sealed class ShareExportsTests
         Assert.Equal("sceShareTerminate", terminate.Name);
         Assert.Equal("libSceShare", terminate.LibraryName);
         Assert.False(gen4Manager.TryGetExport("0IL1keINExQ", out _));
+        Assert.True(gen5Manager.TryGetExport("YBiIdcDPrxs", out var permit));
+        Assert.Equal("sceShareFeaturePermit", permit.Name);
+        Assert.Equal("libSceShare", permit.LibraryName);
+        Assert.False(gen4Manager.TryGetExport("YBiIdcDPrxs", out _));
+    }
+
+    [Fact]
+    public void FeaturePermit_RequiresInitializationAndTracksProviderSelector()
+    {
+        const int feature = 0x10;
+        _ctx[CpuRegister.Rdi] = feature;
+
+        Assert.Equal(unchecked((int)0x8196000C), ShareExports.ShareFeaturePermit(_ctx));
+        Assert.Equal(0x8196000CUL, _ctx[CpuRegister.Rax]);
+        Assert.False(ShareExports.IsFeaturePermittedForTests(feature));
+
+        Initialize();
+        _ctx[CpuRegister.Rdi] = feature;
+        Assert.Equal(0, ShareExports.ShareFeaturePermit(_ctx));
+        Assert.Equal(0UL, _ctx[CpuRegister.Rax]);
+        Assert.True(ShareExports.IsFeaturePermittedForTests(feature));
+
+        Assert.Equal(0, ShareExports.ShareTerminate(_ctx));
+        Assert.False(ShareExports.IsFeaturePermittedForTests(feature));
     }
 
     [Fact]

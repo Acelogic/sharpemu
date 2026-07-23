@@ -64,4 +64,39 @@ public sealed unsafe class AgcNativeCommandBufferTests
             KernelMemoryCompatExports.Free(ctx);
         }
     }
+
+    [Fact]
+    public void DcbSetUcRegisterDirect_EmitsExactFirmwarePacket()
+    {
+        const ulong guestBase = 0x1_0000_0000;
+        const ulong commandBufferAddress = guestBase + 0x100;
+        const ulong cursorUp = guestBase + 0x200;
+        const ulong cursorDown = guestBase + 0x400;
+        const ulong packedRegisterAndValue = (0x20UL << 32) | 0x024AUL;
+        var memory = new FakeCpuMemory(guestBase, 0x1000);
+        var ctx = new CpuContext(memory, Generation.Gen5);
+
+        Span<byte> commandBuffer = stackalloc byte[0x38];
+        commandBuffer.Clear();
+        BinaryPrimitives.WriteUInt64LittleEndian(commandBuffer[0x10..], cursorUp);
+        BinaryPrimitives.WriteUInt64LittleEndian(commandBuffer[0x18..], cursorDown);
+        Assert.True(memory.TryWrite(commandBufferAddress, commandBuffer));
+
+        ctx[CpuRegister.Rdi] = commandBufferAddress;
+        ctx[CpuRegister.Rsi] = packedRegisterAndValue;
+
+        Assert.Equal(0, AgcExports.DcbSetUcRegisterDirect(ctx));
+        Assert.Equal(cursorUp, ctx[CpuRegister.Rax]);
+
+        Span<byte> packet = stackalloc byte[3 * sizeof(uint)];
+        Assert.True(memory.TryRead(cursorUp, packet));
+        Assert.Equal(0xC0017900U, BinaryPrimitives.ReadUInt32LittleEndian(packet));
+        Assert.Equal(0x024AU, BinaryPrimitives.ReadUInt32LittleEndian(packet[4..]));
+        Assert.Equal(0x20U, BinaryPrimitives.ReadUInt32LittleEndian(packet[8..]));
+
+        Assert.True(memory.TryRead(commandBufferAddress, commandBuffer));
+        Assert.Equal(
+            cursorUp + (3UL * sizeof(uint)),
+            BinaryPrimitives.ReadUInt64LittleEndian(commandBuffer[0x10..]));
+    }
 }

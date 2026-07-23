@@ -62,6 +62,23 @@ public static class NpUniversalDataSystemExports
     }
 
     [SysAbiExport(
+        Nid = "47UAEuQl+iI",
+        ExportName = "sceNpUniversalDataSystemTerminate",
+        Target = Generation.Gen5,
+        LibraryName = "libSceNpUniversalDataSystem",
+        PreferLle = true)]
+    public static int NpUniversalDataSystemTerminate(CpuContext ctx)
+    {
+        if (Interlocked.Exchange(ref _isInitialized, 0) == 0)
+        {
+            return ctx.SetReturn(NpUniversalDataSystemErrorNotInitialized, typeof(long));
+        }
+
+        ClearRuntimeState();
+        return ctx.SetReturn(0, typeof(long));
+    }
+
+    [SysAbiExport(
         Nid = "5zBnau1uIEo",
         ExportName = "sceNpUniversalDataSystemCreateContext",
         Target = Generation.Gen4 | Generation.Gen5,
@@ -312,6 +329,11 @@ public static class NpUniversalDataSystemExports
     {
         Volatile.Write(ref _isInitialized, 0);
         Volatile.Write(ref _eventPropertyArrayAllocationFailureForTests, 0);
+        ClearRuntimeState();
+    }
+
+    private static void ClearRuntimeState()
+    {
         _eventPropertyArrayStrings.Clear();
         lock (_eventGate)
         {

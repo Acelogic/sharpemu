@@ -194,7 +194,7 @@ public static class SaveDataExports
         }
     }
 
-    [SysAbiExport(Nid = "yKDy8S5yLA0", ExportName = "sceSaveDataTerminate", Target = Generation.Gen4 | Generation.Gen5, LibraryName = "libSceSaveData")]
+    [SysAbiExport(Nid = "yKDy8S5yLA0", ExportName = "sceSaveDataTerminate", Target = Generation.Gen4 | Generation.Gen5, LibraryName = "libSceSaveData_native", PreferLle = true)]
     public static int SaveDataTerminate(CpuContext ctx) => SetReturn(ctx, 0);
 
     // ---- mount variants (all share the SceSaveDataMount layout) ----
@@ -262,7 +262,7 @@ public static class SaveDataExports
     }
 
     // ---- delete ----
-    [SysAbiExport(Nid = "S1GkePI17zQ", ExportName = "sceSaveDataDelete", Target = Generation.Gen4 | Generation.Gen5, LibraryName = "libSceSaveData")]
+    [SysAbiExport(Nid = "S1GkePI17zQ", ExportName = "sceSaveDataDelete", Target = Generation.Gen4 | Generation.Gen5, LibraryName = "libSceSaveData_native", PreferLle = true)]
     public static int SaveDataDelete(CpuContext ctx) => SaveDataDeleteCommon(ctx);
 
     [SysAbiExport(Nid = "SQWusLoK8Pw", ExportName = "sceSaveDataDelete5", Target = Generation.Gen5, LibraryName = "libSceSaveData")]
@@ -331,7 +331,7 @@ public static class SaveDataExports
             if (write)
             {
                 Span<byte> raw = stackalloc byte[SaveDataParamSize];
-                if (!ctx.Memory.TryRead(paramAddress, raw))
+                if (!KernelMemoryCompatExports.TryReadCompat(ctx, paramAddress, raw))
                 {
                     return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
                 }
@@ -357,7 +357,7 @@ public static class SaveDataExports
             BinaryPrimitives.WriteInt64LittleEndian(
                 param.AsSpan(0x508),
                 new DateTimeOffset(SafeLastWriteUtc(entry.SlotDir)).ToUnixTimeSeconds());
-            return ctx.Memory.TryWrite(paramAddress, param)
+            return KernelMemoryCompatExports.TryWriteCompat(ctx, paramAddress, param)
                 ? SetReturn(ctx, 0)
                 : SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
@@ -378,8 +378,8 @@ public static class SaveDataExports
         var iconAddress = ctx[CpuRegister.Rsi];
         if (mountPointAddress == 0 || iconAddress == 0 ||
             !TryReadFixedAscii(ctx, mountPointAddress, 16, out var mountPoint) ||
-            !ctx.TryReadUInt64(iconAddress + 0x00, out var bufferAddress) ||
-            !ctx.TryReadUInt64(iconAddress + 0x08, out var bufferSize))
+            !KernelMemoryCompatExports.TryReadUInt64Compat(ctx, iconAddress + 0x00, out var bufferAddress) ||
+            !KernelMemoryCompatExports.TryReadUInt64Compat(ctx, iconAddress + 0x08, out var bufferSize))
         {
             return SetReturn(ctx, OrbisSaveDataErrorParameter);
         }
@@ -396,6 +396,7 @@ public static class SaveDataExports
         }
 
         var iconPath = SaveDataStorage.IconPath(entry.SlotDir);
+        var compatibilityIconPath = ResolveIconMetadataPath(ResolveLegacySavePath(entry));
         try
         {
             if (write)
@@ -404,13 +405,18 @@ public static class SaveDataExports
                 var bytes = ArrayPool<byte>.Shared.Rent(length);
                 try
                 {
-                    if (!ctx.Memory.TryRead(bufferAddress, bytes.AsSpan(0, length)))
+                    if (!KernelMemoryCompatExports.TryReadCompat(ctx, bufferAddress, bytes.AsSpan(0, length)))
                     {
                         return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
                     }
 
+                    var icon = bytes.AsSpan(0, length).ToArray();
                     Directory.CreateDirectory(Path.GetDirectoryName(iconPath)!);
-                    File.WriteAllBytes(iconPath, bytes.AsSpan(0, length).ToArray());
+                    File.WriteAllBytes(iconPath, icon);
+                    lock (_metadataGate)
+                    {
+                        WriteMetadataFile(compatibilityIconPath, icon);
+                    }
                 }
                 finally
                 {
@@ -420,6 +426,11 @@ public static class SaveDataExports
                 return SetReturn(ctx, 0);
             }
 
+            if (!File.Exists(iconPath) && File.Exists(compatibilityIconPath))
+            {
+                iconPath = compatibilityIconPath;
+            }
+
             if (!File.Exists(iconPath))
             {
                 return SetReturn(ctx, OrbisSaveDataErrorNotFound);
@@ -427,12 +438,13 @@ public static class SaveDataExports
 
             var data = File.ReadAllBytes(iconPath);
             var copy = (int)Math.Min((ulong)data.Length, bufferSize);
-            if (bufferAddress != 0 && copy > 0 && !ctx.Memory.TryWrite(bufferAddress, data.AsSpan(0, copy)))
+            if (bufferAddress != 0 && copy > 0 &&
+                !KernelMemoryCompatExports.TryWriteCompat(ctx, bufferAddress, data.AsSpan(0, copy)))
             {
                 return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
             }
 
-            TryWriteUInt32(ctx, iconAddress + 0x10, (uint)data.Length); // dataSize
+            KernelMemoryCompatExports.TryWriteUInt32Compat(ctx, iconAddress + 0x10, (uint)data.Length); // dataSize
             return SetReturn(ctx, 0);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
@@ -497,7 +509,7 @@ public static class SaveDataExports
     [SysAbiExport(Nid = "52pL2GKkdjA", ExportName = "sceSaveDataSetEventInfo", Target = Generation.Gen4 | Generation.Gen5, LibraryName = "libSceSaveData")]
     public static int SaveDataSetEventInfo(CpuContext ctx) => SetReturn(ctx, 0);
 
-    [SysAbiExport(Nid = "Z7z6HXWORJY", ExportName = "sceSaveDataSaveIconByPath", Target = Generation.Gen4 | Generation.Gen5, LibraryName = "libSceSaveData")]
+    [SysAbiExport(Nid = "Z7z6HXWORJY", ExportName = "sceSaveDataSaveIconByPath", Target = Generation.Gen4 | Generation.Gen5, LibraryName = "libSceSaveData_native", PreferLle = true)]
     public static int SaveDataSaveIconByPath(CpuContext ctx) => SetReturn(ctx, 0);
 
     [SysAbiExport(Nid = "SN7rTPHS+Cg", ExportName = "sceSaveDataGetSaveDataCount", Target = Generation.Gen4 | Generation.Gen5, LibraryName = "libSceSaveData")]
@@ -895,15 +907,27 @@ public static class SaveDataExports
         string? mountPoint = null;
         try
         {
+            var sanitizedDirName = SanitizePathSegment(dirName);
             var savePath = Path.Combine(
                 ResolveTitleSaveRoot(userId, titleId),
-                SanitizePathSegment(dirName));
+                sanitizedDirName);
             if (!Directory.Exists(savePath))
             {
-                TraceSaveData(
-                    $"transferring_mount user={userId} title={titleId} dir={dirName} " +
-                    $"fingerprint=0x{fingerprintAddress:X} result=not_found root='{savePath}'");
-                return SetReturn(ctx, OrbisSaveDataErrorNotFound);
+                var legacySavePath = Path.Combine(
+                    ResolveLegacyTitleSaveRoot(userId, titleId),
+                    sanitizedDirName);
+                if (Directory.Exists(legacySavePath))
+                {
+                    savePath = legacySavePath;
+                }
+                else
+                {
+                    TraceSaveData(
+                        $"transferring_mount user={userId} title={titleId} dir={dirName} " +
+                        $"fingerprint=0x{fingerprintAddress:X} result=not_found " +
+                        $"root='{savePath}' legacy_root='{legacySavePath}'");
+                    return SetReturn(ctx, OrbisSaveDataErrorNotFound);
+                }
             }
 
             if (!TryReserveMountPoint(savePath, out var reservedMountPoint))
@@ -972,6 +996,13 @@ public static class SaveDataExports
         var paramType = unchecked((uint)ctx[CpuRegister.Rsi]);
         var paramBufferAddress = ctx[CpuRegister.Rdx];
         var paramBufferSize = ctx[CpuRegister.Rcx];
+        if (paramBufferSize == 0)
+        {
+            // The newer full-structure ABI omits the explicit size. Preserve
+            // that path while retaining the field-selective compatibility ABI.
+            return TransferParam(ctx, write: true);
+        }
+
         if (mountPointAddress == 0 || paramBufferAddress == 0 || paramBufferSize == 0)
         {
             return SetReturn(ctx, OrbisSaveDataErrorParameter);
@@ -994,6 +1025,12 @@ public static class SaveDataExports
             _mountedSavePaths.TryGetValue(mountPoint, out savePath);
         }
 
+        MountEntry? entry;
+        lock (_mountGate)
+        {
+            _mounts.TryGetValue(mountPoint, out entry);
+        }
+
         if (savePath is null || !Directory.Exists(savePath))
         {
             return SetReturn(ctx, OrbisSaveDataErrorNotFound);
@@ -1007,7 +1044,8 @@ public static class SaveDataExports
 
         try
         {
-            var metadataPath = ResolveParamMetadataPath(savePath);
+            var metadataPath = ResolveParamMetadataPath(
+                entry is null ? savePath : ResolveLegacySavePath(entry));
             lock (_metadataGate)
             {
                 var param = TryReadParamMetadata(metadataPath, out var existing)
@@ -1025,6 +1063,13 @@ public static class SaveDataExports
                 }
 
                 WriteParamMetadata(metadataPath, param);
+                SaveDataStorage.WriteMetadata(savePath, new SaveDataMetadata
+                {
+                    Title = ReadAsciiField(param.AsSpan(0x00, 128)),
+                    SubTitle = ReadAsciiField(param.AsSpan(0x80, 128)),
+                    Detail = ReadAsciiField(param.AsSpan(0x100, 1024)),
+                    UserParam = BinaryPrimitives.ReadUInt32LittleEndian(param.AsSpan(0x500)),
+                });
             }
 
             TraceSaveData(
@@ -1077,6 +1122,12 @@ public static class SaveDataExports
             return SetReturn(ctx, OrbisSaveDataErrorNotFound);
         }
 
+        MountEntry? entry;
+        lock (_mountGate)
+        {
+            _mounts.TryGetValue(mountPoint, out entry);
+        }
+
         var icon = new byte[checked((int)bufferSize)];
         if (!KernelMemoryCompatExports.TryReadCompat(ctx, bufferAddress, icon))
         {
@@ -1087,7 +1138,19 @@ public static class SaveDataExports
         {
             lock (_metadataGate)
             {
-                WriteMetadataFile(ResolveIconMetadataPath(savePath), icon);
+                if (entry is null)
+                {
+                    WriteMetadataFile(ResolveIconMetadataPath(savePath), icon);
+                }
+                else
+                {
+                    // Keep the canonical slot-local PS5 UI icon and the legacy
+                    // compatibility metadata in sync, just like SaveDataIcon.
+                    WriteMetadataFile(SaveDataStorage.IconPath(entry.SlotDir), icon);
+                    WriteMetadataFile(
+                        ResolveIconMetadataPath(ResolveLegacySavePath(entry)),
+                        icon);
+                }
             }
 
             TraceSaveData(
@@ -1382,6 +1445,17 @@ public static class SaveDataExports
     // part of the host path.
     private static string ResolveTitleSaveRoot(int userId, string titleId) =>
         SaveDataStorage.TitleRoot(ResolveSaveDataRoot(), titleId);
+
+    private static string ResolveLegacyTitleSaveRoot(int userId, string titleId) =>
+        Path.Combine(
+            ResolveSaveDataRoot(),
+            userId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            SanitizePathSegment(titleId));
+
+    private static string ResolveLegacySavePath(MountEntry entry) =>
+        Path.Combine(
+            ResolveLegacyTitleSaveRoot(entry.UserId, ResolveConfiguredTitleId()),
+            SanitizePathSegment(entry.DirName));
 
     private static bool IsInitialized()
     {

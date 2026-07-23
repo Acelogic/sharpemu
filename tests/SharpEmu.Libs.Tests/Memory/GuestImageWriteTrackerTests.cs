@@ -161,7 +161,6 @@ public sealed unsafe class GuestImageWriteTrackerTests
 
             Assert.True(GuestImageWriteTracker.TryHandleWriteFault(address));
             Assert.True(GuestImageWriteTracker.ConsumeDirty(address));
-
             Assert.True(GuestImageWriteTracker.TryGetWriteGeneration(address, out generation));
             Assert.Equal(1, generation);
         }

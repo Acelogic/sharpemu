@@ -116,8 +116,15 @@ public static class KernelEventQueueCompatExports
             _registeredEvents[handle] = new Dictionary<(ulong Ident, short Filter), KernelEventRegistration>();
         }
 
-        if (!TryWriteUInt64(ctx, outAddress, handle))
+        if (!KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, outAddress, handle))
         {
+            lock (_eventQueueGate)
+            {
+                _eventQueues.Remove(handle);
+                _pendingEvents.Remove(handle);
+                _registeredEvents.Remove(handle);
+            }
+
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
@@ -316,7 +323,7 @@ public static class KernelEventQueueCompatExports
         LibraryName = "libKernel")]
     public static int KernelGetEventUserData(CpuContext ctx)
     {
-        _ = TryReadUInt64(ctx, ctx[CpuRegister.Rdi] + 0x18, out var userData);
+        _ = ctx.TryReadUInt64(ctx[CpuRegister.Rdi] + 0x18, out var userData);
         ctx[CpuRegister.Rax] = userData;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
@@ -328,7 +335,7 @@ public static class KernelEventQueueCompatExports
         LibraryName = "libKernel")]
     public static int KernelGetEventId(CpuContext ctx)
     {
-        _ = TryReadUInt64(ctx, ctx[CpuRegister.Rdi], out var ident);
+        _ = ctx.TryReadUInt64(ctx[CpuRegister.Rdi], out var ident);
         ctx[CpuRegister.Rax] = ident;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
@@ -341,7 +348,7 @@ public static class KernelEventQueueCompatExports
     public static int KernelGetEventFilter(CpuContext ctx)
     {
         Span<byte> filterBytes = stackalloc byte[sizeof(short)];
-        var filter = KernelMemoryCompatExports.TryReadCompat(ctx, ctx[CpuRegister.Rdi] + 0x08, filterBytes)
+        var filter = ctx.Memory.TryRead(ctx[CpuRegister.Rdi] + 0x08, filterBytes)
             ? BinaryPrimitives.ReadInt16LittleEndian(filterBytes)
             : (short)0;
         ctx[CpuRegister.Rax] = unchecked((uint)filter);
@@ -355,7 +362,7 @@ public static class KernelEventQueueCompatExports
         LibraryName = "libKernel")]
     public static int KernelGetEventData(CpuContext ctx)
     {
-        _ = TryReadUInt64(ctx, ctx[CpuRegister.Rdi] + 0x10, out var data);
+        _ = ctx.TryReadUInt64(ctx[CpuRegister.Rdi] + 0x10, out var data);
         ctx[CpuRegister.Rax] = data;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
@@ -951,7 +958,7 @@ public static class KernelEventQueueCompatExports
         BinaryPrimitives.WriteUInt32LittleEndian(eventBytes[0x0C..], queuedEvent.Fflags);
         BinaryPrimitives.WriteUInt64LittleEndian(eventBytes[0x10..], queuedEvent.Data);
         BinaryPrimitives.WriteUInt64LittleEndian(eventBytes[0x18..], queuedEvent.UserData);
-        return KernelMemoryCompatExports.TryWriteCompat(ctx, address, eventBytes);
+        return ctx.Memory.TryWrite(address, eventBytes);
     }
 
     private static readonly bool _logEqueue =
@@ -975,7 +982,7 @@ public static class KernelEventQueueCompatExports
         }
 
         var returnRip = 0UL;
-        _ = TryReadUInt64(ctx, ctx[CpuRegister.Rsp], out returnRip);
+        _ = ctx.TryReadUInt64(ctx[CpuRegister.Rsp], out returnRip);
         var targeted = _traceEqueueReturnRip != 0 &&
             returnRip == _traceEqueueReturnRip &&
             (_traceEqueueHandleFilter == 0 || handle == _traceEqueueHandleFilter);
@@ -1170,13 +1177,13 @@ public static class KernelEventQueueCompatExports
     {
         Span<byte> buffer = stackalloc byte[sizeof(uint)];
         BinaryPrimitives.WriteUInt32LittleEndian(buffer, value);
-        return KernelMemoryCompatExports.TryWriteCompat(ctx, address, buffer);
+        return ctx.Memory.TryWrite(address, buffer);
     }
 
     private static bool TryReadUInt32(CpuContext ctx, ulong address, out uint value)
     {
         Span<byte> buffer = stackalloc byte[sizeof(uint)];
-        if (!KernelMemoryCompatExports.TryReadCompat(ctx, address, buffer))
+        if (!ctx.Memory.TryRead(address, buffer))
         {
             value = 0;
             return false;
@@ -1184,15 +1191,5 @@ public static class KernelEventQueueCompatExports
 
         value = BinaryPrimitives.ReadUInt32LittleEndian(buffer);
         return true;
-    }
-
-    private static bool TryReadUInt64(CpuContext ctx, ulong address, out ulong value) =>
-        KernelMemoryCompatExports.TryReadUInt64Compat(ctx, address, out value);
-
-    private static bool TryWriteUInt64(CpuContext ctx, ulong address, ulong value)
-    {
-        Span<byte> buffer = stackalloc byte[sizeof(ulong)];
-        BinaryPrimitives.WriteUInt64LittleEndian(buffer, value);
-        return KernelMemoryCompatExports.TryWriteCompat(ctx, address, buffer);
     }
 }
