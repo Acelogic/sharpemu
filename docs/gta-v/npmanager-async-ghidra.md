@@ -16,6 +16,8 @@
 | `S7QTn72PrDw` | `sceNpDeleteRequest` | `0x17220` | `int32(int32 requestId)` |
 | `OzKvTvg3ZYU` | `sceNpAbortRequest` | `0x17250` | `int32(int32 requestId)` |
 | `uqcPJLWL08M` | `sceNpPollAsync` | `0x17480` | `int32(int32 requestId, int32 *result)` |
+| `KfGZg2y73oM` | `sceNpCheckNpReachability` | `0x18660` | `int32(int32 requestId, int32 userId)` |
+| `hw5KNqAAels` | `sceNpRegisterNpReachabilityStateCallback` | `0x163a0` | `int32(callback, void *userData)` |
 
 The create parameter is exactly 0x18 bytes. Firmware reads:
 
@@ -105,6 +107,34 @@ Observed transitions:
 
 An abort of an unstarted request succeeds but does not synthesize completion: the state remains zero. A subsequent poll therefore follows the state-zero rule above.
 
+### Reachability operation ownership
+
+`sceNpCheckNpReachability` is one of the operation exports in transition 2. It
+checks the request subsystem first, rejects request ID zero or user ID `-1`,
+looks up the request in the same registry, marks the operation assigned,
+installs job kind 2 with the user ID, and launches the common worker.
+
+This ownership boundary matters in HLE. If create and poll use SharpEmu's local
+registry while reachability alone is routed to the guest provider, the provider
+receives an HLE-owned request ID that is absent from its private registry. The
+operation fails before its worker starts. SharpEmu therefore keeps all three
+calls in one HLE registry. The local reachability worker completes with result
+zero; this reports completion of the check, while
+`sceNpGetNpReachabilityState` remains the source for the offline reachability
+value.
+
+### Reachability callback lifecycle
+
+`sceNpRegisterNpReachabilityStateCallback` calls `0x1b390` before validating
+the callback pointer. That helper locks the PRX SDK-init state at `DAT_62a50`
+and reports initialized only when `DAT_62a58 > 0`. It does not consult the
+separate allocator created by `fHGhS3uP52k`.
+
+SharpEmu therefore gates registration and dispatch on the PRX-owned async/SDK
+lifecycle represented by `NpManagerAsyncRequests.IsInitialized`. Manager-global
+initialize and terminate do not create, clear, or invalidate this callback slot;
+the HLE reset/PRX teardown path does.
+
 ## Synchronization
 
 - SDK initialization is checked under the SDK-init lock (`DAT_62a50` / state `DAT_62a58`). The request list is created during PRX start, not by an online backend response.
@@ -133,7 +163,7 @@ These four exports can be implemented truthfully without a real online backend b
 - Poll of a newly created request must report the evidenced unstarted outcome, not success.
 - Abort should set local cancellation intent and return the evidenced validation errors; with no attached HLE job there is simply no backend handle to cancel.
 - Delete should invalidate the handle and coordinate any attached local worker; it must not remain an unconditional-success stub.
-- Future offline async operation handlers must explicitly mark the request running and complete it with their evidence-backed offline result. Until then, these four exports provide truthful lifecycle state but no fabricated online operation.
+- Offline async operation handlers must explicitly mark the request running and complete it with their evidence-backed offline result. `sceNpCheckNpReachability` now owns such a local operation; the four lifecycle exports alone still do not fabricate completion.
 
 The remaining integration question is which SharpEmu HLE event should model firmware PRX-start/stop initialization. Firmware's request registry is initialized during module start; it is separate from `fHGhS3uP52k`'s manager allocator state at `0x14950`. Tying request validity only to `_managerAllocatorAddress` would therefore conflate two firmware lifecycles.
 

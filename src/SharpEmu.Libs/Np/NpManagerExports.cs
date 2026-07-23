@@ -50,7 +50,6 @@ public static class NpManagerExports
                 }
 
                 ClearPremiumEventCallbackUnderLock();
-                ClearReachabilityStateCallbackUnderLock();
             }
         }
 
@@ -101,7 +100,6 @@ public static class NpManagerExports
             allocatorAddress = _managerAllocatorAddress;
             _managerAllocatorAddress = 0;
             ClearPremiumEventCallbackUnderLock();
-            ClearReachabilityStateCallbackUnderLock();
         }
 
         NpCommonExports.ReleaseHleAllocator(allocatorAddress);
@@ -282,7 +280,10 @@ public static class NpManagerExports
         var userData = ctx[CpuRegister.Rsi];
         lock (ManagerGate)
         {
-            if (_managerAllocatorAddress == 0)
+            // Provider entry 0x163a0 gates this callback on the PRX-owned NP SDK
+            // state queried by 0x1b390. That is the same lifecycle used by the
+            // async request exports, not fHGhS3uP52k's separate allocator.
+            if (!NpManagerAsyncRequests.IsInitialized)
             {
                 return SetReturn(ctx, NpErrorNotInitialized);
             }
@@ -357,6 +358,38 @@ public static class NpManagerExports
         }
 
         return SetReturn(ctx, NpManagerAsyncRequests.Create(priority, affinity));
+    }
+
+    [SysAbiExport(
+        Nid = "KfGZg2y73oM",
+        ExportName = "sceNpCheckNpReachability",
+        Target = Generation.Gen5,
+        LibraryName = "libSceNpManager")]
+    public static int NpCheckNpReachability(CpuContext ctx)
+    {
+        // Firmware checks the PRX-owned async registry before validating either
+        // argument. This operation must share the same registry as
+        // sceNpCreateAsyncRequest and sceNpPollAsync; sending only this call to
+        // the guest provider gives it an HLE-owned request ID it cannot resolve.
+        if (!NpManagerAsyncRequests.IsInitialized)
+        {
+            return SetReturn(ctx, NpManagerAsyncRequests.ErrorNotInitialized);
+        }
+
+        var requestId = unchecked((int)ctx[CpuRegister.Rdi]);
+        var userId = unchecked((int)ctx[CpuRegister.Rsi]);
+        if (requestId <= 0 || userId == -1)
+        {
+            return SetReturn(ctx, NpManagerAsyncRequests.ErrorInvalidArgument);
+        }
+
+        // The public call only schedules the check. Its worker completes the
+        // request asynchronously; a zero operation result means the local check
+        // itself completed, while sceNpGetNpReachabilityState remains the source
+        // of the actual offline reachability value.
+        var result = NpManagerAsyncRequests.StartLocalOperation(requestId, _ => 0);
+        TraceNp($"check_np_reachability request={requestId} user={userId} result=0x{result:X8}");
+        return SetReturn(ctx, result);
     }
 
     [SysAbiExport(
@@ -671,9 +704,9 @@ public static class NpManagerExports
         ulong userData;
         lock (ManagerGate)
         {
-            if (_managerAllocatorAddress == 0)
+            if (!NpManagerAsyncRequests.IsInitialized)
             {
-                error = "NP manager is not initialized";
+                error = "NP SDK request subsystem is not initialized";
                 return false;
             }
 

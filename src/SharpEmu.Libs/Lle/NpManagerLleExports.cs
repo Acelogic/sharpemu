@@ -20,13 +20,6 @@ public static class NpManagerLleExports
         Target = Generation.Gen5,
         LibraryName = "libSceNpManager",
         PreferLle = true)]
-    // Ghidra entry 00018660; body addresses 318.
-    [SysAbiExport(
-        Nid = "KfGZg2y73oM",
-        ExportName = "sceNpCheckNpReachability",
-        Target = Generation.Gen5,
-        LibraryName = "libSceNpManager",
-        PreferLle = true)]
     // Ghidra entry 00018ba0; body addresses 668.
     [SysAbiExport(
         Nid = "O80NrhUOPGY",

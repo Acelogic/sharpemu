@@ -47,11 +47,17 @@ public sealed class NpManagerAsyncRequestExportsTests : IDisposable
         gen4.RegisterExports(SharpEmu.Generated.SysAbiExportRegistry.CreateExports(Generation.Gen4));
 
         AssertExport(gen5, "eiqMCt9UshI", "sceNpCreateAsyncRequest");
+        AssertExport(gen5, "KfGZg2y73oM", "sceNpCheckNpReachability");
         AssertExport(gen5, "S7QTn72PrDw", "sceNpDeleteRequest");
         AssertExport(gen5, "OzKvTvg3ZYU", "sceNpAbortRequest");
         AssertExport(gen5, "uqcPJLWL08M", "sceNpPollAsync");
 
+        Assert.True(gen5.TryGetExport("KfGZg2y73oM", out var reachability));
+        Assert.False(reachability.PreferLle);
+        Assert.Equal(typeof(NpManagerExports), reachability.Function.Method.DeclaringType);
+
         Assert.False(gen4.TryGetExport("eiqMCt9UshI", out _));
+        Assert.False(gen4.TryGetExport("KfGZg2y73oM", out _));
         Assert.True(gen4.TryGetExport("S7QTn72PrDw", out _));
         Assert.False(gen4.TryGetExport("OzKvTvg3ZYU", out _));
         Assert.False(gen4.TryGetExport("uqcPJLWL08M", out _));
@@ -72,11 +78,47 @@ public sealed class NpManagerAsyncRequestExportsTests : IDisposable
 
         _ctx[CpuRegister.Rdi] = 0;
         AssertResult(ErrorNotInitialized, NpManagerExports.NpCreateAsyncRequest);
+        _ctx[CpuRegister.Rsi] = unchecked((ulong)-1L);
+        AssertResult(ErrorNotInitialized, NpManagerExports.NpCheckNpReachability);
         AssertResult(ErrorNotInitialized, NpManagerExports.NpAbortRequest);
         AssertResult(ErrorNotInitialized, NpManagerExports.NpDeleteRequest);
 
         _ctx[CpuRegister.Rsi] = 0;
         AssertResult(ErrorNotInitialized, NpManagerExports.NpPollAsync);
+    }
+
+    [Fact]
+    public void CheckNpReachability_ValidatesAndCompletesTheCreatedRequest()
+    {
+        _ctx[CpuRegister.Rdi] = 0;
+        _ctx[CpuRegister.Rsi] = 0x1000_0000;
+        AssertResult(ErrorInvalidArgument, NpManagerExports.NpCheckNpReachability);
+
+        _ctx[CpuRegister.Rdi] = 99;
+        AssertResult(ErrorRequestNotFound, NpManagerExports.NpCheckNpReachability);
+
+        var requestId = CreateRequest();
+        _ctx[CpuRegister.Rdi] = unchecked((ulong)requestId);
+        _ctx[CpuRegister.Rsi] = unchecked((ulong)-1L);
+        AssertResult(ErrorInvalidArgument, NpManagerExports.NpCheckNpReachability);
+        Assert.True(NpManagerAsyncRequests.TryGetSnapshotForTests(requestId, out var unstarted));
+        Assert.False(unstarted.OperationAssigned);
+
+        _ctx[CpuRegister.Rsi] = 0x1000_0000;
+        AssertResult(0, NpManagerExports.NpCheckNpReachability);
+        Assert.True(NpManagerAsyncRequests.WaitForCompletionForTests(requestId, TimeSpan.FromSeconds(2)));
+        Assert.True(NpManagerAsyncRequests.TryGetSnapshotForTests(requestId, out var completed));
+        Assert.True(completed.OperationAssigned);
+        Assert.Equal(NpManagerAsyncRequests.RequestState.Complete, completed.State);
+        Assert.Equal(0, completed.Result);
+
+        WriteResult(unchecked((int)0x7bad_cafe));
+        AssertPoll(requestId, ResultAddress, 0);
+        Assert.Equal(0, ReadResult());
+
+        _ctx[CpuRegister.Rdi] = unchecked((ulong)requestId);
+        _ctx[CpuRegister.Rsi] = 0x1000_0000;
+        AssertResult(ErrorInvalidArgument, NpManagerExports.NpCheckNpReachability);
     }
 
     [Fact]

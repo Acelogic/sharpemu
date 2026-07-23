@@ -15,6 +15,7 @@ public sealed class ProviderLleExportsTests
         new(StringComparer.Ordinal)
         {
             "Ikfdt-rIqCE",
+            "KfGZg2y73oM",
             "w4-d0n60hdo",
         };
     private static readonly HashSet<string> CrossGenerationSemanticProviderNids =
@@ -240,22 +241,48 @@ public sealed class ProviderLleExportsTests
             context[CpuRegister.Rax]);
     }
 
-    [Theory]
-    [InlineData(0x3FFFUL, 0x80A00002U)]
-    [InlineData(0x4000UL, 0x80A00007U)]
-    public void GameLiveStreamingInitializeMatchesProviderPoolValidation(
-        ulong poolSize,
-        uint expected)
+    [Fact]
+    public void GameLiveStreamingFallbackMatchesProviderLifecycle()
     {
-        var context = new CpuContext(new NullMemory(), Generation.Gen5);
-        context[CpuRegister.Rdi] = poolSize;
+        GameLiveStreamingLleExports.ResetForTests();
+        try
+        {
+            var context = new CpuContext(new NullMemory(), Generation.Gen5);
+            context[CpuRegister.Rdi] = 0x3FFF;
+            Assert.Equal(
+                unchecked((int)0x80A00002),
+                GameLiveStreamingLleExports.InitializeWithoutGuestProvider(context));
+            Assert.Equal(
+                unchecked((ulong)unchecked((int)0x80A00002)),
+                context[CpuRegister.Rax]);
 
-        Assert.Equal(
-            unchecked((int)expected),
-            GameLiveStreamingLleExports.InitializeWithoutGuestProvider(context));
-        Assert.Equal(
-            unchecked((ulong)unchecked((int)expected)),
-            context[CpuRegister.Rax]);
+            Assert.Equal(
+                unchecked((int)0x80A00004),
+                GameLiveStreamingLleExports.TerminateWithoutGuestProvider(context));
+
+            context[CpuRegister.Rdi] = 0x4000;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                GameLiveStreamingLleExports.InitializeWithoutGuestProvider(context));
+            Assert.Equal(0UL, context[CpuRegister.Rax]);
+
+            Assert.Equal(
+                unchecked((int)0x80A00003),
+                GameLiveStreamingLleExports.InitializeWithoutGuestProvider(context));
+
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                GameLiveStreamingLleExports.TerminateWithoutGuestProvider(context));
+            Assert.Equal(0UL, context[CpuRegister.Rax]);
+
+            Assert.Equal(
+                unchecked((int)0x80A00004),
+                GameLiveStreamingLleExports.TerminateWithoutGuestProvider(context));
+        }
+        finally
+        {
+            GameLiveStreamingLleExports.ResetForTests();
+        }
     }
 
     [Fact]

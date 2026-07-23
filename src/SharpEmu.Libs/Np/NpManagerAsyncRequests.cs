@@ -267,11 +267,10 @@ internal static class NpManagerAsyncRequests
     }
 
     /// <summary>
-    /// Attaches a future evidence-backed offline operation to a request.
-    /// These four public exports never call this themselves, so they cannot
-    /// fabricate online work or completion.
+    /// Attaches an evidence-backed local operation to a request and returns the
+    /// firmware request-registry result.
     /// </summary>
-    internal static bool TryStartLocalOperation(
+    internal static int StartLocalOperation(
         int requestId,
         Func<LocalOperationContext, int> operation)
     {
@@ -280,12 +279,19 @@ internal static class NpManagerAsyncRequests
         Request? request;
         lock (RegistryGate)
         {
-            if (!_initialized ||
-                requestId <= 0 ||
-                !Requests.TryGetValue(requestId, out request) ||
-                request.Deleted)
+            if (!_initialized)
             {
-                return false;
+                return ErrorNotInitialized;
+            }
+
+            if (requestId <= 0)
+            {
+                return ErrorInvalidArgument;
+            }
+
+            if (!Requests.TryGetValue(requestId, out request) || request.Deleted)
+            {
+                return ErrorRequestNotFound;
             }
 
             Interlocked.Increment(ref request.ReferenceCount);
@@ -294,7 +300,7 @@ internal static class NpManagerAsyncRequests
                 if (request.OperationAssigned)
                 {
                     Release(request);
-                    return false;
+                    return ErrorInvalidArgument;
                 }
 
                 request.OperationAssigned = true;
@@ -327,8 +333,13 @@ internal static class NpManagerAsyncRequests
         }
 
         Release(request);
-        return true;
+        return 0;
     }
+
+    internal static bool TryStartLocalOperation(
+        int requestId,
+        Func<LocalOperationContext, int> operation) =>
+        StartLocalOperation(requestId, operation) == 0;
 
     internal static bool WaitForCompletionForTests(int requestId, TimeSpan timeout)
     {

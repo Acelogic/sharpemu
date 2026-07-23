@@ -4,8 +4,8 @@
 //
 // Ghidra 12.1.2_PUBLIC_20260605 program: libSceGameLiveStreaming.sprx
 // Analyzed provider SHA-256: 93b31789fc637b0fa3f4c7fd9364f21130958583bfb10c717c222dac9fc3c369
-// Each registration prefers the loaded guest export. The shared HLE handler
-// is deliberately fail-closed and never claims provider behavior.
+// Each registration prefers the loaded guest export. The HLE fallbacks model
+// the provider's initialization lifecycle when the guest export is unavailable.
 
 using SharpEmu.HLE;
 
@@ -13,6 +13,13 @@ namespace SharpEmu.Libs.Lle;
 
 public static class GameLiveStreamingLleExports
 {
+    private const int GameLiveStreamingErrorInvalidArgument = unchecked((int)0x80A00002);
+    private const int GameLiveStreamingErrorAlreadyInitialized = unchecked((int)0x80A00003);
+    private const int GameLiveStreamingErrorNotInitialized = unchecked((int)0x80A00004);
+
+    private static readonly object StateGate = new();
+    private static int _initialized;
+
     // Ghidra entry 00001340; body addresses 140.
     [SysAbiExport(
         Nid = "9yK6Fk8mKOQ",
@@ -20,6 +27,20 @@ public static class GameLiveStreamingLleExports
         Target = Generation.Gen5,
         LibraryName = "libSceGameLiveStreaming",
         PreferLle = true)]
+    public static int TerminateWithoutGuestProvider(CpuContext ctx)
+    {
+        lock (StateGate)
+        {
+            if (_initialized == 0)
+            {
+                return ctx.SetReturn(GameLiveStreamingErrorNotInitialized);
+            }
+
+            _initialized = 0;
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+        }
+    }
+
     // Ghidra entry 000013e0; body addresses 488.
     [SysAbiExport(
         Nid = "kvYEw2lBndk",
@@ -29,12 +50,35 @@ public static class GameLiveStreamingLleExports
         PreferLle = true)]
     public static int InitializeWithoutGuestProvider(CpuContext ctx)
     {
-        // The Ghidra-recovered provider requires a 0x4000-byte pool. With a
-        // valid pool request but no live-streaming service, it returns the
-        // provider's deterministic unavailable result without creating state.
-        return ctx[CpuRegister.Rdi] == 0x4000
-            ? ctx.SetReturn(unchecked((int)0x80A00007))
-            : ctx.SetReturn(unchecked((int)0x80A00002));
+        // The provider validates the exact pool size before taking its state
+        // lock, then rejects a second live initialization.
+        if (ctx[CpuRegister.Rdi] != 0x4000)
+        {
+            return ctx.SetReturn(GameLiveStreamingErrorInvalidArgument);
+        }
+
+        lock (StateGate)
+        {
+            if (_initialized != 0)
+            {
+                return ctx.SetReturn(GameLiveStreamingErrorAlreadyInitialized);
+            }
+
+            // SharpEmu does not expose a host broadcast service, but it can
+            // provide the provider's local lifecycle without guest allocation
+            // or IPC. Callers can therefore disable/ignore broadcast features
+            // while retaining their unrelated user-manager state.
+            _initialized = 1;
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+        }
+    }
+
+    internal static void ResetForTests()
+    {
+        lock (StateGate)
+        {
+            _initialized = 0;
+        }
     }
 
     public static int MissingGuestProvider(CpuContext ctx)

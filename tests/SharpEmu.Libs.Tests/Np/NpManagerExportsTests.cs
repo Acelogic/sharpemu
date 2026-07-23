@@ -116,11 +116,12 @@ public sealed class NpManagerExportsTests : IDisposable
     [Fact]
     public void RegisterReachabilityStateCallback_PreservesValidationOrderAndOriginalPair()
     {
+        NpManagerAsyncRequests.ShutdownForTests();
         _ctx[CpuRegister.Rdi] = 0;
         _ctx[CpuRegister.Rsi] = UserData;
         AssertResult(NpErrorNotInitialized, NpManagerExports.NpRegisterNpReachabilityStateCallback);
 
-        Initialize();
+        NpManagerAsyncRequests.ResetForTests();
         _ctx[CpuRegister.Rdi] = 0;
         _ctx[CpuRegister.Rsi] = UserData;
         AssertResult(NpErrorInvalidArgument, NpManagerExports.NpRegisterNpReachabilityStateCallback);
@@ -141,23 +142,25 @@ public sealed class NpManagerExportsTests : IDisposable
     }
 
     [Fact]
-    public void ManagerTerminate_ClearsReachabilityStateCallback()
+    public void ManagerTerminate_DoesNotClearPrxReachabilityStateCallback()
     {
-        Initialize();
         RegisterReachability(Callback, UserData);
 
         AssertResult(0, NpManagerExports.NpManagerGlobalTerminateCompat1270);
-        Assert.False(NpManagerExports.TryGetReachabilityStateCallbackForTests(out _, out _));
+        Assert.True(NpManagerExports.TryGetReachabilityStateCallbackForTests(out var callback, out var userData));
+        Assert.Equal(Callback, callback);
+        Assert.Equal(UserData, userData);
 
         _ctx[CpuRegister.Rdi] = OtherCallback;
         _ctx[CpuRegister.Rsi] = UserData + 0x100;
-        AssertResult(NpErrorNotInitialized, NpManagerExports.NpRegisterNpReachabilityStateCallback);
+        AssertResult(
+            NpErrorCallbackAlreadyRegistered,
+            NpManagerExports.NpRegisterNpReachabilityStateCallback);
     }
 
     [Fact]
     public void DispatchReachabilityState_CopiesPairUnderLockAndInvokesGuestAfterUnlock()
     {
-        Initialize();
         RegisterReachability(Callback, UserData);
         var scheduler = new RecordingScheduler();
         GuestThreadExecution.Scheduler = scheduler;
@@ -171,6 +174,16 @@ public sealed class NpManagerExportsTests : IDisposable
         Assert.Equal(UserData, scheduler.UserData);
         Assert.Equal("np_reachability_state_11_0", scheduler.Reason);
         Assert.False(scheduler.ManagerGateHeldDuringCall);
+    }
+
+    [Fact]
+    public void DispatchReachabilityState_UsesPrxSdkLifecycle()
+    {
+        RegisterReachability(Callback, UserData);
+        NpManagerAsyncRequests.ShutdownForTests();
+
+        Assert.False(NpManagerExports.TryDispatchNpReachabilityState(_ctx, 11, 0, out var error));
+        Assert.Equal("NP SDK request subsystem is not initialized", error);
     }
 
     [Fact]
