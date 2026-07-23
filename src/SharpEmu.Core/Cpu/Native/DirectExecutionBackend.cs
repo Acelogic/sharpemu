@@ -2562,6 +2562,18 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private unsafe nint CreateExceptionHandlerTrampoline(nint managedHandler)
 	{
+		// The advanced TBB-oriented trampoline is substantially larger and turns
+		// the exception hot path into a severe bottleneck for titles that use VEH
+		// for high-frequency guest memory handling. Keep it available for focused
+		// diagnostics, but use the compact, previously stable path by default.
+		if (!string.Equals(
+			Environment.GetEnvironmentVariable("SHARPEMU_USE_ADVANCED_VEH_TRAMPOLINE"),
+			"1",
+			StringComparison.Ordinal))
+		{
+			return CreateCompatibilityExceptionHandlerTrampoline(managedHandler);
+		}
+
 		// Live VEH trampoline used by SetupExceptionHandler. Must pre-filter
 		// FastFail / CLR / MSVC C++ / stack-overflow the same way as
 		// WindowsFaultHandling.CreateHandlerThunk: entering managed VEH while
@@ -3070,6 +3082,103 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 		uint oldProtect = default;
 		VirtualProtect(ptr, stubSize, 32u, &oldProtect);
+		FlushInstructionCache(GetCurrentProcess(), ptr, (nuint)offset);
+		return (nint)ptr;
+	}
+
+	private unsafe nint CreateCompatibilityExceptionHandlerTrampoline(nint managedHandler)
+	{
+		const uint stubSize = 256u;
+		void* ptr = VirtualAlloc(null, stubSize, 12288u, 64u);
+		if (ptr == null)
+		{
+			return 0;
+		}
+
+		byte* code = (byte*)ptr;
+		int offset = 0;
+		EmitByte(code, ref offset, 0x41); EmitByte(code, ref offset, 0x54); // push r12
+		EmitByte(code, ref offset, 0x41); EmitByte(code, ref offset, 0x55); // push r13
+		EmitByte(code, ref offset, 0x49); EmitByte(code, ref offset, 0x89); EmitByte(code, ref offset, 0xE4); // mov r12, rsp
+		EmitByte(code, ref offset, 0x49); EmitByte(code, ref offset, 0x89); EmitByte(code, ref offset, 0xCD); // mov r13, rcx
+		EmitByte(code, ref offset, 0x65); EmitByte(code, ref offset, 0x48); // mov rax, gs:[8]
+		EmitByte(code, ref offset, 0x8B); EmitByte(code, ref offset, 0x04); EmitByte(code, ref offset, 0x25);
+		EmitUInt32(code, ref offset, 8u);
+		EmitByte(code, ref offset, 0x49); EmitByte(code, ref offset, 0x39); EmitByte(code, ref offset, 0xC4); // cmp r12, rax
+		EmitByte(code, ref offset, 0x0F); EmitByte(code, ref offset, 0x83); // jae guestStack
+		int aboveStackJump = offset;
+		EmitUInt32(code, ref offset, 0u);
+		EmitByte(code, ref offset, 0x65); EmitByte(code, ref offset, 0x48); // mov rax, gs:[0x10]
+		EmitByte(code, ref offset, 0x8B); EmitByte(code, ref offset, 0x04); EmitByte(code, ref offset, 0x25);
+		EmitUInt32(code, ref offset, 0x10u);
+		EmitByte(code, ref offset, 0x49); EmitByte(code, ref offset, 0x39); EmitByte(code, ref offset, 0xC4); // cmp r12, rax
+		EmitByte(code, ref offset, 0x0F); EmitByte(code, ref offset, 0x82); // jb guestStack
+		int belowStackJump = offset;
+		EmitUInt32(code, ref offset, 0u);
+
+		EmitByte(code, ref offset, 0x48); EmitByte(code, ref offset, 0x83); EmitByte(code, ref offset, 0xEC); EmitByte(code, ref offset, 0x28);
+		EmitByte(code, ref offset, 0x4C); EmitByte(code, ref offset, 0x89); EmitByte(code, ref offset, 0xE9); // mov rcx, r13
+		EmitByte(code, ref offset, 0x48); EmitByte(code, ref offset, 0xB8);
+		*(nint*)(code + offset) = managedHandler;
+		offset += sizeof(nint);
+		EmitByte(code, ref offset, 0xFF); EmitByte(code, ref offset, 0xD0);
+		EmitByte(code, ref offset, 0x48); EmitByte(code, ref offset, 0x83); EmitByte(code, ref offset, 0xC4); EmitByte(code, ref offset, 0x28);
+		EmitByte(code, ref offset, 0xE9);
+		int hostRestoreJump = offset;
+		EmitUInt32(code, ref offset, 0u);
+
+		int guestStackOffset = offset;
+		EmitByte(code, ref offset, 0x48); EmitByte(code, ref offset, 0x83); EmitByte(code, ref offset, 0xEC); EmitByte(code, ref offset, 0x28);
+		EmitByte(code, ref offset, 0xB9);
+		EmitUInt32(code, ref offset, _hostRspSlotTlsIndex);
+		EmitByte(code, ref offset, 0x48); EmitByte(code, ref offset, 0xB8);
+		*(nint*)(code + offset) = _tlsGetValueAddress;
+		offset += sizeof(nint);
+		EmitByte(code, ref offset, 0xFF); EmitByte(code, ref offset, 0xD0);
+		EmitByte(code, ref offset, 0x48); EmitByte(code, ref offset, 0x83); EmitByte(code, ref offset, 0xC4); EmitByte(code, ref offset, 0x28);
+		EmitByte(code, ref offset, 0x48); EmitByte(code, ref offset, 0x85); EmitByte(code, ref offset, 0xC0); // test rax, rax
+		EmitByte(code, ref offset, 0x0F); EmitByte(code, ref offset, 0x84);
+		int missingTlsJump = offset;
+		EmitUInt32(code, ref offset, 0u);
+		EmitByte(code, ref offset, 0x4C); EmitByte(code, ref offset, 0x8B); EmitByte(code, ref offset, 0x18); // mov r11, [rax]
+		EmitByte(code, ref offset, 0x4D); EmitByte(code, ref offset, 0x85); EmitByte(code, ref offset, 0xDB); // test r11, r11
+		EmitByte(code, ref offset, 0x0F); EmitByte(code, ref offset, 0x84);
+		int missingHostStackJump = offset;
+		EmitUInt32(code, ref offset, 0u);
+		EmitByte(code, ref offset, 0x4C); EmitByte(code, ref offset, 0x89); EmitByte(code, ref offset, 0xDC); // mov rsp, r11
+		EmitByte(code, ref offset, 0x48); EmitByte(code, ref offset, 0x83); EmitByte(code, ref offset, 0xEC); EmitByte(code, ref offset, 0x28);
+		EmitByte(code, ref offset, 0x4C); EmitByte(code, ref offset, 0x89); EmitByte(code, ref offset, 0xE9); // mov rcx, r13
+		EmitByte(code, ref offset, 0x48); EmitByte(code, ref offset, 0xB8);
+		*(nint*)(code + offset) = managedHandler;
+		offset += sizeof(nint);
+		EmitByte(code, ref offset, 0xFF); EmitByte(code, ref offset, 0xD0);
+		EmitByte(code, ref offset, 0x48); EmitByte(code, ref offset, 0x83); EmitByte(code, ref offset, 0xC4); EmitByte(code, ref offset, 0x28);
+		EmitByte(code, ref offset, 0xE9);
+		int guestRestoreJump = offset;
+		EmitUInt32(code, ref offset, 0u);
+
+		int passThroughOffset = offset;
+		EmitByte(code, ref offset, 0x31); EmitByte(code, ref offset, 0xC0); // xor eax, eax
+		int restoreOffset = offset;
+		EmitByte(code, ref offset, 0x4C); EmitByte(code, ref offset, 0x89); EmitByte(code, ref offset, 0xE4); // mov rsp, r12
+		EmitByte(code, ref offset, 0x41); EmitByte(code, ref offset, 0x5D);
+		EmitByte(code, ref offset, 0x41); EmitByte(code, ref offset, 0x5C);
+		EmitByte(code, ref offset, 0xC3);
+
+		*(int*)(code + aboveStackJump) = guestStackOffset - (aboveStackJump + sizeof(int));
+		*(int*)(code + belowStackJump) = guestStackOffset - (belowStackJump + sizeof(int));
+		*(int*)(code + hostRestoreJump) = restoreOffset - (hostRestoreJump + sizeof(int));
+		*(int*)(code + missingTlsJump) = passThroughOffset - (missingTlsJump + sizeof(int));
+		*(int*)(code + missingHostStackJump) = passThroughOffset - (missingHostStackJump + sizeof(int));
+		*(int*)(code + guestRestoreJump) = restoreOffset - (guestRestoreJump + sizeof(int));
+
+		uint oldProtect = default;
+		if (!VirtualProtect(ptr, stubSize, 32u, &oldProtect))
+		{
+			VirtualFree(ptr, 0u, 32768u);
+			return 0;
+		}
+
 		FlushInstructionCache(GetCurrentProcess(), ptr, (nuint)offset);
 		return (nint)ptr;
 	}
