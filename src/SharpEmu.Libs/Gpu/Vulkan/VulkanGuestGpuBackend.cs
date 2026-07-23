@@ -249,7 +249,8 @@ internal sealed class VulkanGuestGpuBackend : IGuestGpuBackend
         GuestIndexBuffer? indexBuffer = null,
         IReadOnlyList<GuestVertexBuffer>? vertexBuffers = null,
         GuestRenderState? renderState = null,
-        ulong shaderAddress = 0) =>
+        ulong shaderAddress = 0,
+        int baseVertex = 0) =>
         VulkanVideoPresenter.SubmitDepthOnlyTranslatedDraw(
             Spirv(pixelShader),
             textures,
@@ -263,7 +264,8 @@ internal sealed class VulkanGuestGpuBackend : IGuestGpuBackend
             indexBuffer,
             vertexBuffers,
             renderState,
-            shaderAddress);
+            shaderAddress,
+            baseVertex);
 
     public void SubmitOffscreenTranslatedDraw(
         IGuestCompiledShader pixelShader,
@@ -279,7 +281,8 @@ internal sealed class VulkanGuestGpuBackend : IGuestGpuBackend
         IReadOnlyList<GuestVertexBuffer>? vertexBuffers = null,
         GuestRenderState? renderState = null,
         GuestDepthTarget? depthTarget = null,
-        ulong shaderAddress = 0) =>
+        ulong shaderAddress = 0,
+        int baseVertex = 0) =>
         VulkanVideoPresenter.SubmitOffscreenTranslatedDraw(
             Spirv(pixelShader),
             textures,
@@ -294,7 +297,8 @@ internal sealed class VulkanGuestGpuBackend : IGuestGpuBackend
             vertexBuffers,
             renderState,
             depthTarget,
-            shaderAddress);
+            shaderAddress,
+            baseVertex);
 
     public void SubmitStorageTranslatedDraw(
         IGuestCompiledShader pixelShader,

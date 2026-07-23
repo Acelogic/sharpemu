@@ -290,7 +290,8 @@ internal sealed class MetalGuestGpuBackend : IGuestGpuBackend
         GuestIndexBuffer? indexBuffer = null,
         IReadOnlyList<GuestVertexBuffer>? vertexBuffers = null,
         GuestRenderState? renderState = null,
-        ulong shaderAddress = 0) =>
+        ulong shaderAddress = 0,
+        int baseVertex = 0) =>
         MetalVideoPresenter.SubmitDepthOnlyTranslatedDraw(
             Msl(pixelShader),
             textures,
@@ -304,7 +305,8 @@ internal sealed class MetalGuestGpuBackend : IGuestGpuBackend
             indexBuffer,
             vertexBuffers,
             renderState,
-            shaderAddress);
+            shaderAddress,
+            baseVertex);
 
     public void SubmitOffscreenTranslatedDraw(
         IGuestCompiledShader pixelShader,
@@ -320,7 +322,8 @@ internal sealed class MetalGuestGpuBackend : IGuestGpuBackend
         IReadOnlyList<GuestVertexBuffer>? vertexBuffers = null,
         GuestRenderState? renderState = null,
         GuestDepthTarget? depthTarget = null,
-        ulong shaderAddress = 0) =>
+        ulong shaderAddress = 0,
+        int baseVertex = 0) =>
         MetalVideoPresenter.SubmitOffscreenTranslatedDraw(
             Msl(pixelShader),
             textures,
@@ -335,7 +338,8 @@ internal sealed class MetalGuestGpuBackend : IGuestGpuBackend
             vertexBuffers,
             renderState,
             depthTarget,
-            shaderAddress);
+            shaderAddress,
+            baseVertex);
 
     public void SubmitStorageTranslatedDraw(
         IGuestCompiledShader pixelShader,
