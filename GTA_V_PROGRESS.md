@@ -9,7 +9,7 @@ Reach exact static Gen5 registration parity for all 1,432 GTA V application/runt
 - Integration branch: `codex/gta-v-nids`
 - Integration worktree: `/Users/mcruz/Developer/sharpemu-gta-v-nids`
 - Acelogic `main` base: `615bae08c2613b6b8363203b8c40f58e2bf6eac6`
-- Current Acelogic fork-main sync: `b8a90e7` (merged into the integration branch as `5286387`)
+- Current Acelogic fork-main sync: `6f1d28e` (merged `sharpemu/sharpemu:main` through `6db095e`)
 - Remaining uncovered queue: `GTA_V_UNCOVERED_NIDS.csv`
 - Coordinator manifest: `GTA_V_NID_SWARM_MANIFEST.json`
 - Initial Acelogic-main queue: 911 unique uncovered application/runtime imports
@@ -62,6 +62,44 @@ The exact evidence and bridge disposition are retained in
 [`docs/gta-v/bink-runtime-20260719.md`](docs/gta-v/bink-runtime-20260719.md).
 The active blocker is therefore downstream UI/render/presentation state, not
 Bink file I/O, decode lifecycle, or EOS.
+
+### 2026-07-23 frontend text and 3D-LUT checkpoint
+
+The Windows x64 build now advances through the GTA V title, legal notice,
+alert, and frontend artwork. Bitmap/atlas text renders on the legal and alert
+screens, but the frontend tab labels over the Lester/Michael artwork remain
+missing. This is a rendering-path defect, not an unresolved-NID or Bink
+lifecycle blocker.
+
+Targeted shader and GPU readback evidence isolated the missing labels to GTA's
+vector-mesh text path. Its pixel shader samples a type-10 `32x32x32` 3D color
+lookup texture using three coordinates; a compute shader generates all 32 Z
+slices. SharpEmu previously declared every Gen5 image as 2D, allocated depth
+one in Vulkan, raced every compute Z slice into the same plane, and discarded
+the pixel shader's third sample coordinate. The working atlas-text path uses a
+conventional 2D texture and therefore did not expose the bug.
+
+Commit `322449f` implements the general emulator fix rather than a GTA-specific
+address or shader workaround:
+
+- Gen5 FLAT-memory IR, scalar evaluation, translation, and regression tests;
+- MIMG DIM=2 to SPIR-V `Dim3D`, including vec3/ivec3 sample, load, store,
+  atomic, size-query, offset, and bounds behavior;
+- texture `Type`/`Depth` transport and depth-aware uncompressed/BC sizing;
+- Vulkan `Type3D` images, `Extent3D` depth, `ImageViewType3D`, volume uploads,
+  copies/readback, and depth-aware cache/alias identities while preserving 2D
+  array-layer behavior.
+
+The Acelogic fork was then synchronized with `sharpemu/sharpemu:main` through
+upstream commit `6db095e` in merge commit `6f1d28e`. Conflict resolution kept
+the fork's Ghidra-backed AGC/SystemService contracts, NGG renderer, exact GTA
+registration parity, and in-place pthread scheduler while incorporating
+upstream's independent fixes. The synchronized solution builds with zero
+errors (70 existing catalog/XML warnings) and all 1,462 tests pass: 1,341
+library tests, 58 Vulkan shader-compiler tests, 27 Metal shader-compiler tests,
+and 36 source-generator tests. The next runtime gate is a visible Windows
+deployment confirming that the Lester/Michael frontend labels render with the
+new 3D-image path.
 
 ## Active lanes
 
@@ -181,5 +219,7 @@ The local Mac remains responsible for integration, builds, runtime capture, fina
   - Release solution build: passed with 0 warnings and 0 errors
   - SharpEmu.SourceGenerators.Tests: 36/36 passed
   - SharpEmu.ShaderCompiler.Tests: 34/34 passed
+  - 2026-07-23 synchronized fork: solution build passed with 0 errors; full
+    solution tests passed 1,462/1,462
 - GTA V launch regression: prior 41,427-import checkpoint retained; exact terminal state recorded in the final evidence packet
 - Registration parity does not close semantic follow-up: 18 kernel/POSIX contracts and the backtrace contract intentionally fail closed, `recv`/`send` support only flags zero, and provider registrations require their guest providers for semantics
